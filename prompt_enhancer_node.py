@@ -106,10 +106,12 @@ class PromptEnhancer:
     def _parse_response(self, response, target_model):
         """Extract positive and negative prompts from the LLM response.
 
-        Looks for POSITIVE: and NEGATIVE: markers. Falls back to treating
-        the entire response as the positive prompt if markers are missing.
+        Looks for POSITIVE: and NEGATIVE: markers. Falls back to stripping
+        common LLM preamble and treating the remainder as the positive prompt.
         Always returns empty negative for Z-Image-Turbo.
         """
+        import re
+
         positive = ""
         negative = ""
 
@@ -131,8 +133,22 @@ class PromptEnhancer:
                 neg_start = neg_idx + len("NEGATIVE:")
                 negative = response[neg_start:].strip()
         else:
-            # Fallback: treat entire response as positive prompt
-            positive = response.strip()
+            # Fallback: strip LLM conversational preamble/postamble
+            text = response.strip()
+            # Remove lines that look like LLM commentary (starts with "Sure",
+            # "Here", "I ", "This ", etc.) from the top and bottom
+            lines = text.split("\n")
+            preamble_pattern = re.compile(
+                r"^(sure|here|i |i'|of course|certainly|let me|this is|note:|hope|feel free)",
+                re.IGNORECASE,
+            )
+            # Strip preamble lines
+            while lines and preamble_pattern.match(lines[0].strip()):
+                lines.pop(0)
+            # Strip postamble lines
+            while lines and preamble_pattern.match(lines[-1].strip()):
+                lines.pop()
+            positive = "\n".join(lines).strip()
 
         # ZIT never uses negative prompts
         if target_model == "Z-Image-Turbo":
