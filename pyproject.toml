@@ -1,0 +1,12 @@
+[project]
+name = "comfyui-prompt-enhancer"
+description = "LLM-powered prompt engineering node for ComfyUI. Enhances prompts for SDXL and Z-Image-Turbo using OpenRouter."
+version = "1.0.0"
+license = "MIT"
+requires-python = ">=3.9"
+dependencies = ["requests>=2.28.0"]
+
+[tool.comfy]
+PublisherId = "prompt-enhancer"
+DisplayName = "Prompt Enhancer (LLM)"
+Icon = "✨"
