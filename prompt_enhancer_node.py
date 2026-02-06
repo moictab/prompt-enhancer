@@ -16,7 +16,7 @@ class PromptEnhancer:
     FUNCTION = "enhance_prompt"
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("positive_prompt", "negative_prompt")
-    OUTPUT_NODE = False
+    OUTPUT_NODE = True
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -57,14 +57,17 @@ class PromptEnhancer:
                        llm_model, creativity, previous_prompt=None):
         # Validate inputs
         if not user_input.strip():
-            return ("Please enter a prompt idea or iteration instructions.", "")
+            positive = "Please enter a prompt idea or iteration instructions."
+            negative = ""
+            return {"ui": {"text": [positive, negative]}, "result": (positive, negative)}
 
         if not openrouter_api_key.strip():
-            return (
+            positive = (
                 "ERROR: OpenRouter API key is required. "
-                "Get your key at https://openrouter.ai/keys",
-                "",
+                "Get your key at https://openrouter.ai/keys"
             )
+            negative = ""
+            return {"ui": {"text": [positive, negative]}, "result": (positive, negative)}
 
         # Determine if this is an iteration
         is_iteration = previous_prompt is not None and previous_prompt.strip() != ""
@@ -83,11 +86,13 @@ class PromptEnhancer:
                 temperature=creativity,
             )
         except RuntimeError as e:
-            return (f"ERROR: {e}", "")
+            positive = f"ERROR: {e}"
+            negative = ""
+            return {"ui": {"text": [positive, negative]}, "result": (positive, negative)}
 
         # Parse response
         positive, negative = self._parse_response(response, target_model)
-        return (positive, negative)
+        return {"ui": {"text": [positive, negative]}, "result": (positive, negative)}
 
     def _build_user_message(self, user_input, previous_prompt, is_iteration):
         """Format the user message for the LLM."""
