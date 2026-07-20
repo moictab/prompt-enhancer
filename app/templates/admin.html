@@ -2,4 +2,42 @@
 {% block title %}Admin{% endblock %}
 {% block content %}
 <h1>Admin</h1>
+
+<section>
+  <h2>System Prompt Global</h2>
+  <textarea id="system-prompt-text" rows="8"></textarea>
+  <button type="button" id="save-system-prompt">Guardar</button>
+</section>
+
+<section>
+  <h2>Familias</h2>
+  <ul id="families-list"></ul>
+  <form id="family-form">
+    <input type="hidden" id="family-id">
+    <label for="family-name">Nombre</label>
+    <input type="text" id="family-name" required>
+    <label for="family-instructions">Instrucciones</label>
+    <textarea id="family-instructions" rows="6" required></textarea>
+    <label><input type="checkbox" id="family-has-negative"> Usa negative prompt</label>
+    <button type="submit">Guardar familia</button>
+    <button type="button" id="family-cancel">Cancelar edicion</button>
+  </form>
+</section>
+
+<section>
+  <h2>Personajes</h2>
+  <ul id="characters-list"></ul>
+  <form id="character-form">
+    <input type="hidden" id="character-id">
+    <label for="character-name">Nombre</label>
+    <input type="text" id="character-name" required>
+    <label for="character-text">Texto</label>
+    <textarea id="character-text" rows="3" required></textarea>
+    <button type="submit">Guardar personaje</button>
+    <button type="button" id="character-cancel">Cancelar edicion</button>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/admin.js"></script>
 {% endblock %}

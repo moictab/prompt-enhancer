@@ -59,3 +59,12 @@ def test_index_renders_all_three_tabs(api_client, auth_headers):
     assert 'id="form-generar"' in response.text
     assert 'id="form-iterar"' in response.text
     assert 'id="form-imagen"' in response.text
+
+
+def test_admin_page_has_management_sections(api_client, auth_headers):
+    response = api_client.get("/admin", auth=auth_headers)
+
+    assert response.status_code == 200
+    assert 'id="family-form"' in response.text
+    assert 'id="character-form"' in response.text
+    assert 'id="system-prompt-text"' in response.text
