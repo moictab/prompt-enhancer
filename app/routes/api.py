@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from .. import characters, families, history, prompts
 from ..config import get_settings
-from ..openrouter_client import call_openrouter
+from ..openrouter_client import call_openrouter, list_models
 
 router = APIRouter(prefix="/api")
 
@@ -133,6 +133,14 @@ async def from_image(
     )
 
     return {"positive_prompt": positive, "negative_prompt": negative}
+
+
+@router.get("/openrouter-models")
+def get_openrouter_models():
+    try:
+        return list_models()
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @router.get("/history")

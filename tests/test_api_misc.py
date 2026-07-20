@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from app import characters, history
 
 
@@ -42,3 +44,29 @@ def test_get_characters_returns_list(api_client, auth_headers, tmp_path):
 
     assert response.status_code == 200
     assert response.json()[0]["name"] == "Warrior"
+
+
+def test_get_openrouter_models_requires_auth(api_client):
+    response = api_client.get("/api/openrouter-models")
+
+    assert response.status_code == 401
+
+
+@patch("app.routes.api.list_models")
+def test_get_openrouter_models_returns_list(mock_list_models, api_client, auth_headers):
+    mock_list_models.return_value = [{"id": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4"}]
+
+    response = api_client.get("/api/openrouter-models", auth=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json() == [{"id": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4"}]
+
+
+@patch("app.routes.api.list_models")
+def test_get_openrouter_models_returns_502_on_error(mock_list_models, api_client, auth_headers):
+    mock_list_models.side_effect = RuntimeError("Could not fetch model list from OpenRouter.")
+
+    response = api_client.get("/api/openrouter-models", auth=auth_headers)
+
+    assert response.status_code == 502
+    assert "Could not fetch" in response.json()["detail"]

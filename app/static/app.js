@@ -119,6 +119,23 @@ async function setupCharacterButtons() {
   });
 }
 
+async function loadOpenrouterModels() {
+  const response = await fetch("/api/openrouter-models");
+  if (!response.ok) return [];
+  return response.json();
+}
+
+async function setupModelDatalist() {
+  const models = await loadOpenrouterModels();
+  const datalist = document.getElementById("openrouter-models");
+  models.forEach((model) => {
+    const option = document.createElement("option");
+    option.value = model.id;
+    option.label = model.name;
+    datalist.appendChild(option);
+  });
+}
+
 function setupImagenForm() {
   const fileInput = document.getElementById("imagen-file");
   const preview = document.getElementById("imagen-preview");
@@ -157,4 +174,5 @@ document.addEventListener("DOMContentLoaded", () => {
   setupCopyButtons();
   setupIterateHandoff();
   setupCharacterButtons();
+  setupModelDatalist();
 });

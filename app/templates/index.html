@@ -27,7 +27,7 @@
     <textarea id="generar-example-prompts" name="example_prompts" rows="3"></textarea>
 
     <label for="generar-llm-model">Modelo LLM (OpenRouter)</label>
-    <input id="generar-llm-model" name="llm_model" type="text" value="anthropic/claude-sonnet-4" required>
+    <input id="generar-llm-model" name="llm_model" type="text" list="openrouter-models" value="anthropic/claude-sonnet-4" required>
 
     <label for="generar-creativity">Creatividad: <span class="creativity-value">0.7</span></label>
     <input id="generar-creativity" name="temperature" type="range" min="0" max="1" step="0.05" value="0.7">
@@ -56,7 +56,7 @@
     <textarea id="imagen-example-prompts" name="example_prompts" rows="3"></textarea>
 
     <label for="imagen-vision-model">Modelo de vision (OpenRouter)</label>
-    <input id="imagen-vision-model" name="vision_model" type="text" value="anthropic/claude-sonnet-4" required>
+    <input id="imagen-vision-model" name="vision_model" type="text" list="openrouter-models" value="anthropic/claude-sonnet-4" required>
 
     <label for="imagen-creativity">Creatividad: <span class="creativity-value">0.7</span></label>
     <input id="imagen-creativity" name="temperature" type="range" min="0" max="1" step="0.05" value="0.7">
@@ -83,6 +83,8 @@
     <button type="button" id="iterate-this">Iterar este prompt</button>
   </div>
 </section>
+
+<datalist id="openrouter-models"></datalist>
 {% endblock %}
 {% block scripts %}
 <script src="/static/app.js"></script>

@@ -1,7 +1,13 @@
+import time
+
 import requests
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 TIMEOUT_SECONDS = 60
+MODELS_CACHE_TTL_SECONDS = 3600
+
+_models_cache: dict = {"models": None, "fetched_at": 0.0}
 
 
 def call_openrouter(
@@ -77,3 +83,26 @@ def call_openrouter(
         raise RuntimeError(
             f"Unexpected response format from OpenRouter: {response.text[:300]}"
         )
+
+
+def list_models() -> list[dict]:
+    now = time.time()
+    if (
+        _models_cache["models"] is not None
+        and (now - _models_cache["fetched_at"]) < MODELS_CACHE_TTL_SECONDS
+    ):
+        return _models_cache["models"]
+
+    try:
+        response = requests.get(OPENROUTER_MODELS_URL, timeout=TIMEOUT_SECONDS)
+        response.raise_for_status()
+        raw_models = response.json()["data"]
+    except (requests.exceptions.RequestException, ValueError, KeyError):
+        if _models_cache["models"] is not None:
+            return _models_cache["models"]
+        raise RuntimeError("Could not fetch model list from OpenRouter.")
+
+    models = [{"id": m["id"], "name": m.get("name", m["id"])} for m in raw_models]
+    _models_cache["models"] = models
+    _models_cache["fetched_at"] = now
+    return models

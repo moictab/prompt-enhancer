@@ -73,6 +73,14 @@ def test_index_renders_generar_and_imagen_tabs(api_client, auth_headers):
     assert 'id="form-iterar"' not in response.text
 
 
+def test_index_llm_model_inputs_use_openrouter_models_datalist(api_client, auth_headers):
+    response = api_client.get("/", auth=auth_headers)
+
+    assert response.status_code == 200
+    assert 'id="openrouter-models"' in response.text
+    assert 'list="openrouter-models"' in response.text
+
+
 def test_admin_page_has_management_sections(api_client, auth_headers):
     response = api_client.get("/admin", auth=auth_headers)
 
