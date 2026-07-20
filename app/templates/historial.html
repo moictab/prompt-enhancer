@@ -2,4 +2,13 @@
 {% block title %}Historial{% endblock %}
 {% block content %}
 <h1>Historial</h1>
+<table>
+  <thead>
+    <tr><th>Fecha</th><th>Modo</th><th>Familia</th><th>Positive</th><th>Negative</th></tr>
+  </thead>
+  <tbody id="history-body"></tbody>
+</table>
+{% endblock %}
+{% block scripts %}
+<script src="/static/historial.js"></script>
 {% endblock %}

@@ -39,6 +39,13 @@ def test_historial_page_renders(api_client, auth_headers):
     assert response.status_code == 200
 
 
+def test_historial_page_has_history_table(api_client, auth_headers):
+    response = api_client.get("/historial", auth=auth_headers)
+
+    assert response.status_code == 200
+    assert 'id="history-body"' in response.text
+
+
 def test_admin_page_renders(api_client, auth_headers):
     response = api_client.get("/admin", auth=auth_headers)
 
