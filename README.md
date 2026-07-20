@@ -28,4 +28,4 @@ pytest
 uvicorn app.main:app --reload
 ```
 
-Data (families, characters, the global system prompt, and history) lives under `data/`, which is gitignored and mounted as a Docker volume so it survives container rebuilds.
+Data (families, characters, the three per-mode system prompts, and history) lives under `data/`, which is gitignored and mounted as a Docker volume so it survives container rebuilds.
