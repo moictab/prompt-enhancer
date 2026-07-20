@@ -3,13 +3,15 @@
 {% block content %}
 <div class="tabs">
   <button class="tab-button active" data-tab="generar" type="button">Generar</button>
-  <button class="tab-button" data-tab="iterar" type="button">Iterar</button>
   <button class="tab-button" data-tab="imagen" type="button">Imagen</button>
 </div>
 
 <section id="tab-generar" class="tab-panel active">
   <form id="form-generar">
-    <label for="generar-user-input">Idea</label>
+    <label for="generar-previous-prompt">Prompt existente (dejalo vacio para generar desde cero)</label>
+    <textarea id="generar-previous-prompt" name="previous_prompt" rows="4"></textarea>
+
+    <label for="generar-user-input">Idea / cambios solicitados</label>
     <textarea id="generar-user-input" name="user_input" rows="4" required></textarea>
 
     <div class="characters" id="generar-characters"></div>
@@ -31,36 +33,6 @@
     <input id="generar-creativity" name="temperature" type="range" min="0" max="1" step="0.05" value="0.7">
 
     <button type="submit">Generar</button>
-  </form>
-</section>
-
-<section id="tab-iterar" class="tab-panel">
-  <form id="form-iterar">
-    <label for="iterar-previous-prompt">Prompt a modificar</label>
-    <textarea id="iterar-previous-prompt" name="previous_prompt" rows="4" required></textarea>
-
-    <label for="iterar-user-input">Cambios solicitados</label>
-    <textarea id="iterar-user-input" name="user_input" rows="4" required></textarea>
-
-    <div class="characters" id="iterar-characters"></div>
-
-    <label for="iterar-family">Familia de modelo</label>
-    <select id="iterar-family" name="family_id" required>
-      {% for family in families %}
-      <option value="{{ family.id }}">{{ family.name }}</option>
-      {% endfor %}
-    </select>
-
-    <label for="iterar-example-prompts">Prompts de ejemplo (opcional)</label>
-    <textarea id="iterar-example-prompts" name="example_prompts" rows="3"></textarea>
-
-    <label for="iterar-llm-model">Modelo LLM (OpenRouter)</label>
-    <input id="iterar-llm-model" name="llm_model" type="text" value="anthropic/claude-sonnet-4" required>
-
-    <label for="iterar-creativity">Creatividad: <span class="creativity-value">0.7</span></label>
-    <input id="iterar-creativity" name="temperature" type="range" min="0" max="1" step="0.05" value="0.7">
-
-    <button type="submit">Iterar</button>
   </form>
 </section>
 

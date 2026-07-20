@@ -57,26 +57,6 @@ function setupGenerarForm() {
     try {
       const data = await postJSON("/api/generate", {
         user_input: formData.get("user_input"),
-        family_id: formData.get("family_id"),
-        example_prompts: formData.get("example_prompts"),
-        llm_model: formData.get("llm_model"),
-        temperature: parseFloat(formData.get("temperature")),
-      });
-      showResult(data.positive_prompt, data.negative_prompt);
-    } catch (err) {
-      showError(err.message);
-    }
-  });
-}
-
-function setupIterarForm() {
-  const form = document.getElementById("form-iterar");
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const formData = new FormData(form);
-    try {
-      const data = await postJSON("/api/iterate", {
-        user_input: formData.get("user_input"),
         previous_prompt: formData.get("previous_prompt"),
         family_id: formData.get("family_id"),
         example_prompts: formData.get("example_prompts"),
@@ -102,8 +82,8 @@ function setupCopyButtons() {
 function setupIterateHandoff() {
   document.getElementById("iterate-this").addEventListener("click", () => {
     const positive = document.getElementById("result-positive").value;
-    document.getElementById("iterar-previous-prompt").value = positive;
-    document.querySelector('.tab-button[data-tab="iterar"]').click();
+    document.getElementById("generar-previous-prompt").value = positive;
+    document.querySelector('.tab-button[data-tab="generar"]').click();
   });
 }
 
@@ -127,21 +107,15 @@ async function loadCharacters() {
 
 async function setupCharacterButtons() {
   const characterList = await loadCharacters();
-  const targets = [
-    { containerId: "generar-characters", textareaId: "generar-user-input" },
-    { containerId: "iterar-characters", textareaId: "iterar-user-input" },
-  ];
-  targets.forEach(({ containerId, textareaId }) => {
-    const container = document.getElementById(containerId);
-    const textarea = document.getElementById(textareaId);
-    characterList.forEach((character) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "character-button";
-      button.textContent = character.name;
-      button.addEventListener("click", () => insertAtCursor(textarea, character.text));
-      container.appendChild(button);
-    });
+  const container = document.getElementById("generar-characters");
+  const textarea = document.getElementById("generar-user-input");
+  characterList.forEach((character) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "character-button";
+    button.textContent = character.name;
+    button.addEventListener("click", () => insertAtCursor(textarea, character.text));
+    container.appendChild(button);
   });
 }
 
@@ -179,7 +153,6 @@ document.addEventListener("DOMContentLoaded", () => {
   setupTabs();
   setupCreativitySliders();
   setupGenerarForm();
-  setupIterarForm();
   setupImagenForm();
   setupCopyButtons();
   setupIterateHandoff();
