@@ -1,3 +1,5 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
-app = FastAPI(title="Prompt Enhancer")
+from .auth import require_auth
+
+app = FastAPI(title="Prompt Enhancer", dependencies=[Depends(require_auth)])
