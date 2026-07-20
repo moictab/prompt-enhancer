@@ -22,3 +22,6 @@ build/
 nul
 Thumbs.db
 .DS_Store
+
+# App data (persisted via Docker volume)
+data/
