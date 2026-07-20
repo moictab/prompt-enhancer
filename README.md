@@ -4,11 +4,10 @@ A small, self-hosted web app that uses an LLM (via OpenRouter) to craft image-ge
 
 ## Features
 
-- **Generar** — turn a natural-language idea into a ready-to-copy positive/negative prompt pair for the selected model family.
-- **Iterar** — refine an existing prompt (generated here or pasted from elsewhere) with follow-up instructions.
+- **Generar** — turn a natural-language idea into a ready-to-copy positive/negative prompt pair for the selected model family, or refine an existing prompt (generated here or pasted from elsewhere) by leaving the "existing prompt" field filled in.
 - **Imagen** — upload an image and generate a prompt from it using an OpenRouter vision model.
 - **Personajes** — reusable text snippets you can insert into the idea/changes field with one click.
-- **Admin** — edit the global system prompt, manage model families (their rules and whether they use a negative prompt), and manage personajes, all from the browser.
+- **Admin panel** — edit the three independent system prompts (Generar/Iterar/Imagen), manage model families (their rules and whether they use negative prompts), and manage personajes, all from the browser.
 - **Historial** — read-only log of every prompt generated.
 
 ## Setup
