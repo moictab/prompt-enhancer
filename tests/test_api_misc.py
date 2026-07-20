@@ -1,6 +1,4 @@
-from unittest.mock import patch
-
-from app import characters, families, history
+from app import characters, history
 
 
 def test_get_history_requires_auth(api_client):

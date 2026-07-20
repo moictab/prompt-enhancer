@@ -19,6 +19,17 @@ def api_client(tmp_path, monkeypatch):
         yield client
 
 
+def test_startup_raises_when_admin_password_unset(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    with pytest.raises(RuntimeError, match="ADMIN_PASSWORD"):
+        with TestClient(app) as client:
+            client.get("/")
+
+
 def test_index_requires_auth(api_client):
     response = api_client.get("/")
 

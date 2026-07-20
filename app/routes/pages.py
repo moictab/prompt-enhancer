@@ -11,15 +11,15 @@ templates = Jinja2Templates(directory="app/templates")
 @router.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse(
-        "index.html", {"request": request, "families": families.list_families()}
+        request, "index.html", {"families": families.list_families()}
     )
 
 
 @router.get("/historial", response_class=HTMLResponse)
 def historial_page(request: Request):
-    return templates.TemplateResponse("historial.html", {"request": request})
+    return templates.TemplateResponse(request, "historial.html", {})
 
 
 @router.get("/admin", response_class=HTMLResponse)
 def admin_page(request: Request):
-    return templates.TemplateResponse("admin.html", {"request": request})
+    return templates.TemplateResponse(request, "admin.html", {})

@@ -33,6 +33,7 @@ function showResult(positive, negative) {
   document.getElementById("result-success").hidden = false;
   document.getElementById("result-positive").value = positive;
   document.getElementById("result-negative").value = negative;
+  document.getElementById("result-negative-group").hidden = !negative;
 }
 
 async function postJSON(url, payload) {
