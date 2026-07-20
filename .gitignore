@@ -16,6 +16,7 @@ build/
 
 # Claude Code
 .claude/
+.superpowers/
 
 # OS junk
 nul
