@@ -73,12 +73,19 @@ class SystemPromptPayload(BaseModel):
     text: str
 
 
-@router.get("/system-prompt")
-def get_system_prompt():
-    return {"text": system_prompt.read_system_prompt()}
+VALID_SYSTEM_PROMPT_MODES = {"generate", "iterate", "image"}
 
 
-@router.put("/system-prompt")
-def update_system_prompt(payload: SystemPromptPayload):
-    system_prompt.write_system_prompt(payload.text)
+@router.get("/system-prompt/{mode}")
+def get_system_prompt(mode: str):
+    if mode not in VALID_SYSTEM_PROMPT_MODES:
+        raise HTTPException(status_code=400, detail=f"Unknown mode: {mode}")
+    return {"text": system_prompt.read_system_prompt(mode)}
+
+
+@router.put("/system-prompt/{mode}")
+def update_system_prompt(mode: str, payload: SystemPromptPayload):
+    if mode not in VALID_SYSTEM_PROMPT_MODES:
+        raise HTTPException(status_code=400, detail=f"Unknown mode: {mode}")
+    system_prompt.write_system_prompt(mode, payload.text)
     return {"text": payload.text}

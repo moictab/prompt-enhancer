@@ -67,16 +67,43 @@ def test_create_list_update_delete_character(api_client, auth_headers):
     assert api_client.get("/api/admin/characters", auth=auth_headers).json() == []
 
 
-def test_get_and_update_system_prompt(api_client, auth_headers):
-    get_response = api_client.get("/api/admin/system-prompt", auth=auth_headers)
-    assert get_response.status_code == 200
-    assert get_response.json() == {"text": ""}
+def test_get_and_update_system_prompt_for_each_mode(api_client, auth_headers):
+    for mode in ["generate", "iterate", "image"]:
+        get_response = api_client.get(f"/api/admin/system-prompt/{mode}", auth=auth_headers)
+        assert get_response.status_code == 200
+        assert get_response.json() == {"text": ""}
 
-    put_response = api_client.put(
-        "/api/admin/system-prompt", json={"text": "You are an expert."}, auth=auth_headers
+        put_response = api_client.put(
+            f"/api/admin/system-prompt/{mode}",
+            json={"text": f"You are an expert at {mode}."},
+            auth=auth_headers,
+        )
+        assert put_response.status_code == 200
+
+        assert api_client.get(f"/api/admin/system-prompt/{mode}", auth=auth_headers).json() == {
+            "text": f"You are an expert at {mode}."
+        }
+
+
+def test_system_prompt_modes_are_independent(api_client, auth_headers):
+    api_client.put(
+        "/api/admin/system-prompt/generate", json={"text": "generate text"}, auth=auth_headers
     )
-    assert put_response.status_code == 200
 
-    assert api_client.get("/api/admin/system-prompt", auth=auth_headers).json() == {
-        "text": "You are an expert."
+    assert api_client.get("/api/admin/system-prompt/iterate", auth=auth_headers).json() == {
+        "text": ""
     }
+
+
+def test_get_system_prompt_rejects_unknown_mode(api_client, auth_headers):
+    response = api_client.get("/api/admin/system-prompt/bogus", auth=auth_headers)
+
+    assert response.status_code == 400
+
+
+def test_update_system_prompt_rejects_unknown_mode(api_client, auth_headers):
+    response = api_client.put(
+        "/api/admin/system-prompt/bogus", json={"text": "x"}, auth=auth_headers
+    )
+
+    assert response.status_code == 400
