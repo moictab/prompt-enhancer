@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Prompt Enhancer{% endblock %}
+{% block content %}
+<select id="generar-family">
+  {% for family in families %}
+  <option value="{{ family.id }}">{{ family.name }}</option>
+  {% endfor %}
+</select>
+{% endblock %}
