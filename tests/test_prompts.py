@@ -1,22 +1,28 @@
+from unittest.mock import patch
+
 from app.prompts import build_system_prompt, build_user_message, parse_response
 
 
-def test_build_system_prompt_combines_global_and_family():
+@patch("app.prompts.system_prompt.read_system_prompt")
+def test_build_system_prompt_combines_mode_prompt_and_family(mock_read):
+    mock_read.return_value = "global rules"
     family = {"instructions": "family rules"}
 
-    result = build_system_prompt("global rules", family, is_iteration=False)
+    result = build_system_prompt("generate", family)
 
     assert result == "global rules\n\nfamily rules"
+    mock_read.assert_called_once_with("generate")
 
 
-def test_build_system_prompt_appends_iteration_addendum():
+@patch("app.prompts.system_prompt.read_system_prompt")
+def test_build_system_prompt_uses_iterate_mode_prompt(mock_read):
+    mock_read.return_value = "iterate rules"
     family = {"instructions": "family rules"}
 
-    result = build_system_prompt("global rules", family, is_iteration=True)
+    result = build_system_prompt("iterate", family)
 
-    assert result.startswith("global rules\n\nfamily rules")
-    assert "Iteration Mode" in result
-    assert "PRESERVE the good elements" in result
+    assert result == "iterate rules\n\nfamily rules"
+    mock_read.assert_called_once_with("iterate")
 
 
 def test_build_user_message_generate_mode():

@@ -1,27 +1,10 @@
 import re
 
-ITERATION_ADDENDUM = """
-
-## Iteration Mode
-The user is refining an EXISTING prompt. You will receive:
-1. The previous prompt that was already generated
-2. The user's requested changes
-
-Your job is to:
-- PRESERVE the good elements from the previous prompt -- do not regenerate from scratch
-- Apply the user's requested changes precisely
-- Maintain the same overall style and structure
-- Only modify what the user explicitly asks to change
-- If the user asks to "add" something, integrate it naturally into the existing prompt
-- If the user asks to "remove" something, take it out cleanly without leaving gaps
-"""
+from . import system_prompt
 
 
-def build_system_prompt(global_system_prompt: str, family: dict, is_iteration: bool = False) -> str:
-    prompt = f"{global_system_prompt.strip()}\n\n{family['instructions'].strip()}"
-    if is_iteration:
-        prompt += ITERATION_ADDENDUM
-    return prompt
+def build_system_prompt(mode: str, family: dict) -> str:
+    return f"{system_prompt.read_system_prompt(mode).strip()}\n\n{family['instructions'].strip()}"
 
 
 def build_user_message(
