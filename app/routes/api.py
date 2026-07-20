@@ -3,7 +3,7 @@ import base64
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from .. import families, history, prompts, system_prompt
+from .. import characters, families, history, prompts, system_prompt
 from ..config import get_settings
 from ..openrouter_client import call_openrouter
 
@@ -184,3 +184,13 @@ async def from_image(
     )
 
     return {"positive_prompt": positive, "negative_prompt": negative}
+
+
+@router.get("/history")
+def get_history():
+    return history.list_entries()
+
+
+@router.get("/characters")
+def get_characters():
+    return characters.list_characters()
