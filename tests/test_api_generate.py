@@ -158,3 +158,26 @@ def test_generate_treats_blank_previous_prompt_as_generate_mode(mock_call, api_c
     entries = history.list_entries(path=str(tmp_path / "history.jsonl"))
     assert entries[0]["mode"] == "generate"
     assert entries[0]["previous_prompt"] is None
+
+
+@patch("app.routes.api.call_openrouter")
+def test_generate_with_previous_prompt_suppresses_negative_when_family_has_none(
+    mock_call, api_client, auth_headers, tmp_path
+):
+    family = _create_family(tmp_path, has_negative_prompt=False)
+    mock_call.return_value = "POSITIVE: updated flowing scene\nNEGATIVE: blurry"
+
+    response = api_client.post(
+        "/api/generate",
+        json={
+            "user_input": "make it night time", "previous_prompt": "a flowing scene",
+            "family_id": family["id"], "llm_model": "m",
+        },
+        auth=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "positive_prompt": "updated flowing scene",
+        "negative_prompt": "",
+    }
