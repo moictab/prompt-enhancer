@@ -3,7 +3,7 @@ import base64
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from .. import characters, families, history, prompts, system_prompt
+from .. import characters, families, history, prompts
 from ..config import get_settings
 from ..openrouter_client import call_openrouter
 
@@ -16,10 +16,7 @@ class GenerateRequest(BaseModel):
     llm_model: str
     temperature: float = 0.7
     example_prompts: str = ""
-
-
-class IterateRequest(GenerateRequest):
-    previous_prompt: str
+    previous_prompt: str = ""
 
 
 @router.post("/generate")
@@ -31,12 +28,16 @@ def generate(req: GenerateRequest):
     if family is None:
         raise HTTPException(status_code=404, detail="Unknown family_id")
 
+    is_iteration = bool(req.previous_prompt.strip())
+    mode = "iterate" if is_iteration else "generate"
+    previous_prompt = req.previous_prompt if is_iteration else None
+
     settings = get_settings()
-    system = prompts.build_system_prompt(
-        system_prompt.read_system_prompt(), family, is_iteration=False
-    )
+    system = prompts.build_system_prompt(mode, family)
     user_message = prompts.build_user_message(
-        "generate", req.user_input, example_prompts=req.example_prompts
+        mode, req.user_input,
+        previous_prompt=previous_prompt,
+        example_prompts=req.example_prompts,
     )
 
     try:
@@ -53,7 +54,7 @@ def generate(req: GenerateRequest):
     positive, negative = prompts.parse_response(response, family["has_negative_prompt"])
 
     history.append_entry(
-        mode="generate",
+        mode=mode,
         family_id=family["id"],
         family_name=family["name"],
         llm_model=req.llm_model,
@@ -61,57 +62,7 @@ def generate(req: GenerateRequest):
         temperature=req.temperature,
         user_input=req.user_input,
         example_prompts=req.example_prompts,
-        previous_prompt=None,
-        positive_prompt=positive,
-        negative_prompt=negative,
-    )
-
-    return {"positive_prompt": positive, "negative_prompt": negative}
-
-
-@router.post("/iterate")
-def iterate(req: IterateRequest):
-    if not req.user_input.strip():
-        raise HTTPException(status_code=400, detail="user_input is required")
-    if not req.previous_prompt.strip():
-        raise HTTPException(status_code=400, detail="previous_prompt is required")
-
-    family = families.get_family(req.family_id)
-    if family is None:
-        raise HTTPException(status_code=404, detail="Unknown family_id")
-
-    settings = get_settings()
-    system = prompts.build_system_prompt(
-        system_prompt.read_system_prompt(), family, is_iteration=True
-    )
-    user_message = prompts.build_user_message(
-        "iterate", req.user_input,
-        previous_prompt=req.previous_prompt, example_prompts=req.example_prompts,
-    )
-
-    try:
-        response = call_openrouter(
-            api_key=settings.openrouter_api_key,
-            model=req.llm_model,
-            system_prompt=system,
-            user_message=user_message,
-            temperature=req.temperature,
-        )
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-
-    positive, negative = prompts.parse_response(response, family["has_negative_prompt"])
-
-    history.append_entry(
-        mode="iterate",
-        family_id=family["id"],
-        family_name=family["name"],
-        llm_model=req.llm_model,
-        vision_model=None,
-        temperature=req.temperature,
-        user_input=req.user_input,
-        example_prompts=req.example_prompts,
-        previous_prompt=req.previous_prompt,
+        previous_prompt=previous_prompt,
         positive_prompt=positive,
         negative_prompt=negative,
     )
@@ -148,9 +99,7 @@ async def from_image(
     image_data_uri = f"data:{image.content_type};base64,{base64.b64encode(contents).decode('ascii')}"
 
     settings = get_settings()
-    system = prompts.build_system_prompt(
-        system_prompt.read_system_prompt(), family, is_iteration=False
-    )
+    system = prompts.build_system_prompt("image", family)
     user_message = prompts.build_user_message(
         "image", user_input, example_prompts=example_prompts
     )

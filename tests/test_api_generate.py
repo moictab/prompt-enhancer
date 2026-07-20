@@ -42,7 +42,7 @@ def test_generate_returns_parsed_prompt(mock_call, api_client, auth_headers, tmp
 
 
 @patch("app.routes.api.call_openrouter")
-def test_generate_appends_to_history(mock_call, api_client, auth_headers, tmp_path):
+def test_generate_appends_to_history_as_generate_mode(mock_call, api_client, auth_headers, tmp_path):
     family = _create_family(tmp_path)
     mock_call.return_value = "POSITIVE: a cat\nNEGATIVE: blurry"
 
@@ -57,6 +57,7 @@ def test_generate_appends_to_history(mock_call, api_client, auth_headers, tmp_pa
     assert len(entries) == 1
     assert entries[0]["mode"] == "generate"
     assert entries[0]["family_name"] == "SDXL"
+    assert entries[0]["previous_prompt"] is None
 
 
 def test_generate_rejects_blank_user_input(api_client, auth_headers, tmp_path):
@@ -94,3 +95,66 @@ def test_generate_returns_502_on_openrouter_error(mock_call, api_client, auth_he
 
     assert response.status_code == 502
     assert "rate limit" in response.json()["detail"]
+
+
+@patch("app.routes.api.call_openrouter")
+def test_generate_with_previous_prompt_returns_parsed_prompt(mock_call, api_client, auth_headers, tmp_path):
+    family = _create_family(tmp_path)
+    mock_call.return_value = "POSITIVE: a samurai with lightning\nNEGATIVE: blurry"
+
+    response = api_client.post(
+        "/api/generate",
+        json={
+            "user_input": "add lightning",
+            "previous_prompt": "a samurai in rain",
+            "family_id": family["id"],
+            "llm_model": "m",
+        },
+        auth=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "positive_prompt": "a samurai with lightning",
+        "negative_prompt": "blurry",
+    }
+
+
+@patch("app.routes.api.call_openrouter")
+def test_generate_with_previous_prompt_appends_to_history_as_iterate_mode(mock_call, api_client, auth_headers, tmp_path):
+    family = _create_family(tmp_path)
+    mock_call.return_value = "POSITIVE: updated\nNEGATIVE: "
+
+    api_client.post(
+        "/api/generate",
+        json={
+            "user_input": "add lightning", "previous_prompt": "a samurai",
+            "family_id": family["id"], "llm_model": "m",
+        },
+        auth=auth_headers,
+    )
+
+    from app import history
+    entries = history.list_entries(path=str(tmp_path / "history.jsonl"))
+    assert entries[0]["mode"] == "iterate"
+    assert entries[0]["previous_prompt"] == "a samurai"
+
+
+@patch("app.routes.api.call_openrouter")
+def test_generate_treats_blank_previous_prompt_as_generate_mode(mock_call, api_client, auth_headers, tmp_path):
+    family = _create_family(tmp_path)
+    mock_call.return_value = "POSITIVE: a cat\nNEGATIVE: "
+
+    api_client.post(
+        "/api/generate",
+        json={
+            "user_input": "a cat", "previous_prompt": "   ",
+            "family_id": family["id"], "llm_model": "m",
+        },
+        auth=auth_headers,
+    )
+
+    from app import history
+    entries = history.list_entries(path=str(tmp_path / "history.jsonl"))
+    assert entries[0]["mode"] == "generate"
+    assert entries[0]["previous_prompt"] is None
