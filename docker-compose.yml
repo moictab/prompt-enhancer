@@ -1,10 +1,24 @@
 services:
   prompt-enhancer:
     build: .
+    container_name: prompt-enhancer
     ports:
-      - "8000:8000"
+      - "8090:8000"
     volumes:
       - ./data:/app/data
     env_file:
       - .env
     restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.promptenhancer.rule=Host(`prompt-enhancer.cubi.local`)"
+      - "traefik.http.routers.promptenhancer.entrypoints=web"
+      - "traefik.http.services.promptenhancer.loadbalancer.server.port=8000"
+      - "traefik.docker.network=traefik"
+    networks:
+      - default
+      - traefik
+
+networks:
+  traefik:
+    external: true
