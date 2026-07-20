@@ -7,18 +7,24 @@ async function fetchJSON(url, options) {
   return data;
 }
 
-async function loadSystemPrompt() {
-  const data = await fetchJSON("/api/admin/system-prompt");
-  document.getElementById("system-prompt-text").value = data.text;
+const SYSTEM_PROMPT_MODES = ["generate", "iterate", "image"];
+
+async function loadSystemPrompts() {
+  for (const mode of SYSTEM_PROMPT_MODES) {
+    const data = await fetchJSON(`/api/admin/system-prompt/${mode}`);
+    document.getElementById(`system-prompt-${mode}-text`).value = data.text;
+  }
 }
 
-function setupSystemPromptForm() {
-  document.getElementById("save-system-prompt").addEventListener("click", async () => {
-    const text = document.getElementById("system-prompt-text").value;
-    await fetchJSON("/api/admin/system-prompt", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+function setupSystemPromptForms() {
+  SYSTEM_PROMPT_MODES.forEach((mode) => {
+    document.getElementById(`save-system-prompt-${mode}`).addEventListener("click", async () => {
+      const text = document.getElementById(`system-prompt-${mode}-text`).value;
+      await fetchJSON(`/api/admin/system-prompt/${mode}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
     });
   });
 }
@@ -142,8 +148,8 @@ function setupCharacterForm() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  loadSystemPrompt();
-  setupSystemPromptForm();
+  loadSystemPrompts();
+  setupSystemPromptForms();
   loadFamilies();
   setupFamilyForm();
   loadCharacters();

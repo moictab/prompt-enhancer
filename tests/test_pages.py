@@ -79,4 +79,6 @@ def test_admin_page_has_management_sections(api_client, auth_headers):
     assert response.status_code == 200
     assert 'id="family-form"' in response.text
     assert 'id="character-form"' in response.text
-    assert 'id="system-prompt-text"' in response.text
+    assert 'id="system-prompt-generate-text"' in response.text
+    assert 'id="system-prompt-iterate-text"' in response.text
+    assert 'id="system-prompt-image-text"' in response.text
