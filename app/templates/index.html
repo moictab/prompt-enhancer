@@ -1,9 +1,115 @@
 {% extends "base.html" %}
 {% block title %}Prompt Enhancer{% endblock %}
 {% block content %}
-<select id="generar-family">
-  {% for family in families %}
-  <option value="{{ family.id }}">{{ family.name }}</option>
-  {% endfor %}
-</select>
+<div class="tabs">
+  <button class="tab-button active" data-tab="generar" type="button">Generar</button>
+  <button class="tab-button" data-tab="iterar" type="button">Iterar</button>
+  <button class="tab-button" data-tab="imagen" type="button">Imagen</button>
+</div>
+
+<section id="tab-generar" class="tab-panel active">
+  <form id="form-generar">
+    <label for="generar-user-input">Idea</label>
+    <textarea id="generar-user-input" name="user_input" rows="4" required></textarea>
+
+    <div class="characters" id="generar-characters"></div>
+
+    <label for="generar-family">Familia de modelo</label>
+    <select id="generar-family" name="family_id" required>
+      {% for family in families %}
+      <option value="{{ family.id }}">{{ family.name }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="generar-example-prompts">Prompts de ejemplo (opcional)</label>
+    <textarea id="generar-example-prompts" name="example_prompts" rows="3"></textarea>
+
+    <label for="generar-llm-model">Modelo LLM (OpenRouter)</label>
+    <input id="generar-llm-model" name="llm_model" type="text" value="anthropic/claude-sonnet-4" required>
+
+    <label for="generar-creativity">Creatividad: <span class="creativity-value">0.7</span></label>
+    <input id="generar-creativity" name="temperature" type="range" min="0" max="1" step="0.05" value="0.7">
+
+    <button type="submit">Generar</button>
+  </form>
+</section>
+
+<section id="tab-iterar" class="tab-panel">
+  <form id="form-iterar">
+    <label for="iterar-previous-prompt">Prompt a modificar</label>
+    <textarea id="iterar-previous-prompt" name="previous_prompt" rows="4" required></textarea>
+
+    <label for="iterar-user-input">Cambios solicitados</label>
+    <textarea id="iterar-user-input" name="user_input" rows="4" required></textarea>
+
+    <div class="characters" id="iterar-characters"></div>
+
+    <label for="iterar-family">Familia de modelo</label>
+    <select id="iterar-family" name="family_id" required>
+      {% for family in families %}
+      <option value="{{ family.id }}">{{ family.name }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="iterar-example-prompts">Prompts de ejemplo (opcional)</label>
+    <textarea id="iterar-example-prompts" name="example_prompts" rows="3"></textarea>
+
+    <label for="iterar-llm-model">Modelo LLM (OpenRouter)</label>
+    <input id="iterar-llm-model" name="llm_model" type="text" value="anthropic/claude-sonnet-4" required>
+
+    <label for="iterar-creativity">Creatividad: <span class="creativity-value">0.7</span></label>
+    <input id="iterar-creativity" name="temperature" type="range" min="0" max="1" step="0.05" value="0.7">
+
+    <button type="submit">Iterar</button>
+  </form>
+</section>
+
+<section id="tab-imagen" class="tab-panel">
+  <form id="form-imagen">
+    <label for="imagen-file">Imagen</label>
+    <input id="imagen-file" name="image" type="file" accept="image/jpeg,image/png,image/webp" required>
+    <img id="imagen-preview" class="image-preview" hidden alt="Previsualizacion">
+
+    <label for="imagen-user-input">Idea adicional (opcional)</label>
+    <textarea id="imagen-user-input" name="user_input" rows="3"></textarea>
+
+    <label for="imagen-family">Familia de modelo</label>
+    <select id="imagen-family" name="family_id" required>
+      {% for family in families %}
+      <option value="{{ family.id }}">{{ family.name }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="imagen-example-prompts">Prompts de ejemplo (opcional)</label>
+    <textarea id="imagen-example-prompts" name="example_prompts" rows="3"></textarea>
+
+    <label for="imagen-vision-model">Modelo de vision (OpenRouter)</label>
+    <input id="imagen-vision-model" name="vision_model" type="text" value="anthropic/claude-sonnet-4" required>
+
+    <label for="imagen-creativity">Creatividad: <span class="creativity-value">0.7</span></label>
+    <input id="imagen-creativity" name="temperature" type="range" min="0" max="1" step="0.05" value="0.7">
+
+    <button type="submit">Generar desde imagen</button>
+  </form>
+</section>
+
+<section id="result-panel" class="result-panel" hidden>
+  <div id="result-error" class="error-banner" hidden></div>
+  <div id="result-success" hidden>
+    <label>Positive Prompt</label>
+    <div class="copy-row">
+      <textarea id="result-positive" readonly rows="4"></textarea>
+      <button type="button" id="copy-positive">Copiar</button>
+    </div>
+    <label>Negative Prompt</label>
+    <div class="copy-row">
+      <textarea id="result-negative" readonly rows="2"></textarea>
+      <button type="button" id="copy-negative">Copiar</button>
+    </div>
+    <button type="button" id="iterate-this">Iterar este prompt</button>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/app.js"></script>
 {% endblock %}
