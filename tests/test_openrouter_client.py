@@ -93,3 +93,13 @@ def test_call_openrouter_raises_on_malformed_response(mock_post):
 
     with pytest.raises(RuntimeError, match="Unexpected response format"):
         call_openrouter(api_key="key", model="m", system_prompt="s", user_message="u")
+
+
+@patch("app.openrouter_client.requests.post")
+def test_call_openrouter_raises_on_json_decode_error(mock_post):
+    response = _mock_response(200, text="not json")
+    response.json.side_effect = ValueError("not json")
+    mock_post.return_value = response
+
+    with pytest.raises(RuntimeError, match="Unexpected response format"):
+        call_openrouter(api_key="key", model="m", system_prompt="s", user_message="u")

@@ -70,10 +70,10 @@ def call_openrouter(
             f"OpenRouter returned HTTP {response.status_code}: {response.text[:300]}"
         )
 
-    data = response.json()
     try:
+        data = response.json()
         return data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError):
+    except (ValueError, KeyError, IndexError):
         raise RuntimeError(
-            f"Unexpected response format from OpenRouter: {str(data)[:300]}"
+            f"Unexpected response format from OpenRouter: {response.text[:300]}"
         )
