@@ -144,11 +144,42 @@ async function setupCharacterButtons() {
   });
 }
 
+function setupImagenForm() {
+  const fileInput = document.getElementById("imagen-file");
+  const preview = document.getElementById("imagen-preview");
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) {
+      preview.hidden = true;
+      return;
+    }
+    preview.src = URL.createObjectURL(file);
+    preview.hidden = false;
+  });
+
+  const form = document.getElementById("form-imagen");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = new FormData(form);
+    try {
+      const response = await fetch("/api/from-image", { method: "POST", body: formData });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || "Error desconocido");
+      }
+      showResult(data.positive_prompt, data.negative_prompt);
+    } catch (err) {
+      showError(err.message);
+    }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   setupTabs();
   setupCreativitySliders();
   setupGenerarForm();
   setupIterarForm();
+  setupImagenForm();
   setupCopyButtons();
   setupIterateHandoff();
   setupCharacterButtons();
