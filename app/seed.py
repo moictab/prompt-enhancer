@@ -2,7 +2,33 @@ from pathlib import Path
 
 from . import families, storage, system_prompt
 
-DEFAULT_GLOBAL_SYSTEM_PROMPT = """You are an expert AI image-generation prompt engineer. Transform the user's idea (or requested changes to an existing prompt, or an attached reference image) into a high-quality prompt for the selected model family, following that family's specific rules exactly.
+DEFAULT_GENERATE_SYSTEM_PROMPT = """You are an expert AI image-generation prompt engineer. The user will describe a new image idea in natural language -- however detailed or vague. Transform it into a high-quality prompt for the selected model family, following that family's specific rules exactly. Fill in reasonable creative details where the user was vague, without contradicting anything they specified.
+
+Be specific and vivid. Replace vague words with concrete descriptions.
+
+You MUST output in exactly this format:
+POSITIVE: <the enhanced positive prompt>
+NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
+"""
+
+DEFAULT_ITERATE_SYSTEM_PROMPT = """You are an expert AI image-generation prompt engineer. The user is refining an EXISTING prompt. You will receive the previous prompt that was already generated and the user's requested changes.
+
+Your job is to:
+- PRESERVE the good elements from the previous prompt -- do not regenerate from scratch
+- Apply the user's requested changes precisely
+- Maintain the same overall style and structure
+- Only modify what the user explicitly asks to change
+- If the user asks to "add" something, integrate it naturally into the existing prompt
+- If the user asks to "remove" something, take it out cleanly without leaving gaps
+
+Follow the selected model family's specific rules exactly.
+
+You MUST output in exactly this format:
+POSITIVE: <the enhanced positive prompt>
+NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
+"""
+
+DEFAULT_IMAGE_SYSTEM_PROMPT = """You are an expert AI image-generation prompt engineer. The user has attached a reference image, optionally with additional text describing further intent. Analyze the image's subject, composition, lighting, and style, and translate what you observe into a prompt following the selected model family's rules. If additional text is provided, prioritize it for adjustments (e.g., style changes, additions) while keeping the image as the primary source of truth for content.
 
 Be specific and vivid. Replace vague words with concrete descriptions.
 
@@ -53,7 +79,7 @@ Do NOT generate a negative prompt. Z-Image-Turbo uses guidance_scale=0.0, so neg
 def ensure_seed_data(data_dir: str) -> None:
     families_path = f"{data_dir}/families.json"
     characters_path = f"{data_dir}/characters.json"
-    system_prompt_path = f"{data_dir}/system_prompt.txt"
+    system_prompts_path = f"{data_dir}/system_prompts.json"
 
     if not Path(families_path).exists():
         families.create_family("SDXL", SDXL_INSTRUCTIONS, True, path=families_path)
@@ -62,5 +88,7 @@ def ensure_seed_data(data_dir: str) -> None:
     if not Path(characters_path).exists():
         storage.write_json(characters_path, [])
 
-    if not Path(system_prompt_path).exists():
-        system_prompt.write_system_prompt(DEFAULT_GLOBAL_SYSTEM_PROMPT, path=system_prompt_path)
+    if not Path(system_prompts_path).exists():
+        system_prompt.write_system_prompt("generate", DEFAULT_GENERATE_SYSTEM_PROMPT, path=system_prompts_path)
+        system_prompt.write_system_prompt("iterate", DEFAULT_ITERATE_SYSTEM_PROMPT, path=system_prompts_path)
+        system_prompt.write_system_prompt("image", DEFAULT_IMAGE_SYSTEM_PROMPT, path=system_prompts_path)

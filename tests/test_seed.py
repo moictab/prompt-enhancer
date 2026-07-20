@@ -23,12 +23,15 @@ def test_ensure_seed_data_creates_empty_characters_file(tmp_path):
     assert characters == []
 
 
-def test_ensure_seed_data_creates_system_prompt_file(tmp_path):
+def test_ensure_seed_data_creates_all_three_system_prompts(tmp_path):
     ensure_seed_data(str(tmp_path))
 
-    text = (tmp_path / "system_prompt.txt").read_text(encoding="utf-8")
-    assert "POSITIVE:" in text
-    assert "NEGATIVE:" in text
+    data = json.loads((tmp_path / "system_prompts.json").read_text())
+    assert set(data.keys()) == {"generate", "iterate", "image"}
+    assert "POSITIVE:" in data["generate"]
+    assert "POSITIVE:" in data["iterate"]
+    assert "POSITIVE:" in data["image"]
+    assert "PRESERVE" in data["iterate"]
 
 
 def test_ensure_seed_data_is_idempotent(tmp_path):
@@ -39,9 +42,10 @@ def test_ensure_seed_data_is_idempotent(tmp_path):
     assert len(families) == 2
 
 
-def test_ensure_seed_data_does_not_overwrite_existing_system_prompt(tmp_path):
-    (tmp_path / "system_prompt.txt").write_text("custom prompt", encoding="utf-8")
+def test_ensure_seed_data_does_not_overwrite_existing_system_prompts(tmp_path):
+    (tmp_path / "system_prompts.json").write_text('{"generate": "custom"}', encoding="utf-8")
 
     ensure_seed_data(str(tmp_path))
 
-    assert (tmp_path / "system_prompt.txt").read_text(encoding="utf-8") == "custom prompt"
+    data = json.loads((tmp_path / "system_prompts.json").read_text())
+    assert data == {"generate": "custom"}
