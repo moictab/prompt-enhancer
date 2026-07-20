@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException
+import base64
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from .. import families, history, prompts, system_prompt
@@ -110,6 +112,73 @@ def iterate(req: IterateRequest):
         user_input=req.user_input,
         example_prompts=req.example_prompts,
         previous_prompt=req.previous_prompt,
+        positive_prompt=positive,
+        negative_prompt=negative,
+    )
+
+    return {"positive_prompt": positive, "negative_prompt": negative}
+
+
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+@router.post("/from-image")
+async def from_image(
+    image: UploadFile = File(...),
+    family_id: str = Form(...),
+    vision_model: str = Form(...),
+    user_input: str = Form(""),
+    example_prompts: str = Form(""),
+    temperature: float = Form(0.7),
+):
+    if image.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported image type: {image.content_type}"
+        )
+
+    contents = await image.read()
+    if len(contents) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Image exceeds 10 MB limit")
+
+    family = families.get_family(family_id)
+    if family is None:
+        raise HTTPException(status_code=404, detail="Unknown family_id")
+
+    image_data_uri = f"data:{image.content_type};base64,{base64.b64encode(contents).decode('ascii')}"
+
+    settings = get_settings()
+    system = prompts.build_system_prompt(
+        system_prompt.read_system_prompt(), family, is_iteration=False
+    )
+    user_message = prompts.build_user_message(
+        "image", user_input, example_prompts=example_prompts
+    )
+
+    try:
+        response = call_openrouter(
+            api_key=settings.openrouter_api_key,
+            model=vision_model,
+            system_prompt=system,
+            user_message=user_message,
+            temperature=temperature,
+            image_data_uri=image_data_uri,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    positive, negative = prompts.parse_response(response, family["has_negative_prompt"])
+
+    history.append_entry(
+        mode="image",
+        family_id=family["id"],
+        family_name=family["name"],
+        llm_model=None,
+        vision_model=vision_model,
+        temperature=temperature,
+        user_input=user_input,
+        example_prompts=example_prompts,
+        previous_prompt=None,
         positive_prompt=positive,
         negative_prompt=negative,
     )
