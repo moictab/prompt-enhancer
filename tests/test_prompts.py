@@ -43,6 +43,49 @@ def test_build_user_message_iterate_mode():
     assert result == "## Prompt Previo\na samurai in rain\n\n## Cambios Solicitados\nadd lightning"
 
 
+def test_build_user_message_with_characters_adds_section_with_instruction():
+    result = build_user_message(
+        "generate", "a cyberpunk samurai",
+        characters=[{"name": "Kaito", "text": "a stoic ronin with a scarred left eye"}],
+    )
+
+    assert result == (
+        "## Idea\na cyberpunk samurai\n\n"
+        "## Personajes\n"
+        "Incluye a los siguientes personajes en el prompt final tal como se describen a "
+        "continuacion, sin modificar ni parafrasear su texto. Completa de forma coherente "
+        "cualquier detalle de cada personaje que no este especificado.\n\n"
+        "- Kaito: a stoic ronin with a scarred left eye"
+    )
+
+
+def test_build_user_message_with_multiple_characters_lists_each_on_its_own_line():
+    result = build_user_message(
+        "generate", "a cyberpunk samurai",
+        characters=[
+            {"name": "Kaito", "text": "a stoic ronin with a scarred left eye"},
+            {"name": "Mika", "text": "a neon-haired hacker in a trench coat"},
+        ],
+    )
+
+    assert result.endswith(
+        "- Kaito: a stoic ronin with a scarred left eye\n"
+        "- Mika: a neon-haired hacker in a trench coat"
+    )
+
+
+def test_build_user_message_omits_characters_section_when_none_selected():
+    result = build_user_message("generate", "a cyberpunk samurai", characters=[])
+
+    assert "Personajes" not in result
+
+
+def test_build_user_message_omits_characters_section_when_not_passed():
+    result = build_user_message("generate", "a cyberpunk samurai")
+
+    assert "Personajes" not in result
+
+
 def test_build_user_message_image_mode_without_extra_text():
     result = build_user_message("image", "")
 

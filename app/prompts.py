@@ -7,11 +7,19 @@ def build_system_prompt(mode: str, family: dict) -> str:
     return f"{system_prompt.read_system_prompt(mode).strip()}\n\n{family['instructions'].strip()}"
 
 
+CHARACTERS_INSTRUCTION = (
+    "Incluye a los siguientes personajes en el prompt final tal como se describen a "
+    "continuacion, sin modificar ni parafrasear su texto. Completa de forma coherente "
+    "cualquier detalle de cada personaje que no este especificado."
+)
+
+
 def build_user_message(
     mode: str,
     user_input: str,
     previous_prompt: str | None = None,
     example_prompts: str | None = None,
+    characters: list[dict] | None = None,
 ) -> str:
     parts = []
     if mode == "iterate":
@@ -23,6 +31,10 @@ def build_user_message(
             parts.append(f"## Idea\n{user_input.strip()}")
     else:
         parts.append(f"## Idea\n{user_input}")
+
+    if characters:
+        character_lines = "\n".join(f"- {c['name']}: {c['text']}" for c in characters)
+        parts.append(f"## Personajes\n{CHARACTERS_INSTRUCTION}\n\n{character_lines}")
 
     if example_prompts and example_prompts.strip():
         parts.append(f"## Prompts de Ejemplo\n{example_prompts.strip()}")

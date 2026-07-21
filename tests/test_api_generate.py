@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from app import families
+from app import characters, families
 
 
 def _create_family(tmp_path, has_negative_prompt=True):
@@ -181,3 +181,60 @@ def test_generate_with_previous_prompt_suppresses_negative_when_family_has_none(
         "positive_prompt": "updated flowing scene",
         "negative_prompt": "",
     }
+
+
+@patch("app.routes.api.call_openrouter")
+def test_generate_resolves_character_ids_into_user_message(mock_call, api_client, auth_headers, tmp_path):
+    family = _create_family(tmp_path)
+    character = characters.create_character(
+        "Kaito", "a stoic ronin with a scarred left eye", path=str(tmp_path / "characters.json")
+    )
+    mock_call.return_value = "POSITIVE: a cat\nNEGATIVE: "
+
+    api_client.post(
+        "/api/generate",
+        json={
+            "user_input": "a cat", "family_id": family["id"], "llm_model": "m",
+            "character_ids": [character["id"]],
+        },
+        auth=auth_headers,
+    )
+
+    sent_user_message = mock_call.call_args.kwargs["user_message"]
+    assert "## Personajes" in sent_user_message
+    assert "Kaito" in sent_user_message
+    assert "a stoic ronin with a scarred left eye" in sent_user_message
+
+
+@patch("app.routes.api.call_openrouter")
+def test_generate_ignores_unknown_character_ids(mock_call, api_client, auth_headers, tmp_path):
+    family = _create_family(tmp_path)
+    mock_call.return_value = "POSITIVE: a cat\nNEGATIVE: "
+
+    response = api_client.post(
+        "/api/generate",
+        json={
+            "user_input": "a cat", "family_id": family["id"], "llm_model": "m",
+            "character_ids": ["nonexistent-id"],
+        },
+        auth=auth_headers,
+    )
+
+    assert response.status_code == 200
+    sent_user_message = mock_call.call_args.kwargs["user_message"]
+    assert "Personajes" not in sent_user_message
+
+
+@patch("app.routes.api.call_openrouter")
+def test_generate_without_character_ids_omits_characters_section(mock_call, api_client, auth_headers, tmp_path):
+    family = _create_family(tmp_path)
+    mock_call.return_value = "POSITIVE: a cat\nNEGATIVE: "
+
+    api_client.post(
+        "/api/generate",
+        json={"user_input": "a cat", "family_id": family["id"], "llm_model": "m"},
+        auth=auth_headers,
+    )
+
+    sent_user_message = mock_call.call_args.kwargs["user_message"]
+    assert "Personajes" not in sent_user_message

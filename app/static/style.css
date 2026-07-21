@@ -14,6 +14,7 @@ label { font-weight: 600; }
 textarea, input[type="text"], select { width: 100%; padding: 0.5rem; background: #2a2a2a; border: 1px solid #444; color: #eee; }
 .characters { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .character-button { padding: 0.3rem 0.6rem; background: #333; border: 1px solid #555; color: #eee; cursor: pointer; font-size: 0.85rem; }
+.character-button.selected { background: #3a6ea5; border-color: #3a6ea5; }
 .image-preview { max-width: 100%; max-height: 200px; }
 button[type="submit"], #iterate-this, .copy-row button { padding: 0.6rem; background: #3a6ea5; border: none; color: #fff; cursor: pointer; }
 .result-panel { margin-top: 1.5rem; border-top: 1px solid #444; padding-top: 1rem; }

@@ -17,6 +17,7 @@ class GenerateRequest(BaseModel):
     temperature: float = 0.7
     example_prompts: str = ""
     previous_prompt: str = ""
+    character_ids: list[str] = []
 
 
 @router.post("/generate")
@@ -31,6 +32,9 @@ def generate(req: GenerateRequest):
     is_iteration = bool(req.previous_prompt.strip())
     mode = "iterate" if is_iteration else "generate"
     previous_prompt = req.previous_prompt if is_iteration else None
+    selected_characters = [
+        c for c in characters.list_characters() if c["id"] in req.character_ids
+    ]
 
     settings = get_settings()
     system = prompts.build_system_prompt(mode, family)
@@ -38,6 +42,7 @@ def generate(req: GenerateRequest):
         mode, req.user_input,
         previous_prompt=previous_prompt,
         example_prompts=req.example_prompts,
+        characters=selected_characters,
     )
 
     try:

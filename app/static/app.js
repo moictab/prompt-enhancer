@@ -1,3 +1,5 @@
+const selectedCharacterIds = new Set();
+
 function setupTabs() {
   const buttons = document.querySelectorAll(".tab-button");
   buttons.forEach((button) => {
@@ -62,6 +64,7 @@ function setupGenerarForm() {
         example_prompts: formData.get("example_prompts"),
         llm_model: formData.get("llm_model"),
         temperature: parseFloat(formData.get("temperature")),
+        character_ids: Array.from(selectedCharacterIds),
       });
       showResult(data.positive_prompt, data.negative_prompt);
     } catch (err) {
@@ -87,18 +90,6 @@ function setupIterateHandoff() {
   });
 }
 
-function insertAtCursor(textarea, text) {
-  const start = textarea.selectionStart;
-  const end = textarea.selectionEnd;
-  const before = textarea.value.slice(0, start);
-  const after = textarea.value.slice(end);
-  textarea.value = `${before}${text}${after}`;
-  const cursor = start + text.length;
-  textarea.selectionStart = cursor;
-  textarea.selectionEnd = cursor;
-  textarea.focus();
-}
-
 async function loadCharacters() {
   const response = await fetch("/api/characters");
   if (!response.ok) return [];
@@ -108,13 +99,20 @@ async function loadCharacters() {
 async function setupCharacterButtons() {
   const characterList = await loadCharacters();
   const container = document.getElementById("generar-characters");
-  const textarea = document.getElementById("generar-user-input");
   characterList.forEach((character) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "character-button";
     button.textContent = character.name;
-    button.addEventListener("click", () => insertAtCursor(textarea, character.text));
+    button.addEventListener("click", () => {
+      if (selectedCharacterIds.has(character.id)) {
+        selectedCharacterIds.delete(character.id);
+        button.classList.remove("selected");
+      } else {
+        selectedCharacterIds.add(character.id);
+        button.classList.add("selected");
+      }
+    });
     container.appendChild(button);
   });
 }
