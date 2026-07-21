@@ -54,12 +54,16 @@ def test_get_openrouter_models_requires_auth(api_client):
 
 @patch("app.routes.api.list_models")
 def test_get_openrouter_models_returns_list(mock_list_models, api_client, auth_headers):
-    mock_list_models.return_value = [{"id": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4"}]
+    mock_list_models.return_value = [
+        {"id": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4", "supports_images": True}
+    ]
 
     response = api_client.get("/api/openrouter-models", auth=auth_headers)
 
     assert response.status_code == 200
-    assert response.json() == [{"id": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4"}]
+    assert response.json() == [
+        {"id": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4", "supports_images": True}
+    ]
 
 
 @patch("app.routes.api.list_models")

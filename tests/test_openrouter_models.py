@@ -25,15 +25,21 @@ def _mock_models_response(models):
 @patch("app.openrouter_client.requests.get")
 def test_list_models_returns_simplified_id_name_list(mock_get):
     mock_get.return_value = _mock_models_response([
-        {"id": "anthropic/claude-sonnet-4", "name": "Anthropic: Claude Sonnet 4", "extra": "ignored"},
-        {"id": "openai/gpt-4o", "name": "OpenAI: GPT-4o"},
+        {
+            "id": "anthropic/claude-sonnet-4", "name": "Anthropic: Claude Sonnet 4", "extra": "ignored",
+            "architecture": {"input_modalities": ["text"]},
+        },
+        {
+            "id": "openai/gpt-4o", "name": "OpenAI: GPT-4o",
+            "architecture": {"input_modalities": ["text", "image"]},
+        },
     ])
 
     result = openrouter_client.list_models()
 
     assert result == [
-        {"id": "anthropic/claude-sonnet-4", "name": "Anthropic: Claude Sonnet 4"},
-        {"id": "openai/gpt-4o", "name": "OpenAI: GPT-4o"},
+        {"id": "anthropic/claude-sonnet-4", "name": "Anthropic: Claude Sonnet 4", "supports_images": False},
+        {"id": "openai/gpt-4o", "name": "OpenAI: GPT-4o", "supports_images": True},
     ]
 
 
@@ -43,7 +49,27 @@ def test_list_models_falls_back_to_id_when_name_missing(mock_get):
 
     result = openrouter_client.list_models()
 
-    assert result == [{"id": "some/model", "name": "some/model"}]
+    assert result == [{"id": "some/model", "name": "some/model", "supports_images": False}]
+
+
+@patch("app.openrouter_client.requests.get")
+def test_list_models_marks_supports_images_true_when_image_in_input_modalities(mock_get):
+    mock_get.return_value = _mock_models_response([
+        {"id": "vision/model", "name": "Vision Model", "architecture": {"input_modalities": ["text", "image"]}},
+    ])
+
+    result = openrouter_client.list_models()
+
+    assert result == [{"id": "vision/model", "name": "Vision Model", "supports_images": True}]
+
+
+@patch("app.openrouter_client.requests.get")
+def test_list_models_marks_supports_images_false_when_architecture_missing(mock_get):
+    mock_get.return_value = _mock_models_response([{"id": "no-arch/model", "name": "No Arch"}])
+
+    result = openrouter_client.list_models()
+
+    assert result == [{"id": "no-arch/model", "name": "No Arch", "supports_images": False}]
 
 
 @patch("app.openrouter_client.requests.get")
@@ -76,7 +102,7 @@ def test_list_models_falls_back_to_stale_cache_on_error(mock_get):
 
     result = openrouter_client.list_models()
 
-    assert result == [{"id": "a/b", "name": "A B"}]
+    assert result == [{"id": "a/b", "name": "A B", "supports_images": False}]
 
 
 @patch("app.openrouter_client.requests.get")

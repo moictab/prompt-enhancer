@@ -125,15 +125,22 @@ async function loadOpenrouterModels() {
   return response.json();
 }
 
-async function setupModelDatalist() {
-  const models = await loadOpenrouterModels();
-  const datalist = document.getElementById("openrouter-models");
+function appendModelOptions(datalist, models) {
   models.forEach((model) => {
     const option = document.createElement("option");
     option.value = model.id;
     option.label = model.name;
     datalist.appendChild(option);
   });
+}
+
+async function setupModelDatalist() {
+  const models = await loadOpenrouterModels();
+  appendModelOptions(document.getElementById("openrouter-models"), models);
+  appendModelOptions(
+    document.getElementById("openrouter-vision-models"),
+    models.filter((model) => model.supports_images)
+  );
 }
 
 function setupImagenForm() {

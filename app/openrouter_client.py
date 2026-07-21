@@ -102,7 +102,14 @@ def list_models() -> list[dict]:
             return _models_cache["models"]
         raise RuntimeError("Could not fetch model list from OpenRouter.")
 
-    models = [{"id": m["id"], "name": m.get("name", m["id"])} for m in raw_models]
+    models = [
+        {
+            "id": m["id"],
+            "name": m.get("name", m["id"]),
+            "supports_images": "image" in m.get("architecture", {}).get("input_modalities", []),
+        }
+        for m in raw_models
+    ]
     _models_cache["models"] = models
     _models_cache["fetched_at"] = now
     return models

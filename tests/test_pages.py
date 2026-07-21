@@ -81,6 +81,14 @@ def test_index_llm_model_inputs_use_openrouter_models_datalist(api_client, auth_
     assert 'list="openrouter-models"' in response.text
 
 
+def test_index_vision_model_input_uses_filtered_vision_datalist(api_client, auth_headers):
+    response = api_client.get("/", auth=auth_headers)
+
+    assert response.status_code == 200
+    assert 'id="openrouter-vision-models"' in response.text
+    assert 'list="openrouter-vision-models"' in response.text
+
+
 def test_admin_page_has_management_sections(api_client, auth_headers):
     response = api_client.get("/admin", auth=auth_headers)
 
