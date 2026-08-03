@@ -1,3 +1,4 @@
+import logging
 import time
 
 import requests
@@ -6,6 +7,8 @@ OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 TIMEOUT_SECONDS = 60
 MODELS_CACHE_TTL_SECONDS = 3600
+
+logger = logging.getLogger("app.openrouter")
 
 _models_cache: dict = {"models": None, "fetched_at": 0.0}
 
@@ -41,21 +44,31 @@ def call_openrouter(
         "max_tokens": 1024,
     }
 
+    start = time.monotonic()
     try:
         response = requests.post(
             OPENROUTER_API_URL, headers=headers, json=payload, timeout=TIMEOUT_SECONDS
         )
     except requests.exceptions.Timeout:
+        logger.warning("openrouter call timed out model=%s after=%ss", model, TIMEOUT_SECONDS)
         raise RuntimeError(
             f"OpenRouter request timed out after {TIMEOUT_SECONDS}s. "
             "The LLM may be overloaded -- try again."
         )
     except requests.exceptions.ConnectionError:
+        logger.warning("openrouter call connection error model=%s", model)
         raise RuntimeError(
             "Could not connect to OpenRouter. Check your internet connection."
         )
     except requests.exceptions.RequestException as e:
+        logger.warning("openrouter call network error model=%s error=%s", model, e)
         raise RuntimeError(f"Network error calling OpenRouter: {e}")
+
+    duration_ms = (time.monotonic() - start) * 1000
+    logger.info(
+        "openrouter call model=%s status=%d duration_ms=%.1f",
+        model, response.status_code, duration_ms,
+    )
 
     if response.status_code == 401:
         raise RuntimeError(

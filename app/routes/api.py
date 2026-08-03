@@ -1,4 +1,5 @@
 import base64
+import logging
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -8,6 +9,7 @@ from ..config import get_settings
 from ..openrouter_client import call_openrouter, list_models
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger("app.api")
 
 
 class GenerateRequest(BaseModel):
@@ -45,6 +47,11 @@ def generate(req: GenerateRequest):
         characters=selected_characters,
     )
 
+    logger.info(
+        "generate request mode=%s family_id=%s model=%s temperature=%.2f characters=%d",
+        mode, req.family_id, req.llm_model, req.temperature, len(selected_characters),
+    )
+
     try:
         response = call_openrouter(
             api_key=settings.openrouter_api_key,
@@ -54,9 +61,16 @@ def generate(req: GenerateRequest):
             temperature=req.temperature,
         )
     except RuntimeError as e:
+        logger.warning(
+            "generate request failed mode=%s family_id=%s error=%s", mode, req.family_id, e
+        )
         raise HTTPException(status_code=502, detail=str(e))
 
     positive, negative = prompts.parse_response(response, family["has_negative_prompt"])
+    logger.info(
+        "generate request succeeded mode=%s family_id=%s positive_len=%d negative_len=%d",
+        mode, req.family_id, len(positive), len(negative),
+    )
 
     history.append_entry(
         mode=mode,
@@ -109,6 +123,11 @@ async def from_image(
         "image", user_input, example_prompts=example_prompts
     )
 
+    logger.info(
+        "from-image request family_id=%s vision_model=%s temperature=%.2f image_bytes=%d",
+        family_id, vision_model, temperature, len(contents),
+    )
+
     try:
         response = call_openrouter(
             api_key=settings.openrouter_api_key,
@@ -119,9 +138,16 @@ async def from_image(
             image_data_uri=image_data_uri,
         )
     except RuntimeError as e:
+        logger.warning(
+            "from-image request failed family_id=%s error=%s", family_id, e
+        )
         raise HTTPException(status_code=502, detail=str(e))
 
     positive, negative = prompts.parse_response(response, family["has_negative_prompt"])
+    logger.info(
+        "from-image request succeeded family_id=%s positive_len=%d negative_len=%d",
+        family_id, len(positive), len(negative),
+    )
 
     history.append_entry(
         mode="image",

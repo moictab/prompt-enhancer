@@ -73,13 +73,53 @@ function setupGenerarForm() {
   });
 }
 
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const succeeded = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  if (!succeeded) {
+    throw new Error("execCommand copy failed");
+  }
+}
+
+function flashButtonFeedback(button, message, isError) {
+  clearTimeout(button._feedbackTimeout);
+  if (button.dataset.originalText === undefined) {
+    button.dataset.originalText = button.textContent;
+  }
+  button.textContent = message;
+  button.classList.toggle("copy-error", !!isError);
+  button._feedbackTimeout = setTimeout(() => {
+    button.textContent = button.dataset.originalText;
+    button.classList.remove("copy-error");
+  }, 1500);
+}
+
+function setupCopyButton(buttonId, sourceId) {
+  const button = document.getElementById(buttonId);
+  button.addEventListener("click", async () => {
+    try {
+      await copyText(document.getElementById(sourceId).value);
+      flashButtonFeedback(button, "Copiado!", false);
+    } catch (err) {
+      flashButtonFeedback(button, "Error al copiar", true);
+    }
+  });
+}
+
 function setupCopyButtons() {
-  document.getElementById("copy-positive").addEventListener("click", () => {
-    navigator.clipboard.writeText(document.getElementById("result-positive").value);
-  });
-  document.getElementById("copy-negative").addEventListener("click", () => {
-    navigator.clipboard.writeText(document.getElementById("result-negative").value);
-  });
+  setupCopyButton("copy-positive", "result-positive");
+  setupCopyButton("copy-negative", "result-negative");
 }
 
 function setupIterateHandoff() {
