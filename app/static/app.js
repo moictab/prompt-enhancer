@@ -48,6 +48,22 @@ function showResult(positive, negative, cost) {
   costEl.textContent = costText || "";
 }
 
+function formatFloatingCost(cost) {
+  if (cost === null || cost === undefined) return null;
+  return `-$${cost.toFixed(6)}`;
+}
+
+function spawnFloatingText(text, originEl) {
+  const rect = originEl.getBoundingClientRect();
+  const el = document.createElement("span");
+  el.className = "floating-cost";
+  el.textContent = text;
+  el.style.left = `${rect.left + rect.width / 2}px`;
+  el.style.top = `${rect.top}px`;
+  el.addEventListener("animationend", () => el.remove());
+  document.body.appendChild(el);
+}
+
 async function postJSON(url, payload) {
   const response = await fetch(url, {
     method: "POST",
@@ -63,6 +79,7 @@ async function postJSON(url, payload) {
 
 function setupGenerarForm() {
   const form = document.getElementById("form-generar");
+  const submitButton = form.querySelector('button[type="submit"]');
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(form);
@@ -77,6 +94,8 @@ function setupGenerarForm() {
         character_ids: Array.from(selectedCharacterIds),
       });
       showResult(data.positive_prompt, data.negative_prompt, data.cost);
+      const floatingCost = formatFloatingCost(data.cost);
+      if (floatingCost) spawnFloatingText(floatingCost, submitButton);
     } catch (err) {
       showError(err.message);
     }
