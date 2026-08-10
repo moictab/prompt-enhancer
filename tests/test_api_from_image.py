@@ -2,6 +2,7 @@ import base64
 from unittest.mock import patch
 
 from app import families
+from app.openrouter_client import OpenRouterResult
 
 # 1x1 transparent PNG
 PNG_BYTES = base64.b64decode(
@@ -30,7 +31,7 @@ def test_from_image_requires_auth(api_client):
 @patch("app.routes.api.call_openrouter")
 def test_from_image_returns_parsed_prompt(mock_call, api_client, auth_headers, tmp_path):
     family = _create_family(tmp_path)
-    mock_call.return_value = "POSITIVE: a mountain landscape\nNEGATIVE: blurry"
+    mock_call.return_value = OpenRouterResult(content="POSITIVE: a mountain landscape\nNEGATIVE: blurry", cost=0.000123)
 
     response = api_client.post(
         "/api/from-image",
@@ -43,13 +44,14 @@ def test_from_image_returns_parsed_prompt(mock_call, api_client, auth_headers, t
     assert response.json() == {
         "positive_prompt": "a mountain landscape",
         "negative_prompt": "blurry",
+        "cost": 0.000123,
     }
 
 
 @patch("app.routes.api.call_openrouter")
 def test_from_image_passes_base64_data_uri(mock_call, api_client, auth_headers, tmp_path):
     family = _create_family(tmp_path)
-    mock_call.return_value = "POSITIVE: ok\nNEGATIVE: "
+    mock_call.return_value = OpenRouterResult(content="POSITIVE: ok\nNEGATIVE: ", cost=0.000123)
 
     api_client.post(
         "/api/from-image",
@@ -92,7 +94,7 @@ def test_from_image_rejects_oversized_image(api_client, auth_headers, tmp_path):
 @patch("app.routes.api.call_openrouter")
 def test_from_image_appends_history_with_vision_model_and_no_llm_model(mock_call, api_client, auth_headers, tmp_path):
     family = _create_family(tmp_path)
-    mock_call.return_value = "POSITIVE: ok\nNEGATIVE: "
+    mock_call.return_value = OpenRouterResult(content="POSITIVE: ok\nNEGATIVE: ", cost=0.000123)
 
     api_client.post(
         "/api/from-image",

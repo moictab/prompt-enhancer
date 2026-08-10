@@ -181,6 +181,7 @@ button[type="submit"]:hover, #iterate-this:hover, .copy-row button:hover, .btn-p
 .copy-row button.copy-error { background: var(--danger); border-color: var(--danger); }
 
 .result-panel { margin-top: 1.5rem; }
+.result-cost { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem; }
 
 .copy-row { display: flex; gap: 0.5rem; align-items: flex-start; }
 .copy-row textarea { flex: 1; }

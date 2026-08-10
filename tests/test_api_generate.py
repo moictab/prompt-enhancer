@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from app import characters, families
+from app.openrouter_client import OpenRouterResult
 
 
 def _create_family(tmp_path, has_negative_prompt=True):
@@ -21,7 +22,7 @@ def test_generate_requires_auth(api_client):
 @patch("app.routes.api.call_openrouter")
 def test_generate_returns_parsed_prompt(mock_call, api_client, auth_headers, tmp_path):
     family = _create_family(tmp_path)
-    mock_call.return_value = "POSITIVE: a cyberpunk samurai\nNEGATIVE: blurry"
+    mock_call.return_value = OpenRouterResult(content="POSITIVE: a cyberpunk samurai\nNEGATIVE: blurry", cost=0.000123)
 
     response = api_client.post(
         "/api/generate",
@@ -38,13 +39,14 @@ def test_generate_returns_parsed_prompt(mock_call, api_client, auth_headers, tmp
     assert response.json() == {
         "positive_prompt": "a cyberpunk samurai",
         "negative_prompt": "blurry",
+        "cost": 0.000123,
     }
 
 
 @patch("app.routes.api.call_openrouter")
 def test_generate_appends_to_history_as_generate_mode(mock_call, api_client, auth_headers, tmp_path):
     family = _create_family(tmp_path)
-    mock_call.return_value = "POSITIVE: a cat\nNEGATIVE: blurry"
+    mock_call.return_value = OpenRouterResult(content="POSITIVE: a cat\nNEGATIVE: blurry", cost=0.000123)
 
     api_client.post(
         "/api/generate",
@@ -100,7 +102,7 @@ def test_generate_returns_502_on_openrouter_error(mock_call, api_client, auth_he
 @patch("app.routes.api.call_openrouter")
 def test_generate_with_previous_prompt_returns_parsed_prompt(mock_call, api_client, auth_headers, tmp_path):
     family = _create_family(tmp_path)
-    mock_call.return_value = "POSITIVE: a samurai with lightning\nNEGATIVE: blurry"
+    mock_call.return_value = OpenRouterResult(content="POSITIVE: a samurai with lightning\nNEGATIVE: blurry", cost=0.000123)
 
     response = api_client.post(
         "/api/generate",
@@ -117,13 +119,14 @@ def test_generate_with_previous_prompt_returns_parsed_prompt(mock_call, api_clie
     assert response.json() == {
         "positive_prompt": "a samurai with lightning",
         "negative_prompt": "blurry",
+        "cost": 0.000123,
     }
 
 
 @patch("app.routes.api.call_openrouter")
 def test_generate_with_previous_prompt_appends_to_history_as_iterate_mode(mock_call, api_client, auth_headers, tmp_path):
     family = _create_family(tmp_path)
-    mock_call.return_value = "POSITIVE: updated\nNEGATIVE: "
+    mock_call.return_value = OpenRouterResult(content="POSITIVE: updated\nNEGATIVE: ", cost=0.000123)
 
     api_client.post(
         "/api/generate",
@@ -143,7 +146,7 @@ def test_generate_with_previous_prompt_appends_to_history_as_iterate_mode(mock_c
 @patch("app.routes.api.call_openrouter")
 def test_generate_treats_blank_previous_prompt_as_generate_mode(mock_call, api_client, auth_headers, tmp_path):
     family = _create_family(tmp_path)
-    mock_call.return_value = "POSITIVE: a cat\nNEGATIVE: "
+    mock_call.return_value = OpenRouterResult(content="POSITIVE: a cat\nNEGATIVE: ", cost=0.000123)
 
     api_client.post(
         "/api/generate",
@@ -165,7 +168,7 @@ def test_generate_with_previous_prompt_suppresses_negative_when_family_has_none(
     mock_call, api_client, auth_headers, tmp_path
 ):
     family = _create_family(tmp_path, has_negative_prompt=False)
-    mock_call.return_value = "POSITIVE: updated flowing scene\nNEGATIVE: blurry"
+    mock_call.return_value = OpenRouterResult(content="POSITIVE: updated flowing scene\nNEGATIVE: blurry", cost=0.000123)
 
     response = api_client.post(
         "/api/generate",
@@ -180,6 +183,7 @@ def test_generate_with_previous_prompt_suppresses_negative_when_family_has_none(
     assert response.json() == {
         "positive_prompt": "updated flowing scene",
         "negative_prompt": "",
+        "cost": 0.000123,
     }
 
 
@@ -189,7 +193,7 @@ def test_generate_resolves_character_ids_into_user_message(mock_call, api_client
     character = characters.create_character(
         "Kaito", "a stoic ronin with a scarred left eye", path=str(tmp_path / "characters.json")
     )
-    mock_call.return_value = "POSITIVE: a cat\nNEGATIVE: "
+    mock_call.return_value = OpenRouterResult(content="POSITIVE: a cat\nNEGATIVE: ", cost=0.000123)
 
     api_client.post(
         "/api/generate",
@@ -209,7 +213,7 @@ def test_generate_resolves_character_ids_into_user_message(mock_call, api_client
 @patch("app.routes.api.call_openrouter")
 def test_generate_ignores_unknown_character_ids(mock_call, api_client, auth_headers, tmp_path):
     family = _create_family(tmp_path)
-    mock_call.return_value = "POSITIVE: a cat\nNEGATIVE: "
+    mock_call.return_value = OpenRouterResult(content="POSITIVE: a cat\nNEGATIVE: ", cost=0.000123)
 
     response = api_client.post(
         "/api/generate",
@@ -228,7 +232,7 @@ def test_generate_ignores_unknown_character_ids(mock_call, api_client, auth_head
 @patch("app.routes.api.call_openrouter")
 def test_generate_without_character_ids_omits_characters_section(mock_call, api_client, auth_headers, tmp_path):
     family = _create_family(tmp_path)
-    mock_call.return_value = "POSITIVE: a cat\nNEGATIVE: "
+    mock_call.return_value = OpenRouterResult(content="POSITIVE: a cat\nNEGATIVE: ", cost=0.000123)
 
     api_client.post(
         "/api/generate",

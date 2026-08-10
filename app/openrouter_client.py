@@ -1,5 +1,6 @@
 import logging
 import time
+from dataclasses import dataclass
 
 import requests
 
@@ -13,6 +14,12 @@ logger = logging.getLogger("app.openrouter")
 _models_cache: dict = {"models": None, "fetched_at": 0.0}
 
 
+@dataclass
+class OpenRouterResult:
+    content: str
+    cost: float | None
+
+
 def call_openrouter(
     api_key: str,
     model: str,
@@ -20,7 +27,7 @@ def call_openrouter(
     user_message: str,
     temperature: float = 0.7,
     image_data_uri: str | None = None,
-) -> str:
+) -> OpenRouterResult:
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -42,6 +49,7 @@ def call_openrouter(
         ],
         "temperature": temperature,
         "max_tokens": 1024,
+        "usage": {"include": True},
     }
 
     start = time.monotonic()
@@ -91,11 +99,14 @@ def call_openrouter(
 
     try:
         data = response.json()
-        return data["choices"][0]["message"]["content"]
+        content = data["choices"][0]["message"]["content"]
     except (ValueError, KeyError, IndexError):
         raise RuntimeError(
             f"Unexpected response format from OpenRouter: {response.text[:300]}"
         )
+
+    cost = data.get("usage", {}).get("cost")
+    return OpenRouterResult(content=content, cost=cost)
 
 
 def list_models() -> list[dict]:

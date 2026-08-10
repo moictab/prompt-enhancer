@@ -53,7 +53,7 @@ def generate(req: GenerateRequest):
     )
 
     try:
-        response = call_openrouter(
+        result = call_openrouter(
             api_key=settings.openrouter_api_key,
             model=req.llm_model,
             system_prompt=system,
@@ -66,10 +66,10 @@ def generate(req: GenerateRequest):
         )
         raise HTTPException(status_code=502, detail=str(e))
 
-    positive, negative = prompts.parse_response(response, family["has_negative_prompt"])
+    positive, negative = prompts.parse_response(result.content, family["has_negative_prompt"])
     logger.info(
-        "generate request succeeded mode=%s family_id=%s positive_len=%d negative_len=%d",
-        mode, req.family_id, len(positive), len(negative),
+        "generate request succeeded mode=%s family_id=%s positive_len=%d negative_len=%d cost=%s",
+        mode, req.family_id, len(positive), len(negative), result.cost,
     )
 
     history.append_entry(
@@ -86,7 +86,7 @@ def generate(req: GenerateRequest):
         negative_prompt=negative,
     )
 
-    return {"positive_prompt": positive, "negative_prompt": negative}
+    return {"positive_prompt": positive, "negative_prompt": negative, "cost": result.cost}
 
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -129,7 +129,7 @@ async def from_image(
     )
 
     try:
-        response = call_openrouter(
+        result = call_openrouter(
             api_key=settings.openrouter_api_key,
             model=vision_model,
             system_prompt=system,
@@ -143,10 +143,10 @@ async def from_image(
         )
         raise HTTPException(status_code=502, detail=str(e))
 
-    positive, negative = prompts.parse_response(response, family["has_negative_prompt"])
+    positive, negative = prompts.parse_response(result.content, family["has_negative_prompt"])
     logger.info(
-        "from-image request succeeded family_id=%s positive_len=%d negative_len=%d",
-        family_id, len(positive), len(negative),
+        "from-image request succeeded family_id=%s positive_len=%d negative_len=%d cost=%s",
+        family_id, len(positive), len(negative), result.cost,
     )
 
     history.append_entry(
@@ -163,7 +163,7 @@ async def from_image(
         negative_prompt=negative,
     )
 
-    return {"positive_prompt": positive, "negative_prompt": negative}
+    return {"positive_prompt": positive, "negative_prompt": negative, "cost": result.cost}
 
 
 @router.get("/openrouter-models")

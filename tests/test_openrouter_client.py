@@ -25,7 +25,40 @@ def test_call_openrouter_returns_message_content(mock_post):
         system_prompt="sys", user_message="user", temperature=0.7,
     )
 
-    assert result == "POSITIVE: a cat\nNEGATIVE: blurry"
+    assert result.content == "POSITIVE: a cat\nNEGATIVE: blurry"
+
+
+@patch("app.openrouter_client.requests.post")
+def test_call_openrouter_returns_cost_from_usage(mock_post):
+    mock_post.return_value = _mock_response(
+        200, {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.000035},
+        }
+    )
+
+    result = call_openrouter(api_key="key", model="m", system_prompt="sys", user_message="user")
+
+    assert result.cost == 0.000035
+
+
+@patch("app.openrouter_client.requests.post")
+def test_call_openrouter_returns_none_cost_when_usage_missing(mock_post):
+    mock_post.return_value = _mock_response(200, {"choices": [{"message": {"content": "ok"}}]})
+
+    result = call_openrouter(api_key="key", model="m", system_prompt="sys", user_message="user")
+
+    assert result.cost is None
+
+
+@patch("app.openrouter_client.requests.post")
+def test_call_openrouter_requests_usage_accounting(mock_post):
+    mock_post.return_value = _mock_response(200, {"choices": [{"message": {"content": "ok"}}]})
+
+    call_openrouter(api_key="key", model="m", system_prompt="sys", user_message="user")
+
+    sent_payload = mock_post.call_args.kwargs["json"]
+    assert sent_payload["usage"] == {"include": True}
 
 
 @patch("app.openrouter_client.requests.post")

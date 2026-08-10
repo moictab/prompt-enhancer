@@ -29,13 +29,23 @@ function showError(message) {
   document.getElementById("result-success").hidden = true;
 }
 
-function showResult(positive, negative) {
+function formatCost(cost) {
+  if (cost === null || cost === undefined) return null;
+  return `Coste: $${cost.toFixed(6)}`;
+}
+
+function showResult(positive, negative, cost) {
   document.getElementById("result-panel").hidden = false;
   document.getElementById("result-error").hidden = true;
   document.getElementById("result-success").hidden = false;
   document.getElementById("result-positive").value = positive;
   document.getElementById("result-negative").value = negative;
   document.getElementById("result-negative-group").hidden = !negative;
+
+  const costText = formatCost(cost);
+  const costEl = document.getElementById("result-cost");
+  costEl.hidden = costText === null;
+  costEl.textContent = costText || "";
 }
 
 async function postJSON(url, payload) {
@@ -66,7 +76,7 @@ function setupGenerarForm() {
         temperature: parseFloat(formData.get("temperature")),
         character_ids: Array.from(selectedCharacterIds),
       });
-      showResult(data.positive_prompt, data.negative_prompt);
+      showResult(data.positive_prompt, data.negative_prompt, data.cost);
     } catch (err) {
       showError(err.message);
     }
@@ -204,7 +214,7 @@ function setupImagenForm() {
       if (!response.ok) {
         throw new Error(data.detail || "Error desconocido");
       }
-      showResult(data.positive_prompt, data.negative_prompt);
+      showResult(data.positive_prompt, data.negative_prompt, data.cost);
     } catch (err) {
       showError(err.message);
     }
