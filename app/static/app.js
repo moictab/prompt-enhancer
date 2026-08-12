@@ -64,8 +64,25 @@ function spawnFloatingText(text, originEl) {
   document.body.appendChild(el);
 }
 
+const REQUEST_TIMEOUT_MS = 90000;
+
+async function fetchWithTimeout(url, options) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error("La petición ha tardado demasiado y se ha cancelado. Inténtalo de nuevo.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function postJSON(url, payload) {
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -77,12 +94,26 @@ async function postJSON(url, payload) {
   return data;
 }
 
+function setButtonLoading(button, isLoading, loadingText = "Generando...") {
+  if (isLoading) {
+    if (button.dataset.originalHtml === undefined) {
+      button.dataset.originalHtml = button.innerHTML;
+    }
+    button.disabled = true;
+    button.innerHTML = `<span class="spinner"></span>${loadingText}`;
+  } else {
+    button.disabled = false;
+    button.innerHTML = button.dataset.originalHtml;
+  }
+}
+
 function setupGenerarForm() {
   const form = document.getElementById("form-generar");
   const submitButton = form.querySelector('button[type="submit"]');
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(form);
+    setButtonLoading(submitButton, true);
     try {
       const data = await postJSON("/api/generate", {
         user_input: formData.get("user_input"),
@@ -98,6 +129,8 @@ function setupGenerarForm() {
       if (floatingCost) spawnFloatingText(floatingCost, submitButton);
     } catch (err) {
       showError(err.message);
+    } finally {
+      setButtonLoading(submitButton, false);
     }
   });
 }
@@ -224,11 +257,13 @@ function setupImagenForm() {
   });
 
   const form = document.getElementById("form-imagen");
+  const submitButton = form.querySelector('button[type="submit"]');
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(form);
+    setButtonLoading(submitButton, true);
     try {
-      const response = await fetch("/api/from-image", { method: "POST", body: formData });
+      const response = await fetchWithTimeout("/api/from-image", { method: "POST", body: formData });
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.detail || "Error desconocido");
@@ -236,6 +271,8 @@ function setupImagenForm() {
       showResult(data.positive_prompt, data.negative_prompt, data.cost);
     } catch (err) {
       showError(err.message);
+    } finally {
+      setButtonLoading(submitButton, false);
     }
   });
 }
