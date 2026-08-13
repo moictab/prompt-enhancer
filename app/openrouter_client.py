@@ -48,67 +48,75 @@ def call_openrouter(
             {"role": "user", "content": user_content},
         ],
         "temperature": temperature,
-        "max_tokens": 1024,
+        "max_tokens": 4096,
         "usage": {"include": True},
     }
 
-    start = time.monotonic()
-    try:
-        response = requests.post(
-            OPENROUTER_API_URL, headers=headers, json=payload, timeout=TIMEOUT_SECONDS
-        )
-    except requests.exceptions.Timeout:
-        logger.warning("openrouter call timed out model=%s after=%ss", model, TIMEOUT_SECONDS)
-        raise RuntimeError(
-            f"OpenRouter request timed out after {TIMEOUT_SECONDS}s. "
-            "The LLM may be overloaded -- try again."
-        )
-    except requests.exceptions.ConnectionError:
-        logger.warning("openrouter call connection error model=%s", model)
-        raise RuntimeError(
-            "Could not connect to OpenRouter. Check your internet connection."
-        )
-    except requests.exceptions.RequestException as e:
-        logger.warning("openrouter call network error model=%s error=%s", model, e)
-        raise RuntimeError(f"Network error calling OpenRouter: {e}")
+    max_attempts = 2
+    for attempt in range(1, max_attempts + 1):
+        start = time.monotonic()
+        try:
+            response = requests.post(
+                OPENROUTER_API_URL, headers=headers, json=payload, timeout=TIMEOUT_SECONDS
+            )
+        except requests.exceptions.Timeout:
+            logger.warning("openrouter call timed out model=%s after=%ss", model, TIMEOUT_SECONDS)
+            raise RuntimeError(
+                f"OpenRouter request timed out after {TIMEOUT_SECONDS}s. "
+                "The LLM may be overloaded -- try again."
+            )
+        except requests.exceptions.ConnectionError:
+            logger.warning("openrouter call connection error model=%s", model)
+            raise RuntimeError(
+                "Could not connect to OpenRouter. Check your internet connection."
+            )
+        except requests.exceptions.RequestException as e:
+            logger.warning("openrouter call network error model=%s error=%s", model, e)
+            raise RuntimeError(f"Network error calling OpenRouter: {e}")
 
-    duration_ms = (time.monotonic() - start) * 1000
-    logger.info(
-        "openrouter call model=%s status=%d duration_ms=%.1f",
-        model, response.status_code, duration_ms,
-    )
-
-    if response.status_code == 401:
-        raise RuntimeError(
-            "OpenRouter API key is invalid or missing. Check the OPENROUTER_API_KEY "
-            "server configuration."
-        )
-    if response.status_code == 402:
-        raise RuntimeError(
-            "OpenRouter account has insufficient credits. "
-            "Add credits at https://openrouter.ai/credits"
-        )
-    if response.status_code == 429:
-        raise RuntimeError(
-            "OpenRouter rate limit exceeded. Wait a moment and try again."
-        )
-    if response.status_code != 200:
-        raise RuntimeError(
-            f"OpenRouter returned HTTP {response.status_code}: {response.text[:300]}"
+        duration_ms = (time.monotonic() - start) * 1000
+        logger.info(
+            "openrouter call model=%s status=%d duration_ms=%.1f attempt=%d",
+            model, response.status_code, duration_ms, attempt,
         )
 
-    try:
-        data = response.json()
-        content = data["choices"][0]["message"]["content"]
-        if not isinstance(content, str):
-            raise ValueError("content is not a string")
-    except (ValueError, KeyError, IndexError):
-        raise RuntimeError(
-            f"Unexpected response format from OpenRouter: {response.text[:300]}"
-        )
+        if response.status_code == 401:
+            raise RuntimeError(
+                "OpenRouter API key is invalid or missing. Check the OPENROUTER_API_KEY "
+                "server configuration."
+            )
+        if response.status_code == 402:
+            raise RuntimeError(
+                "OpenRouter account has insufficient credits. "
+                "Add credits at https://openrouter.ai/credits"
+            )
+        if response.status_code == 429:
+            raise RuntimeError(
+                "OpenRouter rate limit exceeded. Wait a moment and try again."
+            )
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"OpenRouter returned HTTP {response.status_code}: {response.text[:300]}"
+            )
 
-    cost = data.get("usage", {}).get("cost")
-    return OpenRouterResult(content=content, cost=cost)
+        try:
+            data = response.json()
+            content = data["choices"][0]["message"]["content"]
+            if not isinstance(content, str):
+                raise ValueError("content is not a string")
+        except (ValueError, KeyError, IndexError):
+            if attempt < max_attempts:
+                logger.warning(
+                    "openrouter call returned malformed content model=%s attempt=%d, retrying",
+                    model, attempt,
+                )
+                continue
+            raise RuntimeError(
+                f"Unexpected response format from OpenRouter: {response.text[:300]}"
+            )
+
+        cost = data.get("usage", {}).get("cost")
+        return OpenRouterResult(content=content, cost=cost)
 
 
 def list_models() -> list[dict]:

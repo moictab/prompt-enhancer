@@ -135,6 +135,21 @@ def test_call_openrouter_raises_on_null_content(mock_post):
     with pytest.raises(RuntimeError, match="Unexpected response format"):
         call_openrouter(api_key="key", model="m", system_prompt="s", user_message="u")
 
+    assert mock_post.call_count == 2
+
+
+@patch("app.openrouter_client.requests.post")
+def test_call_openrouter_retries_once_and_succeeds(mock_post):
+    mock_post.side_effect = [
+        _mock_response(200, {"choices": [{"message": {"content": None}}]}, text="   \n   "),
+        _mock_response(200, {"choices": [{"message": {"content": "POSITIVE: a cat"}}]}),
+    ]
+
+    result = call_openrouter(api_key="key", model="m", system_prompt="s", user_message="u")
+
+    assert result.content == "POSITIVE: a cat"
+    assert mock_post.call_count == 2
+
 
 @patch("app.openrouter_client.requests.post")
 def test_call_openrouter_raises_on_json_decode_error(mock_post):
