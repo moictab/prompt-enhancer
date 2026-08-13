@@ -100,6 +100,8 @@ def call_openrouter(
     try:
         data = response.json()
         content = data["choices"][0]["message"]["content"]
+        if not isinstance(content, str):
+            raise ValueError("content is not a string")
     except (ValueError, KeyError, IndexError):
         raise RuntimeError(
             f"Unexpected response format from OpenRouter: {response.text[:300]}"
