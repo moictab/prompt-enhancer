@@ -73,7 +73,7 @@ class SystemPromptPayload(BaseModel):
     text: str
 
 
-VALID_SYSTEM_PROMPT_MODES = {"generate", "iterate", "image"}
+VALID_SYSTEM_PROMPT_MODES = {"generate", "iterate", "image", "extract_character"}
 
 
 @router.get("/system-prompt/{mode}")

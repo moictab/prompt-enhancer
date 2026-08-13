@@ -62,6 +62,7 @@
     <input id="imagen-creativity" name="temperature" type="range" min="0" max="1" step="0.05" value="0.7">
 
     <button type="submit">Generar desde imagen</button>
+    <button type="button" id="extract-character-image">Extraer personaje de esta imagen</button>
   </form>
 </section>
 
@@ -82,6 +83,20 @@
       </div>
     </div>
     <button type="button" id="iterate-this">Iterar este prompt</button>
+    <button type="button" id="extract-character">Extraer personaje</button>
+  </div>
+</section>
+
+<section id="extract-character-panel" class="result-panel" hidden>
+  <div id="extract-character-error" class="error-banner" hidden></div>
+  <div id="extract-character-form-wrap" hidden>
+    <div id="extract-character-cost" class="result-cost" hidden></div>
+    <label for="extract-character-name">Nombre</label>
+    <input type="text" id="extract-character-name">
+    <label for="extract-character-text">Texto</label>
+    <textarea id="extract-character-text" rows="4"></textarea>
+    <button type="button" id="extract-character-save">Guardar personaje</button>
+    <button type="button" id="extract-character-cancel">Cancelar</button>
   </div>
 </section>
 

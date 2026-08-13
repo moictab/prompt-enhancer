@@ -1,6 +1,11 @@
 from unittest.mock import patch
 
-from app.prompts import build_system_prompt, build_user_message, parse_response
+from app.prompts import (
+    build_system_prompt,
+    build_user_message,
+    parse_character_response,
+    parse_response,
+)
 
 
 @patch("app.prompts.system_prompt.read_system_prompt")
@@ -126,3 +131,30 @@ def test_parse_response_falls_back_when_markers_missing():
 
     assert positive == "a cyberpunk samurai in neon rain"
     assert negative == ""
+
+
+def test_parse_character_response_with_markers():
+    response = "NAME: Kaito the Ronin\nTEXT: a stoic ronin with a scarred left eye and silver hair"
+
+    name, text = parse_character_response(response)
+
+    assert name == "Kaito the Ronin"
+    assert text == "a stoic ronin with a scarred left eye and silver hair"
+
+
+def test_parse_character_response_is_case_insensitive():
+    response = "name: Mika\ntext: a neon-haired hacker in a trench coat"
+
+    name, text = parse_character_response(response)
+
+    assert name == "Mika"
+    assert text == "a neon-haired hacker in a trench coat"
+
+
+def test_parse_character_response_falls_back_to_empty_name_when_markers_missing():
+    response = "Just a plain description of the character with no markers."
+
+    name, text = parse_character_response(response)
+
+    assert name == ""
+    assert text == "Just a plain description of the character with no markers."

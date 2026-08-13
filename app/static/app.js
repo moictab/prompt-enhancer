@@ -198,14 +198,16 @@ async function loadCharacters() {
   return response.json();
 }
 
-async function setupCharacterButtons() {
+async function refreshCharacterButtons() {
   const characterList = await loadCharacters();
   const container = document.getElementById("generar-characters");
+  container.innerHTML = "";
   characterList.forEach((character) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "character-button";
     button.textContent = character.name;
+    if (selectedCharacterIds.has(character.id)) button.classList.add("selected");
     button.addEventListener("click", () => {
       if (selectedCharacterIds.has(character.id)) {
         selectedCharacterIds.delete(character.id);
@@ -277,6 +279,105 @@ function setupImagenForm() {
   });
 }
 
+function showExtractCharacterError(message) {
+  document.getElementById("extract-character-panel").hidden = false;
+  const errorBox = document.getElementById("extract-character-error");
+  errorBox.hidden = false;
+  errorBox.textContent = message;
+  document.getElementById("extract-character-form-wrap").hidden = true;
+}
+
+function showExtractCharacterForm(name, text, cost) {
+  document.getElementById("extract-character-panel").hidden = false;
+  document.getElementById("extract-character-error").hidden = true;
+  document.getElementById("extract-character-form-wrap").hidden = false;
+  document.getElementById("extract-character-name").value = name;
+  document.getElementById("extract-character-text").value = text;
+
+  const costText = formatCost(cost);
+  const costEl = document.getElementById("extract-character-cost");
+  costEl.hidden = costText === null;
+  costEl.textContent = costText || "";
+}
+
+function hideExtractCharacterPanel() {
+  document.getElementById("extract-character-panel").hidden = true;
+}
+
+function setupExtractCharacterFromPrompt() {
+  const button = document.getElementById("extract-character");
+  button.addEventListener("click", async () => {
+    const promptText = document.getElementById("result-positive").value;
+    const llmModel = document.getElementById("generar-llm-model").value;
+    setButtonLoading(button, true, "Extrayendo...");
+    try {
+      const data = await postJSON("/api/extract-character", {
+        prompt_text: promptText,
+        llm_model: llmModel,
+      });
+      showExtractCharacterForm(data.name, data.text, data.cost);
+    } catch (err) {
+      showExtractCharacterError(err.message);
+    } finally {
+      setButtonLoading(button, false);
+    }
+  });
+}
+
+function setupExtractCharacterFromImage() {
+  const button = document.getElementById("extract-character-image");
+  button.addEventListener("click", async () => {
+    const file = document.getElementById("imagen-file").files[0];
+    if (!file) {
+      showExtractCharacterError("Selecciona primero una imagen.");
+      return;
+    }
+    const visionModel = document.getElementById("imagen-vision-model").value;
+    const formData = new FormData();
+    formData.append("image", file);
+    formData.append("vision_model", visionModel);
+
+    setButtonLoading(button, true, "Extrayendo...");
+    try {
+      const response = await fetchWithTimeout("/api/extract-character-from-image", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || "Error desconocido");
+      }
+      showExtractCharacterForm(data.name, data.text, data.cost);
+    } catch (err) {
+      showExtractCharacterError(err.message);
+    } finally {
+      setButtonLoading(button, false);
+    }
+  });
+}
+
+function setupExtractCharacterSaveCancel() {
+  document.getElementById("extract-character-save").addEventListener("click", async (event) => {
+    const name = document.getElementById("extract-character-name").value.trim();
+    const text = document.getElementById("extract-character-text").value.trim();
+    if (!name || !text) {
+      showExtractCharacterError("El nombre y el texto son obligatorios.");
+      return;
+    }
+    setButtonLoading(event.currentTarget, true, "Guardando...");
+    try {
+      await postJSON("/api/admin/characters", { name, text });
+      hideExtractCharacterPanel();
+      await refreshCharacterButtons();
+    } catch (err) {
+      showExtractCharacterError(err.message);
+    } finally {
+      setButtonLoading(event.currentTarget, false);
+    }
+  });
+  document.getElementById("extract-character-cancel").addEventListener("click", hideExtractCharacterPanel);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   setupTabs();
   setupCreativitySliders();
@@ -284,6 +385,9 @@ document.addEventListener("DOMContentLoaded", () => {
   setupImagenForm();
   setupCopyButtons();
   setupIterateHandoff();
-  setupCharacterButtons();
+  refreshCharacterButtons();
   setupModelDatalist();
+  setupExtractCharacterFromPrompt();
+  setupExtractCharacterFromImage();
+  setupExtractCharacterSaveCancel();
 });

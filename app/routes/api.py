@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from .. import characters, families, history, prompts
+from .. import characters, families, history, prompts, system_prompt
 from ..config import get_settings
 from ..openrouter_client import call_openrouter, list_models
 
@@ -164,6 +164,92 @@ async def from_image(
     )
 
     return {"positive_prompt": positive, "negative_prompt": negative, "cost": result.cost}
+
+
+class ExtractCharacterRequest(BaseModel):
+    prompt_text: str
+    llm_model: str
+    temperature: float = 0.7
+
+
+@router.post("/extract-character")
+def extract_character(req: ExtractCharacterRequest):
+    if not req.prompt_text.strip():
+        raise HTTPException(status_code=400, detail="prompt_text is required")
+
+    settings = get_settings()
+    system = system_prompt.read_system_prompt("extract_character")
+    user_message = f"## Prompt\n{req.prompt_text.strip()}"
+
+    logger.info("extract-character request model=%s", req.llm_model)
+
+    try:
+        result = call_openrouter(
+            api_key=settings.openrouter_api_key,
+            model=req.llm_model,
+            system_prompt=system,
+            user_message=user_message,
+            temperature=req.temperature,
+        )
+    except RuntimeError as e:
+        logger.warning("extract-character request failed error=%s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+    name, text = prompts.parse_character_response(result.content)
+    logger.info(
+        "extract-character request succeeded name_len=%d text_len=%d cost=%s",
+        len(name), len(text), result.cost,
+    )
+
+    return {"name": name, "text": text, "cost": result.cost}
+
+
+@router.post("/extract-character-from-image")
+async def extract_character_from_image(
+    image: UploadFile = File(...),
+    vision_model: str = Form(...),
+    temperature: float = Form(0.7),
+):
+    if image.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported image type: {image.content_type}"
+        )
+
+    contents = await image.read()
+    if len(contents) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Image exceeds 10 MB limit")
+
+    image_data_uri = f"data:{image.content_type};base64,{base64.b64encode(contents).decode('ascii')}"
+
+    settings = get_settings()
+    system = system_prompt.read_system_prompt("extract_character")
+    user_message = "## Imagen\nExtrae la descripcion del personaje principal de esta imagen."
+
+    logger.info(
+        "extract-character-from-image request vision_model=%s image_bytes=%d",
+        vision_model, len(contents),
+    )
+
+    try:
+        result = call_openrouter(
+            api_key=settings.openrouter_api_key,
+            model=vision_model,
+            system_prompt=system,
+            user_message=user_message,
+            temperature=temperature,
+            image_data_uri=image_data_uri,
+        )
+    except RuntimeError as e:
+        logger.warning("extract-character-from-image request failed error=%s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+    name, text = prompts.parse_character_response(result.content)
+    logger.info(
+        "extract-character-from-image request succeeded name_len=%d text_len=%d cost=%s",
+        len(name), len(text), result.cost,
+    )
+
+    return {"name": name, "text": text, "cost": result.cost}
 
 
 @router.get("/openrouter-models")

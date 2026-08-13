@@ -75,3 +75,26 @@ def parse_response(response: str, has_negative_prompt: bool) -> tuple[str, str]:
         negative = ""
 
     return (positive, negative)
+
+
+def parse_character_response(response: str) -> tuple[str, str]:
+    name = ""
+    text = ""
+
+    response_upper = response.upper()
+    name_idx = response_upper.find("NAME:")
+    text_idx = response_upper.find("TEXT:")
+
+    if name_idx != -1:
+        name_start = name_idx + len("NAME:")
+        if text_idx != -1 and text_idx > name_idx:
+            name = response[name_start:text_idx].strip()
+        else:
+            name = response[name_start:].strip()
+        if text_idx != -1:
+            text_start = text_idx + len("TEXT:")
+            text = response[text_start:].strip()
+    else:
+        text = response.strip()
+
+    return (name, text)

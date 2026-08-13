@@ -68,7 +68,7 @@ def test_create_list_update_delete_character(api_client, auth_headers):
 
 
 def test_get_and_update_system_prompt_for_each_mode(api_client, auth_headers):
-    for mode in ["generate", "iterate", "image"]:
+    for mode in ["generate", "iterate", "image", "extract_character"]:
         get_response = api_client.get(f"/api/admin/system-prompt/{mode}", auth=auth_headers)
         assert get_response.status_code == 200
         assert get_response.json() == {"text": ""}

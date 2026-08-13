@@ -37,6 +37,13 @@ POSITIVE: <the enhanced positive prompt>
 NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 """
 
+DEFAULT_EXTRACT_CHARACTER_SYSTEM_PROMPT = """You are an expert at extracting reusable character descriptions for AI image-generation prompts. The user will give you either a full image-generation prompt (which may describe one or more subjects) or a reference image. Identify the single most prominent character/subject and produce a concise, reusable description of their fixed visual traits -- physical appearance, hair, build, distinguishing features, typical clothing or style. Omit anything tied to this one specific scene: pose, action, expression, lighting, or composition.
+
+You MUST output in exactly this format:
+NAME: <a short, descriptive name for the character, 2-4 words>
+TEXT: <the reusable character description, written so it can be inserted directly into a future prompt>
+"""
+
 SDXL_INSTRUCTIONS = """## Prompt Structure
 Always follow this order: Subject -> Environment -> Lighting -> Details -> Style
 
@@ -92,3 +99,6 @@ def ensure_seed_data(data_dir: str) -> None:
         system_prompt.write_system_prompt("generate", DEFAULT_GENERATE_SYSTEM_PROMPT, path=system_prompts_path)
         system_prompt.write_system_prompt("iterate", DEFAULT_ITERATE_SYSTEM_PROMPT, path=system_prompts_path)
         system_prompt.write_system_prompt("image", DEFAULT_IMAGE_SYSTEM_PROMPT, path=system_prompts_path)
+        system_prompt.write_system_prompt(
+            "extract_character", DEFAULT_EXTRACT_CHARACTER_SYSTEM_PROMPT, path=system_prompts_path
+        )
