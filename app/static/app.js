@@ -192,6 +192,29 @@ function setupIterateHandoff() {
   });
 }
 
+function applyHistorialReuseHandoff() {
+  const raw = sessionStorage.getItem("reuse-prompt");
+  if (!raw) return;
+  sessionStorage.removeItem("reuse-prompt");
+
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    return;
+  }
+
+  document.querySelector('.tab-button[data-tab="generar"]').click();
+  document.getElementById("generar-previous-prompt").value = data.positive_prompt || "";
+
+  const familySelect = document.getElementById("generar-family");
+  if (data.family_id && [...familySelect.options].some((o) => o.value === data.family_id)) {
+    familySelect.value = data.family_id;
+  }
+
+  document.getElementById("generar-user-input").focus();
+}
+
 async function loadCharacters() {
   const response = await fetch("/api/characters");
   if (!response.ok) return [];
@@ -390,4 +413,5 @@ document.addEventListener("DOMContentLoaded", () => {
   setupExtractCharacterFromPrompt();
   setupExtractCharacterFromImage();
   setupExtractCharacterSaveCancel();
+  applyHistorialReuseHandoff();
 });

@@ -230,23 +230,6 @@ button[type="submit"]:hover, #iterate-this:hover, .copy-row button:hover, .btn-p
   border-radius: var(--radius);
 }
 
-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-th {
-  background: var(--surface);
-  text-align: left;
-  padding: 0.6rem 0.75rem;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
-}
-td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
-tbody tr:hover { background: var(--surface-hover); }
-tbody tr:last-child td { border-bottom: none; }
+.history-entry { display: flex; flex-direction: column; gap: 0.6rem; }
+.history-meta { color: var(--text-muted); font-size: 0.85rem; }
+.history-reuse { align-self: flex-start; }
