@@ -68,7 +68,12 @@ function buildPromptField(labelText, text) {
 function reuseEntry(entry) {
   sessionStorage.setItem(
     "reuse-prompt",
-    JSON.stringify({ family_id: entry.family_id, positive_prompt: entry.positive_prompt })
+    JSON.stringify({
+      family_id: entry.family_id,
+      positive_prompt: entry.positive_prompt,
+      llm_model: entry.llm_model,
+      temperature: entry.temperature,
+    })
   );
   window.location.href = "/";
 }

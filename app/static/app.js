@@ -192,6 +192,47 @@ function setupIterateHandoff() {
   });
 }
 
+const GENERAR_SETTINGS_KEY = "generar-settings";
+
+function readGenerarSettings() {
+  try {
+    const raw = localStorage.getItem(GENERAR_SETTINGS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function saveGenerarSettings() {
+  const settings = {
+    llm_model: document.getElementById("generar-llm-model").value.trim(),
+    temperature: parseFloat(document.getElementById("generar-creativity").value),
+  };
+  try {
+    localStorage.setItem(GENERAR_SETTINGS_KEY, JSON.stringify(settings));
+  } catch (err) {
+    // storage unavailable (private mode, quota): settings just won't persist
+  }
+}
+
+function applyGenerarSettings({ llm_model, temperature }) {
+  if (llm_model) {
+    document.getElementById("generar-llm-model").value = llm_model;
+  }
+  if (typeof temperature === "number" && !Number.isNaN(temperature)) {
+    const slider = document.getElementById("generar-creativity");
+    slider.value = temperature;
+    slider.closest("form").querySelector(".creativity-value").textContent = slider.value;
+  }
+}
+
+function setupGenerarSettingsPersistence() {
+  applyGenerarSettings(readGenerarSettings());
+  ["generar-llm-model", "generar-creativity"].forEach((id) => {
+    document.getElementById(id).addEventListener("input", saveGenerarSettings);
+  });
+}
+
 function applyHistorialReuseHandoff() {
   const raw = sessionStorage.getItem("reuse-prompt");
   if (!raw) return;
@@ -206,6 +247,8 @@ function applyHistorialReuseHandoff() {
 
   document.querySelector('.tab-button[data-tab="generar"]').click();
   document.getElementById("generar-previous-prompt").value = data.positive_prompt || "";
+  applyGenerarSettings({ llm_model: data.llm_model, temperature: data.temperature });
+  saveGenerarSettings();
 
   const familySelect = document.getElementById("generar-family");
   if (data.family_id && [...familySelect.options].some((o) => o.value === data.family_id)) {
@@ -404,6 +447,7 @@ function setupExtractCharacterSaveCancel() {
 document.addEventListener("DOMContentLoaded", () => {
   setupTabs();
   setupCreativitySliders();
+  setupGenerarSettingsPersistence();
   setupGenerarForm();
   setupImagenForm();
   setupCopyButtons();
