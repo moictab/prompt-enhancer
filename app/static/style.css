@@ -230,6 +230,15 @@ button[type="submit"]:hover, #iterate-this:hover, .copy-row button:hover, .btn-p
   border-radius: var(--radius);
 }
 
+.warning-banner {
+  background: #3a331f;
+  border: 1px solid #a3822f;
+  color: #f2dcb5;
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius);
+  margin-bottom: 0.75rem;
+}
+
 .history-entry { display: flex; flex-direction: column; gap: 0.6rem; }
 .history-meta { color: var(--text-muted); font-size: 0.85rem; }
 .history-reuse { align-self: flex-start; }

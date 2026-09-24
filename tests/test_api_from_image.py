@@ -45,6 +45,7 @@ def test_from_image_returns_parsed_prompt(mock_call, api_client, auth_headers, t
         "positive_prompt": "a mountain landscape",
         "negative_prompt": "blurry",
         "cost": 0.000123,
+        "truncated": False,
     }
 
 

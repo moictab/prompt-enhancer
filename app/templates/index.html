@@ -70,6 +70,7 @@
   <div id="result-error" class="error-banner" hidden></div>
   <div id="result-success" hidden>
     <div id="result-cost" class="result-cost" hidden></div>
+    <div id="result-truncated" class="warning-banner" hidden>La respuesta se ha cortado por el limite de longitud. Prueba con un prompt mas corto o menos personajes.</div>
     <label>Positive Prompt</label>
     <div class="copy-row">
       <textarea id="result-positive" readonly rows="4"></textarea>
@@ -91,6 +92,7 @@
   <div id="extract-character-error" class="error-banner" hidden></div>
   <div id="extract-character-form-wrap" hidden>
     <div id="extract-character-cost" class="result-cost" hidden></div>
+    <div id="extract-character-truncated" class="warning-banner" hidden>La respuesta se ha cortado por el limite de longitud. Revisa el texto antes de guardarlo.</div>
     <label for="extract-character-name">Nombre</label>
     <input type="text" id="extract-character-name">
     <label for="extract-character-text">Texto</label>

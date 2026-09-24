@@ -46,6 +46,7 @@ def test_extract_character_returns_parsed_name_and_text(mock_call, api_client, a
         "name": "Kaito",
         "text": "a stoic ronin with a scarred left eye",
         "cost": 0.000456,
+        "truncated": False,
     }
 
 
@@ -90,6 +91,7 @@ def test_extract_character_from_image_returns_parsed_name_and_text(mock_call, ap
         "name": "Mika",
         "text": "a neon-haired hacker in a trench coat",
         "cost": 0.000789,
+        "truncated": False,
     }
 
 

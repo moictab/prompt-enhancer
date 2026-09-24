@@ -40,7 +40,29 @@ def test_generate_returns_parsed_prompt(mock_call, api_client, auth_headers, tmp
         "positive_prompt": "a cyberpunk samurai",
         "negative_prompt": "blurry",
         "cost": 0.000123,
+        "truncated": False,
     }
+
+
+@patch("app.routes.api.call_openrouter")
+def test_generate_surfaces_truncated_flag(mock_call, api_client, auth_headers, tmp_path):
+    family = _create_family(tmp_path)
+    mock_call.return_value = OpenRouterResult(
+        content="POSITIVE: a cyberpunk samurai\nNEGATIVE: blurry", cost=0.000123, truncated=True
+    )
+
+    response = api_client.post(
+        "/api/generate",
+        json={
+            "user_input": "a cyberpunk samurai",
+            "family_id": family["id"],
+            "llm_model": "anthropic/claude-sonnet-4",
+        },
+        auth=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["truncated"] is True
 
 
 @patch("app.routes.api.call_openrouter")
@@ -120,6 +142,7 @@ def test_generate_with_previous_prompt_returns_parsed_prompt(mock_call, api_clie
         "positive_prompt": "a samurai with lightning",
         "negative_prompt": "blurry",
         "cost": 0.000123,
+        "truncated": False,
     }
 
 
@@ -184,6 +207,7 @@ def test_generate_with_previous_prompt_suppresses_negative_when_family_has_none(
         "positive_prompt": "updated flowing scene",
         "negative_prompt": "",
         "cost": 0.000123,
+        "truncated": False,
     }
 
 

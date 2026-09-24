@@ -86,7 +86,12 @@ def generate(req: GenerateRequest):
         negative_prompt=negative,
     )
 
-    return {"positive_prompt": positive, "negative_prompt": negative, "cost": result.cost}
+    return {
+        "positive_prompt": positive,
+        "negative_prompt": negative,
+        "cost": result.cost,
+        "truncated": result.truncated,
+    }
 
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -163,7 +168,12 @@ async def from_image(
         negative_prompt=negative,
     )
 
-    return {"positive_prompt": positive, "negative_prompt": negative, "cost": result.cost}
+    return {
+        "positive_prompt": positive,
+        "negative_prompt": negative,
+        "cost": result.cost,
+        "truncated": result.truncated,
+    }
 
 
 class ExtractCharacterRequest(BaseModel):
@@ -201,7 +211,7 @@ def extract_character(req: ExtractCharacterRequest):
         len(name), len(text), result.cost,
     )
 
-    return {"name": name, "text": text, "cost": result.cost}
+    return {"name": name, "text": text, "cost": result.cost, "truncated": result.truncated}
 
 
 @router.post("/extract-character-from-image")
@@ -249,7 +259,7 @@ async def extract_character_from_image(
         len(name), len(text), result.cost,
     )
 
-    return {"name": name, "text": text, "cost": result.cost}
+    return {"name": name, "text": text, "cost": result.cost, "truncated": result.truncated}
 
 
 @router.get("/openrouter-models")

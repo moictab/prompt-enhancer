@@ -18,6 +18,7 @@ _models_cache: dict = {"models": None, "fetched_at": 0.0}
 class OpenRouterResult:
     content: str
     cost: float | None
+    truncated: bool = False
 
 
 def call_openrouter(
@@ -48,7 +49,7 @@ def call_openrouter(
             {"role": "user", "content": user_content},
         ],
         "temperature": temperature,
-        "max_tokens": 4096,
+        "max_tokens": 8192,
         "usage": {"include": True},
     }
 
@@ -101,7 +102,8 @@ def call_openrouter(
 
         try:
             data = response.json()
-            content = data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            content = choice["message"]["content"]
             if not isinstance(content, str):
                 raise ValueError("content is not a string")
         except (ValueError, KeyError, IndexError):
@@ -116,7 +118,13 @@ def call_openrouter(
             )
 
         cost = data.get("usage", {}).get("cost")
-        return OpenRouterResult(content=content, cost=cost)
+        truncated = choice.get("finish_reason") == "length"
+        if truncated:
+            logger.warning(
+                "openrouter call truncated by max_tokens model=%s content_len=%d",
+                model, len(content),
+            )
+        return OpenRouterResult(content=content, cost=cost, truncated=truncated)
 
 
 def list_models() -> list[dict]:

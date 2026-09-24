@@ -34,13 +34,14 @@ function formatCost(cost) {
   return `Coste: $${cost.toFixed(6)}`;
 }
 
-function showResult(positive, negative, cost) {
+function showResult(positive, negative, cost, truncated) {
   document.getElementById("result-panel").hidden = false;
   document.getElementById("result-error").hidden = true;
   document.getElementById("result-success").hidden = false;
   document.getElementById("result-positive").value = positive;
   document.getElementById("result-negative").value = negative;
   document.getElementById("result-negative-group").hidden = !negative;
+  document.getElementById("result-truncated").hidden = !truncated;
 
   const costText = formatCost(cost);
   const costEl = document.getElementById("result-cost");
@@ -124,7 +125,7 @@ function setupGenerarForm() {
         temperature: parseFloat(formData.get("temperature")),
         character_ids: Array.from(selectedCharacterIds),
       });
-      showResult(data.positive_prompt, data.negative_prompt, data.cost);
+      showResult(data.positive_prompt, data.negative_prompt, data.cost, data.truncated);
       const floatingCost = formatFloatingCost(data.cost);
       if (floatingCost) spawnFloatingText(floatingCost, submitButton);
     } catch (err) {
@@ -336,7 +337,7 @@ function setupImagenForm() {
       if (!response.ok) {
         throw new Error(data.detail || "Error desconocido");
       }
-      showResult(data.positive_prompt, data.negative_prompt, data.cost);
+      showResult(data.positive_prompt, data.negative_prompt, data.cost, data.truncated);
     } catch (err) {
       showError(err.message);
     } finally {
@@ -353,12 +354,13 @@ function showExtractCharacterError(message) {
   document.getElementById("extract-character-form-wrap").hidden = true;
 }
 
-function showExtractCharacterForm(name, text, cost) {
+function showExtractCharacterForm(name, text, cost, truncated) {
   document.getElementById("extract-character-panel").hidden = false;
   document.getElementById("extract-character-error").hidden = true;
   document.getElementById("extract-character-form-wrap").hidden = false;
   document.getElementById("extract-character-name").value = name;
   document.getElementById("extract-character-text").value = text;
+  document.getElementById("extract-character-truncated").hidden = !truncated;
 
   const costText = formatCost(cost);
   const costEl = document.getElementById("extract-character-cost");
@@ -381,7 +383,7 @@ function setupExtractCharacterFromPrompt() {
         prompt_text: promptText,
         llm_model: llmModel,
       });
-      showExtractCharacterForm(data.name, data.text, data.cost);
+      showExtractCharacterForm(data.name, data.text, data.cost, data.truncated);
     } catch (err) {
       showExtractCharacterError(err.message);
     } finally {
@@ -413,7 +415,7 @@ function setupExtractCharacterFromImage() {
       if (!response.ok) {
         throw new Error(data.detail || "Error desconocido");
       }
-      showExtractCharacterForm(data.name, data.text, data.cost);
+      showExtractCharacterForm(data.name, data.text, data.cost, data.truncated);
     } catch (err) {
       showExtractCharacterError(err.message);
     } finally {

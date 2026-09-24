@@ -29,6 +29,28 @@ def test_call_openrouter_returns_message_content(mock_post):
 
 
 @patch("app.openrouter_client.requests.post")
+def test_call_openrouter_not_truncated_by_default(mock_post):
+    mock_post.return_value = _mock_response(
+        200, {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+    )
+
+    result = call_openrouter(api_key="key", model="m", system_prompt="sys", user_message="user")
+
+    assert result.truncated is False
+
+
+@patch("app.openrouter_client.requests.post")
+def test_call_openrouter_flags_truncated_on_length_finish_reason(mock_post):
+    mock_post.return_value = _mock_response(
+        200, {"choices": [{"message": {"content": "ok"}, "finish_reason": "length"}]}
+    )
+
+    result = call_openrouter(api_key="key", model="m", system_prompt="sys", user_message="user")
+
+    assert result.truncated is True
+
+
+@patch("app.openrouter_client.requests.post")
 def test_call_openrouter_returns_cost_from_usage(mock_post):
     mock_post.return_value = _mock_response(
         200, {
