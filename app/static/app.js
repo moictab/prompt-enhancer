@@ -23,6 +23,7 @@ function setupCreativitySliders() {
 }
 
 function showError(message) {
+  document.getElementById("story-result-panel").hidden = true;
   document.getElementById("result-panel").hidden = false;
   const errorBox = document.getElementById("result-error");
   errorBox.hidden = false;
@@ -36,6 +37,7 @@ function formatCost(cost) {
 }
 
 function showResult(positive, negative, cost, truncated) {
+  document.getElementById("story-result-panel").hidden = true;
   document.getElementById("result-panel").hidden = false;
   document.getElementById("result-error").hidden = true;
   document.getElementById("result-success").hidden = false;
@@ -404,6 +406,7 @@ function buildStoryEpisodeCard(index, episode) {
 }
 
 function showStoryError(message) {
+  document.getElementById("result-panel").hidden = true;
   document.getElementById("story-result-panel").hidden = false;
   const errorBox = document.getElementById("story-result-error");
   errorBox.hidden = false;
@@ -411,11 +414,13 @@ function showStoryError(message) {
   document.getElementById("story-result-success").hidden = true;
 }
 
-function showStoryResult(episodes, cost, truncated) {
+function showStoryResult(episodes, cost, truncated, episodeCountMismatch) {
+  document.getElementById("result-panel").hidden = true;
   document.getElementById("story-result-panel").hidden = false;
   document.getElementById("story-result-error").hidden = true;
   document.getElementById("story-result-success").hidden = false;
   document.getElementById("story-result-truncated").hidden = !truncated;
+  document.getElementById("story-result-mismatch").hidden = !episodeCountMismatch;
 
   const container = document.getElementById("story-episodes");
   container.innerHTML = "";
@@ -446,7 +451,7 @@ function setupHistoriaForm() {
         num_episodes: parseInt(formData.get("num_episodes"), 10),
         character_ids: Array.from(selectedStoryCharacterIds),
       });
-      showStoryResult(data.episodes, data.cost, data.truncated);
+      showStoryResult(data.episodes, data.cost, data.truncated, data.episode_count_mismatch);
       const floatingCost = formatFloatingCost(data.cost);
       if (floatingCost) spawnFloatingText(floatingCost, submitButton);
     } catch (err) {

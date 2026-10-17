@@ -53,6 +53,31 @@ def test_story_returns_parsed_episodes(mock_call, api_client, auth_headers, tmp_
         {"positive_prompt": "cards are dealt for strip poker", "negative_prompt": "blurry"},
         {"positive_prompt": "the game reaches its climax", "negative_prompt": "blurry"},
     ]
+    assert body["episode_count_mismatch"] is False
+
+
+@patch("app.routes.api.call_openrouter")
+def test_story_flags_episode_count_mismatch_when_model_ignores_format(mock_call, api_client, auth_headers, tmp_path):
+    family = _create_family(tmp_path)
+    mock_call.return_value = OpenRouterResult(
+        content="POSITIVE: a single merged scene covering the whole story\nNEGATIVE: blurry", cost=0.0042
+    )
+
+    response = api_client.post(
+        "/api/story",
+        json={
+            "user_input": "two characters have dinner",
+            "family_id": family["id"],
+            "llm_model": "m",
+            "num_episodes": 4,
+        },
+        auth=auth_headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["episodes"]) == 1
+    assert body["episode_count_mismatch"] is True
 
 
 @patch("app.routes.api.call_openrouter")

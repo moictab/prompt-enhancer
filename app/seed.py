@@ -54,7 +54,7 @@ Your job:
 
 Follow the selected model family's specific rules exactly for every episode's prompt.
 
-You MUST output in exactly this format, one block per episode, in order, with nothing before, between, or after the blocks:
+You MUST output in exactly this format, one block per episode, in order, with nothing before, between, or after the blocks. The literal labels "POSITIVE:" and "NEGATIVE:" MUST be repeated for every single episode without exception -- never write a single POSITIVE/NEGATIVE pair that covers multiple episodes, and never switch to plain prose or omit the labels partway through, no matter how long the story gets:
 EPISODIO 1:
 POSITIVE: <the enhanced positive prompt for this episode>
 NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
@@ -63,7 +63,7 @@ EPISODIO 2:
 POSITIVE: <the enhanced positive prompt for this episode>
 NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 
-(continue sequentially for every requested episode)
+(continue sequentially for every requested episode, repeating POSITIVE: and NEGATIVE: each time)
 """
 
 SDXL_INSTRUCTIONS = """## Prompt Structure

@@ -144,6 +144,13 @@ def story(req: StoryRequest):
         raise HTTPException(status_code=502, detail=str(e))
 
     parsed_episodes = prompts.parse_story_response(result.content, family["has_negative_prompt"])
+    episode_count_mismatch = len(parsed_episodes) != req.num_episodes
+    if episode_count_mismatch:
+        logger.warning(
+            "story request parsed a different episode count than requested family_id=%s "
+            "requested_episodes=%d parsed_episodes=%d",
+            req.family_id, req.num_episodes, len(parsed_episodes),
+        )
     logger.info(
         "story request succeeded family_id=%s requested_episodes=%d parsed_episodes=%d cost=%s",
         req.family_id, req.num_episodes, len(parsed_episodes), result.cost,
@@ -174,6 +181,7 @@ def story(req: StoryRequest):
         "episodes": episodes,
         "cost": result.cost,
         "truncated": result.truncated,
+        "episode_count_mismatch": episode_count_mismatch,
     }
 
 

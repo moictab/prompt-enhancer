@@ -81,19 +81,47 @@ def parse_response(response: str, has_negative_prompt: bool) -> tuple[str, str]:
     return (positive, negative)
 
 
-EPISODE_PATTERN = re.compile(r"EPISODIO\s+\d+\s*:", re.IGNORECASE)
+POSITIVE_PATTERN = re.compile(r"POSITIVE\s*:", re.IGNORECASE)
+NEGATIVE_PATTERN = re.compile(r"NEGATIVE\s*:", re.IGNORECASE)
+
+
+def _strip_trailing_episode_header(text: str) -> str:
+    # Whatever heading style the model used to separate episodes ("EPISODIO 2:",
+    # "Scene 3:", a markdown "## Episode 4" ...) can leak into the end of the
+    # previous episode's text, since parsing only anchors on POSITIVE:/NEGATIVE:.
+    # Peel off a short, colon-terminated dangling line like that if present.
+    stripped = text.strip()
+    body, separator, tail = stripped.rpartition("\n\n")
+    if separator and tail and len(tail) <= 80 and "\n" not in tail and tail.endswith(":"):
+        return body.rstrip()
+    return stripped
 
 
 def parse_story_response(response: str, has_negative_prompt: bool) -> list[tuple[str, str]]:
-    matches = list(EPISODE_PATTERN.finditer(response))
-    if not matches:
+    positive_matches = list(POSITIVE_PATTERN.finditer(response))
+    if not positive_matches:
         return [parse_response(response, has_negative_prompt)]
 
+    negative_matches = list(NEGATIVE_PATTERN.finditer(response))
+
     episodes = []
-    for i, match in enumerate(matches):
-        start = match.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(response)
-        episodes.append(parse_response(response[start:end], has_negative_prompt))
+    for i, pos_match in enumerate(positive_matches):
+        pos_start = pos_match.end()
+        next_pos_start = (
+            positive_matches[i + 1].start() if i + 1 < len(positive_matches) else len(response)
+        )
+        neg_match = next(
+            (m for m in negative_matches if pos_match.end() <= m.start() < next_pos_start), None
+        )
+        if neg_match:
+            positive = response[pos_start:neg_match.start()].strip()
+            negative = _strip_trailing_episode_header(response[neg_match.end():next_pos_start])
+        else:
+            positive = _strip_trailing_episode_header(response[pos_start:next_pos_start])
+            negative = ""
+        if not has_negative_prompt:
+            negative = ""
+        episodes.append((positive, negative))
     return episodes
 
 

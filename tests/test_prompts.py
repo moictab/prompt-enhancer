@@ -194,6 +194,39 @@ def test_parse_story_response_falls_back_to_single_episode_when_markers_missing(
     assert episodes == [("just one scene", "blurry")]
 
 
+def test_parse_story_response_splits_by_repeated_markers_without_episode_headers():
+    # Some models don't reliably emit the literal "EPISODIO N:" heading, so the
+    # parser must not depend on it -- only on the POSITIVE:/NEGATIVE: pairs.
+    response = (
+        "Here is the story:\n\n"
+        "POSITIVE: two friends sit down to dinner\nNEGATIVE: blurry\n\n"
+        "POSITIVE: the mood turns flirtatious\nNEGATIVE: blurry\n\n"
+        "POSITIVE: cards are dealt for strip poker\nNEGATIVE: blurry"
+    )
+
+    episodes = parse_story_response(response, has_negative_prompt=True)
+
+    assert episodes == [
+        ("two friends sit down to dinner", "blurry"),
+        ("the mood turns flirtatious", "blurry"),
+        ("cards are dealt for strip poker", "blurry"),
+    ]
+
+
+def test_parse_story_response_does_not_bleed_negative_across_episodes():
+    response = (
+        "POSITIVE: first scene\nNEGATIVE: blurry\n\n"
+        "POSITIVE: second scene without its own negative"
+    )
+
+    episodes = parse_story_response(response, has_negative_prompt=True)
+
+    assert episodes == [
+        ("first scene", "blurry"),
+        ("second scene without its own negative", ""),
+    ]
+
+
 def test_parse_character_response_with_markers():
     response = "NAME: Kaito the Ronin\nTEXT: a stoic ronin with a scarred left eye and silver hair"
 
