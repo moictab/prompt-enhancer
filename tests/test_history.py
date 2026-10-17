@@ -32,6 +32,51 @@ def test_append_entry_persists_all_fields(tmp_path):
     assert "timestamp" in entry
 
 
+def test_append_entry_persists_episodes_for_story_mode(tmp_path):
+    path = str(tmp_path / "history.jsonl")
+
+    entry = history.append_entry(
+        mode="story",
+        family_id="fam-1",
+        family_name="SDXL",
+        llm_model="anthropic/claude-sonnet-4",
+        vision_model=None,
+        temperature=0.7,
+        user_input="two characters have dinner",
+        example_prompts="",
+        previous_prompt=None,
+        positive_prompt="",
+        negative_prompt="",
+        episodes=[
+            {"positive_prompt": "a quiet dinner", "negative_prompt": "blurry"},
+            {"positive_prompt": "things escalate", "negative_prompt": "blurry"},
+        ],
+        num_episodes=2,
+        path=path,
+    )
+
+    assert entry["mode"] == "story"
+    assert entry["num_episodes"] == 2
+    assert entry["episodes"] == [
+        {"positive_prompt": "a quiet dinner", "negative_prompt": "blurry"},
+        {"positive_prompt": "things escalate", "negative_prompt": "blurry"},
+    ]
+
+
+def test_append_entry_defaults_episodes_to_none_for_non_story_modes(tmp_path):
+    path = str(tmp_path / "history.jsonl")
+
+    entry = history.append_entry(
+        mode="generate", family_id="f", family_name="SDXL", llm_model="m",
+        vision_model=None, temperature=0.7, user_input="a cat", example_prompts="",
+        previous_prompt=None, positive_prompt="a cat", negative_prompt="",
+        path=path,
+    )
+
+    assert entry["episodes"] is None
+    assert entry["num_episodes"] is None
+
+
 def test_list_entries_returns_newest_first(tmp_path):
     path = str(tmp_path / "history.jsonl")
     first = history.append_entry(

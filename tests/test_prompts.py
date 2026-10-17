@@ -5,6 +5,7 @@ from app.prompts import (
     build_user_message,
     parse_character_response,
     parse_response,
+    parse_story_response,
 )
 
 
@@ -131,6 +132,66 @@ def test_parse_response_falls_back_when_markers_missing():
 
     assert positive == "a cyberpunk samurai in neon rain"
     assert negative == ""
+
+
+def test_build_user_message_story_mode():
+    result = build_user_message("story", "two characters have dinner", num_episodes=4)
+
+    assert result == (
+        "## Historia\ntwo characters have dinner\n\n"
+        "## Numero de Episodios\nGenera exactamente 4 episodios siguiendo el formato indicado."
+    )
+
+
+def test_build_user_message_story_mode_with_characters():
+    result = build_user_message(
+        "story", "two characters have dinner", num_episodes=2,
+        characters=[{"name": "Kaito", "text": "a stoic ronin with a scarred left eye"}],
+    )
+
+    assert "## Personajes" in result
+    assert "Kaito" in result
+    assert result.index("## Historia") < result.index("## Personajes")
+
+
+def test_parse_story_response_splits_episodes_in_order():
+    response = (
+        "EPISODIO 1:\nPOSITIVE: two friends sit down to dinner\nNEGATIVE: blurry\n\n"
+        "EPISODIO 2:\nPOSITIVE: the mood turns flirtatious\nNEGATIVE: blurry\n\n"
+        "EPISODIO 3:\nPOSITIVE: cards are dealt for strip poker\nNEGATIVE: blurry"
+    )
+
+    episodes = parse_story_response(response, has_negative_prompt=True)
+
+    assert episodes == [
+        ("two friends sit down to dinner", "blurry"),
+        ("the mood turns flirtatious", "blurry"),
+        ("cards are dealt for strip poker", "blurry"),
+    ]
+
+
+def test_parse_story_response_is_case_insensitive_on_episode_marker():
+    response = "episodio 1:\nPOSITIVE: a quiet dinner\nNEGATIVE: \n\nepisodio 2:\nPOSITIVE: things escalate\nNEGATIVE: "
+
+    episodes = parse_story_response(response, has_negative_prompt=True)
+
+    assert [positive for positive, _ in episodes] == ["a quiet dinner", "things escalate"]
+
+
+def test_parse_story_response_forces_empty_negative_when_family_does_not_use_one():
+    response = "EPISODIO 1:\nPOSITIVE: a flowing scene\nNEGATIVE: blurry"
+
+    episodes = parse_story_response(response, has_negative_prompt=False)
+
+    assert episodes == [("a flowing scene", "")]
+
+
+def test_parse_story_response_falls_back_to_single_episode_when_markers_missing():
+    response = "POSITIVE: just one scene\nNEGATIVE: blurry"
+
+    episodes = parse_story_response(response, has_negative_prompt=True)
+
+    assert episodes == [("just one scene", "blurry")]
 
 
 def test_parse_character_response_with_markers():

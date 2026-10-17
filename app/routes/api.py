@@ -2,7 +2,7 @@ import base64
 import logging
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import characters, families, history, prompts, system_prompt
 from ..config import get_settings
@@ -89,6 +89,89 @@ def generate(req: GenerateRequest):
     return {
         "positive_prompt": positive,
         "negative_prompt": negative,
+        "cost": result.cost,
+        "truncated": result.truncated,
+    }
+
+
+class StoryRequest(BaseModel):
+    user_input: str
+    family_id: str
+    llm_model: str
+    temperature: float = 0.7
+    example_prompts: str = ""
+    character_ids: list[str] = []
+    num_episodes: int = Field(default=4, ge=2, le=12)
+
+
+@router.post("/story")
+def story(req: StoryRequest):
+    if not req.user_input.strip():
+        raise HTTPException(status_code=400, detail="user_input is required")
+
+    family = families.get_family(req.family_id)
+    if family is None:
+        raise HTTPException(status_code=404, detail="Unknown family_id")
+
+    selected_characters = [
+        c for c in characters.list_characters() if c["id"] in req.character_ids
+    ]
+
+    settings = get_settings()
+    system = prompts.build_system_prompt("story", family)
+    user_message = prompts.build_user_message(
+        "story", req.user_input,
+        example_prompts=req.example_prompts,
+        characters=selected_characters,
+        num_episodes=req.num_episodes,
+    )
+
+    logger.info(
+        "story request family_id=%s model=%s temperature=%.2f characters=%d num_episodes=%d",
+        req.family_id, req.llm_model, req.temperature, len(selected_characters), req.num_episodes,
+    )
+
+    try:
+        result = call_openrouter(
+            api_key=settings.openrouter_api_key,
+            model=req.llm_model,
+            system_prompt=system,
+            user_message=user_message,
+            temperature=req.temperature,
+        )
+    except RuntimeError as e:
+        logger.warning("story request failed family_id=%s error=%s", req.family_id, e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+    parsed_episodes = prompts.parse_story_response(result.content, family["has_negative_prompt"])
+    logger.info(
+        "story request succeeded family_id=%s requested_episodes=%d parsed_episodes=%d cost=%s",
+        req.family_id, req.num_episodes, len(parsed_episodes), result.cost,
+    )
+
+    episodes = [
+        {"positive_prompt": positive, "negative_prompt": negative}
+        for positive, negative in parsed_episodes
+    ]
+
+    history.append_entry(
+        mode="story",
+        family_id=family["id"],
+        family_name=family["name"],
+        llm_model=req.llm_model,
+        vision_model=None,
+        temperature=req.temperature,
+        user_input=req.user_input,
+        example_prompts=req.example_prompts,
+        previous_prompt=None,
+        positive_prompt="",
+        negative_prompt="",
+        episodes=episodes,
+        num_episodes=req.num_episodes,
+    )
+
+    return {
+        "episodes": episodes,
         "cost": result.cost,
         "truncated": result.truncated,
     }

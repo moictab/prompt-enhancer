@@ -21,6 +21,8 @@ def append_entry(
     previous_prompt: str | None,
     positive_prompt: str,
     negative_prompt: str,
+    episodes: list[dict] | None = None,
+    num_episodes: int | None = None,
     path: str | None = None,
 ) -> dict:
     entry = {
@@ -37,6 +39,8 @@ def append_entry(
         "previous_prompt": previous_prompt,
         "positive_prompt": positive_prompt,
         "negative_prompt": negative_prompt,
+        "episodes": episodes,
+        "num_episodes": num_episodes,
     }
     storage.append_jsonl(path or _default_path(), entry)
     return entry

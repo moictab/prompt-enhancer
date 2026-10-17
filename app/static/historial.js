@@ -87,6 +87,25 @@ function buildEntryCard(entry) {
   meta.textContent = `${new Date(entry.timestamp).toLocaleString()} · ${entry.mode} · ${entry.family_name}`;
   card.appendChild(meta);
 
+  if (entry.mode === "story" && entry.episodes) {
+    entry.episodes.forEach((episode, index) => {
+      const episodeCard = document.createElement("section");
+      episodeCard.className = "history-entry";
+
+      const heading = document.createElement("h3");
+      heading.textContent = `Episodio ${index + 1}`;
+      episodeCard.appendChild(heading);
+
+      episodeCard.appendChild(buildPromptField("Positive Prompt", episode.positive_prompt));
+      if (episode.negative_prompt) {
+        episodeCard.appendChild(buildPromptField("Negative Prompt", episode.negative_prompt));
+      }
+
+      card.appendChild(episodeCard);
+    });
+    return card;
+  }
+
   card.appendChild(buildPromptField("Positive Prompt", entry.positive_prompt));
   if (entry.negative_prompt) {
     card.appendChild(buildPromptField("Negative Prompt", entry.negative_prompt));

@@ -23,17 +23,19 @@ def test_ensure_seed_data_creates_empty_characters_file(tmp_path):
     assert characters == []
 
 
-def test_ensure_seed_data_creates_all_four_system_prompts(tmp_path):
+def test_ensure_seed_data_creates_all_five_system_prompts(tmp_path):
     ensure_seed_data(str(tmp_path))
 
     data = json.loads((tmp_path / "system_prompts.json").read_text())
-    assert set(data.keys()) == {"generate", "iterate", "image", "extract_character"}
+    assert set(data.keys()) == {"generate", "iterate", "image", "extract_character", "story"}
     assert "POSITIVE:" in data["generate"]
     assert "POSITIVE:" in data["iterate"]
     assert "POSITIVE:" in data["image"]
     assert "PRESERVE" in data["iterate"]
     assert "NAME:" in data["extract_character"]
     assert "TEXT:" in data["extract_character"]
+    assert "EPISODIO" in data["story"]
+    assert "POSITIVE:" in data["story"]
 
 
 def test_ensure_seed_data_is_idempotent(tmp_path):

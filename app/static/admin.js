@@ -7,7 +7,7 @@ async function fetchJSON(url, options) {
   return data;
 }
 
-const SYSTEM_PROMPT_MODES = ["generate", "iterate", "image", "extract_character"];
+const SYSTEM_PROMPT_MODES = ["generate", "iterate", "image", "extract_character", "story"];
 
 async function loadSystemPrompts() {
   for (const mode of SYSTEM_PROMPT_MODES) {

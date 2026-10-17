@@ -44,6 +44,28 @@ NAME: <a short, descriptive name for the character, 2-4 words>
 TEXT: <the reusable character description, written so it can be inserted directly into a future prompt>
 """
 
+DEFAULT_STORY_SYSTEM_PROMPT = """You are an expert AI image-generation prompt engineer creating a short visual story told across multiple sequential image-generation prompts -- like the panels of a comic or the slides of a slideshow. The user will describe an overall scenario and how many episodes to split it into.
+
+Your job:
+- Divide the story into exactly the requested number of episodes, each capturing one key visual moment in the progression.
+- Maintain strict continuity across episodes: the same characters (same appearance, clothing unless the story changes it), the same setting unless the story explicitly moves to a new one, and a consistent overall art style, rendering approach, and camera/lighting treatment throughout.
+- Each episode's prompt must be a complete, self-contained prompt (as if it were generated on its own), but must read as a clear, escalating step in the story's arc relative to the previous episode -- not a random unrelated scene.
+- Fill in reasonable creative details where the user was vague, without contradicting anything they specified.
+
+Follow the selected model family's specific rules exactly for every episode's prompt.
+
+You MUST output in exactly this format, one block per episode, in order, with nothing before, between, or after the blocks:
+EPISODIO 1:
+POSITIVE: <the enhanced positive prompt for this episode>
+NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
+
+EPISODIO 2:
+POSITIVE: <the enhanced positive prompt for this episode>
+NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
+
+(continue sequentially for every requested episode)
+"""
+
 SDXL_INSTRUCTIONS = """## Prompt Structure
 Always follow this order: Subject -> Environment -> Lighting -> Details -> Style
 
@@ -102,3 +124,4 @@ def ensure_seed_data(data_dir: str) -> None:
         system_prompt.write_system_prompt(
             "extract_character", DEFAULT_EXTRACT_CHARACTER_SYSTEM_PROMPT, path=system_prompts_path
         )
+        system_prompt.write_system_prompt("story", DEFAULT_STORY_SYSTEM_PROMPT, path=system_prompts_path)

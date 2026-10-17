@@ -1,4 +1,5 @@
 const selectedCharacterIds = new Set();
+const selectedStoryCharacterIds = new Set();
 
 function setupTabs() {
   const buttons = document.querySelectorAll(".tab-button");
@@ -265,27 +266,32 @@ async function loadCharacters() {
   return response.json();
 }
 
-async function refreshCharacterButtons() {
-  const characterList = await loadCharacters();
-  const container = document.getElementById("generar-characters");
+function renderCharacterButtons(containerId, selectedIds, characterList) {
+  const container = document.getElementById(containerId);
   container.innerHTML = "";
   characterList.forEach((character) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "character-button";
     button.textContent = character.name;
-    if (selectedCharacterIds.has(character.id)) button.classList.add("selected");
+    if (selectedIds.has(character.id)) button.classList.add("selected");
     button.addEventListener("click", () => {
-      if (selectedCharacterIds.has(character.id)) {
-        selectedCharacterIds.delete(character.id);
+      if (selectedIds.has(character.id)) {
+        selectedIds.delete(character.id);
         button.classList.remove("selected");
       } else {
-        selectedCharacterIds.add(character.id);
+        selectedIds.add(character.id);
         button.classList.add("selected");
       }
     });
     container.appendChild(button);
   });
+}
+
+async function refreshCharacterButtons() {
+  const characterList = await loadCharacters();
+  renderCharacterButtons("generar-characters", selectedCharacterIds, characterList);
+  renderCharacterButtons("historia-characters", selectedStoryCharacterIds, characterList);
 }
 
 async function loadOpenrouterModels() {
@@ -340,6 +346,111 @@ function setupImagenForm() {
       showResult(data.positive_prompt, data.negative_prompt, data.cost, data.truncated);
     } catch (err) {
       showError(err.message);
+    } finally {
+      setButtonLoading(submitButton, false);
+    }
+  });
+}
+
+function buildCopyRow(text) {
+  const wrap = document.createElement("div");
+  wrap.className = "copy-row";
+
+  const textarea = document.createElement("textarea");
+  textarea.readOnly = true;
+  textarea.value = text;
+  textarea.rows = Math.min(12, Math.max(2, Math.ceil(text.length / 70)));
+  wrap.appendChild(textarea);
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Copiar";
+  button.addEventListener("click", async () => {
+    try {
+      await copyText(text);
+      flashButtonFeedback(button, "Copiado!", false);
+    } catch (err) {
+      flashButtonFeedback(button, "Error al copiar", true);
+    }
+  });
+  wrap.appendChild(button);
+
+  return wrap;
+}
+
+function buildPromptField(labelText, text) {
+  const fragment = document.createDocumentFragment();
+  const label = document.createElement("label");
+  label.textContent = labelText;
+  fragment.appendChild(label);
+  fragment.appendChild(buildCopyRow(text));
+  return fragment;
+}
+
+function buildStoryEpisodeCard(index, episode) {
+  const card = document.createElement("section");
+  card.className = "history-entry";
+
+  const heading = document.createElement("h3");
+  heading.textContent = `Episodio ${index + 1}`;
+  card.appendChild(heading);
+
+  card.appendChild(buildPromptField("Positive Prompt", episode.positive_prompt));
+  if (episode.negative_prompt) {
+    card.appendChild(buildPromptField("Negative Prompt", episode.negative_prompt));
+  }
+
+  return card;
+}
+
+function showStoryError(message) {
+  document.getElementById("story-result-panel").hidden = false;
+  const errorBox = document.getElementById("story-result-error");
+  errorBox.hidden = false;
+  errorBox.textContent = message;
+  document.getElementById("story-result-success").hidden = true;
+}
+
+function showStoryResult(episodes, cost, truncated) {
+  document.getElementById("story-result-panel").hidden = false;
+  document.getElementById("story-result-error").hidden = true;
+  document.getElementById("story-result-success").hidden = false;
+  document.getElementById("story-result-truncated").hidden = !truncated;
+
+  const container = document.getElementById("story-episodes");
+  container.innerHTML = "";
+  episodes.forEach((episode, index) => {
+    container.appendChild(buildStoryEpisodeCard(index, episode));
+  });
+
+  const costText = formatCost(cost);
+  const costEl = document.getElementById("story-result-cost");
+  costEl.hidden = costText === null;
+  costEl.textContent = costText || "";
+}
+
+function setupHistoriaForm() {
+  const form = document.getElementById("form-historia");
+  const submitButton = form.querySelector('button[type="submit"]');
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = new FormData(form);
+    setButtonLoading(submitButton, true);
+    try {
+      const data = await postJSON("/api/story", {
+        user_input: formData.get("user_input"),
+        family_id: formData.get("family_id"),
+        example_prompts: formData.get("example_prompts"),
+        llm_model: formData.get("llm_model"),
+        temperature: parseFloat(formData.get("temperature")),
+        num_episodes: parseInt(formData.get("num_episodes"), 10),
+        character_ids: Array.from(selectedStoryCharacterIds),
+      });
+      showStoryResult(data.episodes, data.cost, data.truncated);
+      const floatingCost = formatFloatingCost(data.cost);
+      if (floatingCost) spawnFloatingText(floatingCost, submitButton);
+    } catch (err) {
+      showStoryError(err.message);
     } finally {
       setButtonLoading(submitButton, false);
     }
@@ -452,6 +563,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupGenerarSettingsPersistence();
   setupGenerarForm();
   setupImagenForm();
+  setupHistoriaForm();
   setupCopyButtons();
   setupIterateHandoff();
   refreshCharacterButtons();

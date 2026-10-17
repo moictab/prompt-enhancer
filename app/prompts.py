@@ -20,6 +20,7 @@ def build_user_message(
     previous_prompt: str | None = None,
     example_prompts: str | None = None,
     characters: list[dict] | None = None,
+    num_episodes: int | None = None,
 ) -> str:
     parts = []
     if mode == "iterate":
@@ -29,6 +30,9 @@ def build_user_message(
         parts.append("## Imagen\nSe adjunta una imagen de referencia para este prompt.")
         if user_input and user_input.strip():
             parts.append(f"## Idea\n{user_input.strip()}")
+    elif mode == "story":
+        parts.append(f"## Historia\n{user_input}")
+        parts.append(f"## Numero de Episodios\nGenera exactamente {num_episodes} episodios siguiendo el formato indicado.")
     else:
         parts.append(f"## Idea\n{user_input}")
 
@@ -75,6 +79,22 @@ def parse_response(response: str, has_negative_prompt: bool) -> tuple[str, str]:
         negative = ""
 
     return (positive, negative)
+
+
+EPISODE_PATTERN = re.compile(r"EPISODIO\s+\d+\s*:", re.IGNORECASE)
+
+
+def parse_story_response(response: str, has_negative_prompt: bool) -> list[tuple[str, str]]:
+    matches = list(EPISODE_PATTERN.finditer(response))
+    if not matches:
+        return [parse_response(response, has_negative_prompt)]
+
+    episodes = []
+    for i, match in enumerate(matches):
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(response)
+        episodes.append(parse_response(response[start:end], has_negative_prompt))
+    return episodes
 
 
 def parse_character_response(response: str) -> tuple[str, str]:
