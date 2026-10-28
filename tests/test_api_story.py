@@ -12,10 +12,10 @@ def _create_family(tmp_path, has_negative_prompt=True):
 
 
 STORY_RESPONSE = (
-    "EPISODIO 1:\nPOSITIVE: two friends sit down to dinner\nNEGATIVE: blurry\n\n"
-    "EPISODIO 2:\nPOSITIVE: the mood turns flirtatious\nNEGATIVE: blurry\n\n"
-    "EPISODIO 3:\nPOSITIVE: cards are dealt for strip poker\nNEGATIVE: blurry\n\n"
-    "EPISODIO 4:\nPOSITIVE: the game reaches its climax\nNEGATIVE: blurry"
+    "EPISODE 1:\nPOSITIVE: two friends sit down to dinner\nNEGATIVE: blurry\n\n"
+    "EPISODE 2:\nPOSITIVE: the mood turns flirtatious\nNEGATIVE: blurry\n\n"
+    "EPISODE 3:\nPOSITIVE: cards are dealt for strip poker\nNEGATIVE: blurry\n\n"
+    "EPISODE 4:\nPOSITIVE: the game reaches its climax\nNEGATIVE: blurry"
 )
 
 
@@ -97,7 +97,7 @@ def test_story_sends_requested_episode_count_to_llm(mock_call, api_client, auth_
     )
 
     sent_user_message = mock_call.call_args.kwargs["user_message"]
-    assert "Genera exactamente 4 episodios" in sent_user_message
+    assert "Generate exactly 4 episodes" in sent_user_message
 
 
 @patch("app.routes.api.call_openrouter")
@@ -164,7 +164,7 @@ def test_story_resolves_character_ids_into_user_message(mock_call, api_client, a
     )
 
     sent_user_message = mock_call.call_args.kwargs["user_message"]
-    assert "## Personajes" in sent_user_message
+    assert "## Characters" in sent_user_message
     assert "Kaito" in sent_user_message
 
 

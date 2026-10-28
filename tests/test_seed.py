@@ -36,9 +36,9 @@ def test_ensure_seed_data_creates_every_mode_system_prompt(tmp_path):
     assert "PRESERVE" in data["iterate"]
     assert "NAME:" in data["extract_character"]
     assert "TEXT:" in data["extract_character"]
-    assert "EPISODIO" in data["story"]
+    assert "EPISODE 1:" in data["story"]
     assert "POSITIVE:" in data["story"]
-    assert "VARIACION" in data["variations"]
+    assert "VARIATION 1:" in data["variations"]
     assert "POSITIVE:" in data["variations"]
 
 
@@ -69,5 +69,5 @@ def test_ensure_seed_data_fills_in_modes_missing_from_an_older_data_dir(tmp_path
     data = json.loads((tmp_path / "system_prompts.json").read_text())
     assert data["generate"] == "custom"
     assert data["story"] == ""
-    assert "VARIACION" in data["variations"]
+    assert "VARIATION 1:" in data["variations"]
     assert "PRESERVE" in data["iterate"]

@@ -8,14 +8,15 @@ def build_system_prompt(mode: str, family: dict) -> str:
 
 
 CHARACTERS_INSTRUCTION = (
-    "Incluye a los siguientes personajes en el prompt final tal como se describen a "
-    "continuacion, sin modificar ni parafrasear su texto. Completa de forma coherente "
-    "cualquier detalle de cada personaje que no este especificado."
+    "Include the following characters in the final prompt exactly as described below, "
+    "without modifying or paraphrasing their text. Fill in any detail of each character "
+    "that is not specified, consistently with the rest."
 )
 
 
 # Aspects of a shot that the Variaciones mode can hold fixed or vary. Keys are
-# what the API accepts; labels are what both the UI and the LLM see.
+# what the API accepts; labels are what the UI shows and history stores, and the
+# names are what the LLM sees -- in English, like everything else sent to it.
 VARIATION_AXES = {
     "outfit": "Ropa y accesorios",
     "setting": "Escenario y situación",
@@ -25,29 +26,62 @@ VARIATION_AXES = {
     "expression": "Expresión",
 }
 
+VARIATION_AXIS_NAMES = {
+    "outfit": "Outfit and accessories",
+    "setting": "Setting and situation",
+    "lighting": "Lighting",
+    "pose": "Pose and action",
+    "camera": "Framing and camera",
+    "expression": "Expression",
+}
+
+
+REFERENCES_INSTRUCTION = (
+    "These prompts are the starting material; they usually describe the same subject. "
+    "Analyze them together before writing:\n"
+    "- What they have in common (the subject: physical traits, age, hair, build...) is the "
+    "base of every variation. Always describe it with the same traits and the same words.\n"
+    "- Keep the best of each one: the most precise description of each trait, the most "
+    "effective style and quality terms, and the lighting and composition techniques that "
+    "work best. If they contradict each other on a trait of the subject, use the most "
+    "detailed version.\n"
+    "- Do not copy any reference as is: each variation combines that synthesis with what "
+    "is asked to vary.\n"
+    "- Whatever this request specifies (characters, aesthetic, fixed aspects) takes "
+    "precedence over the references, and the model family's rules take precedence over "
+    "the way the references are written."
+)
+
+
+def _references_part(references: list[str]) -> str:
+    blocks = "\n\n".join(
+        f"### Reference {index}\n{text}" for index, text in enumerate(references, start=1)
+    )
+    return f"## Reference Prompts\n{REFERENCES_INSTRUCTION}\n\n{blocks}"
+
 
 def _variation_axes_parts(axes: list[dict]) -> list[str]:
     fixed_lines = []
     varying_lines = []
     for axis in axes:
-        label = VARIATION_AXES[axis["key"]]
+        name = VARIATION_AXIS_NAMES[axis["key"]]
         value = (axis.get("value") or "").strip()
         if axis["vary"]:
-            varying_lines.append(f"- {label} (pistas: {value})" if value else f"- {label}")
+            varying_lines.append(f"- {name} (hints: {value})" if value else f"- {name}")
         else:
             fixed_lines.append(
-                f"- {label}: {value}" if value
-                else f"- {label}: elige uno y mantenlo identico en todas"
+                f"- {name}: {value}" if value
+                else f"- {name}: choose one and keep it identical in every variation"
             )
 
     parts = []
     if fixed_lines:
         parts.append(
-            "## Aspectos Fijos (identicos en todas las variaciones)\n" + "\n".join(fixed_lines)
+            "## Fixed Aspects (identical in every variation)\n" + "\n".join(fixed_lines)
         )
     if varying_lines:
         parts.append(
-            "## Aspectos que Varian (distintos en cada variacion)\n" + "\n".join(varying_lines)
+            "## Varying Aspects (different in each variation)\n" + "\n".join(varying_lines)
         )
     return parts
 
@@ -62,42 +96,45 @@ def build_user_message(
     aesthetic: str | None = None,
     axes: list[dict] | None = None,
     variant: tuple[int, int] | None = None,
+    references: list[str] | None = None,
 ) -> str:
     parts = []
     if mode == "iterate":
-        parts.append(f"## Prompt Previo\n{previous_prompt}")
-        parts.append(f"## Cambios Solicitados\n{user_input}")
+        parts.append(f"## Previous Prompt\n{previous_prompt}")
+        parts.append(f"## Requested Changes\n{user_input}")
     elif mode == "image":
-        parts.append("## Imagen\nSe adjunta una imagen de referencia para este prompt.")
+        parts.append("## Image\nA reference image is attached for this prompt.")
         if user_input and user_input.strip():
             parts.append(f"## Idea\n{user_input.strip()}")
     elif mode == "story":
-        parts.append(f"## Historia\n{user_input}")
-        parts.append(f"## Numero de Episodios\nGenera exactamente {count} episodios siguiendo el formato indicado.")
+        parts.append(f"## Story\n{user_input}")
+        parts.append(f"## Number of Episodes\nGenerate exactly {count} episodes in the required format.")
     elif mode == "variations":
+        if references:
+            parts.append(_references_part(references))
         if user_input and user_input.strip():
-            parts.append(f"## Idea Base\n{user_input.strip()}")
+            parts.append(f"## Base Idea\n{user_input.strip()}")
         if aesthetic and aesthetic.strip():
-            parts.append(f"## Estetica (identica en todas las variaciones)\n{aesthetic.strip()}")
+            parts.append(f"## Aesthetic (identical in every variation)\n{aesthetic.strip()}")
         parts.extend(_variation_axes_parts(axes or []))
-        parts.append(f"## Numero de Variaciones\nGenera exactamente {count} variaciones siguiendo el formato indicado.")
+        parts.append(f"## Number of Variations\nGenerate exactly {count} variations in the required format.")
     else:
         parts.append(f"## Idea\n{user_input}")
 
     if characters:
         character_lines = "\n".join(f"- {c['name']}: {c['text']}" for c in characters)
-        parts.append(f"## Personajes\n{CHARACTERS_INSTRUCTION}\n\n{character_lines}")
+        parts.append(f"## Characters\n{CHARACTERS_INSTRUCTION}\n\n{character_lines}")
 
     if example_prompts and example_prompts.strip():
-        parts.append(f"## Prompts de Ejemplo\n{example_prompts.strip()}")
+        parts.append(f"## Example Prompts\n{example_prompts.strip()}")
 
     if variant and variant[1] > 1:
         index, total = variant
         parts.append(
-            f"## Alternativa\nSe estan generando {total} alternativas independientes para "
-            f"esta misma peticion; esta es la numero {index}. Toma tus propias decisiones "
-            "creativas (composicion, detalles, enfoque) para que sea una interpretacion "
-            "propia, sin contradecir nada de lo especificado."
+            f"## Alternative\n{total} independent alternatives are being generated for this "
+            f"same request; this is number {index}. Make your own creative choices "
+            "(composition, details, approach) so that it is a distinct interpretation, "
+            "without contradicting anything that was specified."
         )
 
     return "\n\n".join(parts)

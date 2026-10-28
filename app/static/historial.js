@@ -1,4 +1,17 @@
-import { el, formatCost, renderTake, request, toast, toggleFavorite, writeStored } from "./common.js";
+import {
+  MAX_REFERENCES,
+  announceReferences,
+  el,
+  formatCost,
+  loadReferences,
+  mergeReferences,
+  renderTake,
+  request,
+  storeReferences,
+  toast,
+  toggleFavorite,
+  writeStored,
+} from "./common.js";
 
 const PAGE_SIZE = 25;
 const REUSE_KEY = "reuse-prompt";
@@ -29,6 +42,7 @@ function searchableText(entry) {
     entry.family_name,
     params.aesthetic,
     ...(params.character_names || []),
+    ...(params.reference_prompts || []),
     ...entry.prompts.flatMap((p) => [p.positive_prompt, p.negative_prompt]),
   ]
     .filter(Boolean)
@@ -59,6 +73,25 @@ function reuseInGenerar(entry, prompt) {
   window.location.href = "/";
 }
 
+// Stays on the page so several prompts can be collected; Crear picks them up
+// from storage, even if it is already open in another tab.
+function addToReferences(entry, prompt) {
+  const result = mergeReferences(loadReferences(), [prompt.positive_prompt]);
+  if (result.added) storeReferences(result.references);
+  announceReferences(result, " Los tienes en Crear, en Variaciones.");
+}
+
+function useReferencesInVariaciones(entry) {
+  storeReferences(entry.params.reference_prompts.slice(0, MAX_REFERENCES));
+  writeStored(sessionStorage, REUSE_KEY, {
+    mode: "variations",
+    family_id: entry.family_id,
+    llm_model: entry.llm_model,
+    temperature: entry.temperature,
+  });
+  window.location.href = "/";
+}
+
 async function deleteEntry(entry) {
   try {
     await request(`/api/history/${entry.id}`, { method: "DELETE" });
@@ -74,6 +107,8 @@ async function deleteEntry(entry) {
 
 const handlers = {
   onIterate: reuseInGenerar,
+  onReference: addToReferences,
+  onUseReferences: useReferencesInVariaciones,
   onFavorite: async (entry, button) => {
     if ((await toggleFavorite(entry, button)) && state.filters.favoritesOnly && !entry.favorite) {
       render();

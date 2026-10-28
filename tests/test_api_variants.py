@@ -45,9 +45,9 @@ def test_generate_variants_makes_one_call_per_variant_and_sums_cost(
     assert body["cost"] == pytest.approx(0.003)
     assert body["count_mismatch"] is False
     sent_messages = sorted(c.kwargs["user_message"] for c in mock_call.call_args_list)
-    assert all("## Alternativa" in m for m in sent_messages)
-    assert "esta es la numero 1" in sent_messages[0]
-    assert "esta es la numero 3" in sent_messages[2]
+    assert all("## Alternative" in m for m in sent_messages)
+    assert "this is number 1" in sent_messages[0]
+    assert "this is number 3" in sent_messages[2]
 
 
 @patch("app.routes.api.call_openrouter")
@@ -62,7 +62,7 @@ def test_generate_single_variant_omits_alternative_section(mock_call, api_client
     )
 
     assert mock_call.call_count == 1
-    assert "Alternativa" not in mock_call.call_args.kwargs["user_message"]
+    assert "Alternative" not in mock_call.call_args.kwargs["user_message"]
 
 
 @patch("app.routes.api.call_openrouter")

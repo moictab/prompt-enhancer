@@ -55,11 +55,11 @@ Your job:
 Follow the selected model family's specific rules exactly for every episode's prompt.
 
 You MUST output in exactly this format, one block per episode, in order, with nothing before, between, or after the blocks. The literal labels "POSITIVE:" and "NEGATIVE:" MUST be repeated for every single episode without exception -- never write a single POSITIVE/NEGATIVE pair that covers multiple episodes, and never switch to plain prose or omit the labels partway through, no matter how long the story gets:
-EPISODIO 1:
+EPISODE 1:
 POSITIVE: <the enhanced positive prompt for this episode>
 NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 
-EPISODIO 2:
+EPISODE 2:
 POSITIVE: <the enhanced positive prompt for this episode>
 NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 
@@ -79,11 +79,11 @@ Your job:
 Follow the selected model family's specific rules exactly for every variation's prompt.
 
 You MUST output in exactly this format, one block per variation, in order, with nothing before, between, or after the blocks. The literal labels "POSITIVE:" and "NEGATIVE:" MUST be repeated for every single variation without exception:
-VARIACION 1:
+VARIATION 1:
 POSITIVE: <the positive prompt for this variation>
 NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 
-VARIACION 2:
+VARIATION 2:
 POSITIVE: <the positive prompt for this variation>
 NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 

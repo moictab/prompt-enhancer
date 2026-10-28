@@ -12,9 +12,9 @@ def _create_family(tmp_path, has_negative_prompt=True):
 
 
 VARIATIONS_RESPONSE = (
-    "VARIACION 1:\nPOSITIVE: Mara in a red raincoat on a rooftop\nNEGATIVE: blurry\n\n"
-    "VARIACION 2:\nPOSITIVE: Mara in a linen dress in a market\nNEGATIVE: blurry\n\n"
-    "VARIACION 3:\nPOSITIVE: Mara in a leather jacket in a diner\nNEGATIVE: blurry"
+    "VARIATION 1:\nPOSITIVE: Mara in a red raincoat on a rooftop\nNEGATIVE: blurry\n\n"
+    "VARIATION 2:\nPOSITIVE: Mara in a linen dress in a market\nNEGATIVE: blurry\n\n"
+    "VARIATION 3:\nPOSITIVE: Mara in a leather jacket in a diner\nNEGATIVE: blurry"
 )
 
 AXES = [
@@ -81,14 +81,14 @@ def test_variations_sends_constants_and_axes_to_llm(mock_call, api_client, auth_
 
     kwargs = mock_call.call_args.kwargs
     message = kwargs["user_message"]
-    assert "## Idea Base\nretratos urbanos" in message
+    assert "## Base Idea\nretratos urbanos" in message
     assert "fotografia analogica, grano de 35mm" in message
     assert "a tall woman with a silver bob haircut" in message
-    assert "- Iluminación: luz de neon rosa" in message
-    assert "- Encuadre y cámara: elige uno y mantenlo identico en todas" in message
-    assert "- Ropa y accesorios (pistas: ropa de calle)" in message
-    assert "- Escenario y situación\n" in message
-    assert "Genera exactamente 3 variaciones" in message
+    assert "- Lighting: luz de neon rosa" in message
+    assert "- Framing and camera: choose one and keep it identical in every variation" in message
+    assert "- Outfit and accessories (hints: ropa de calle)" in message
+    assert "- Setting and situation\n" in message
+    assert "Generate exactly 3 variations" in message
     assert mock_call.call_count == 1
 
 
@@ -131,6 +131,77 @@ def test_variations_appends_history_with_params(mock_call, api_client, auth_head
         "Ropa y accesorios", "Escenario y situación",
     ]
     assert len(entry["prompts"]) == 3
+
+
+@patch("app.routes.api.call_openrouter")
+def test_variations_sends_reference_prompts_to_llm(mock_call, api_client, auth_headers, tmp_path):
+    family = _create_family(tmp_path)
+    mock_call.return_value = OpenRouterResult(content=VARIATIONS_RESPONSE, cost=0.004)
+
+    api_client.post(
+        "/api/variations",
+        json=_payload(family, reference_prompts=["  Mara on a rooftop  ", "", "Mara in a diner"]),
+        auth=auth_headers,
+    )
+
+    message = mock_call.call_args.kwargs["user_message"]
+    assert "## Reference Prompts" in message
+    # Blank references are dropped before numbering.
+    assert "### Reference 1\nMara on a rooftop\n\n### Reference 2\nMara in a diner" in message
+    assert "Reference 3" not in message
+
+
+@patch("app.routes.api.call_openrouter")
+def test_variations_accepts_reference_prompts_as_the_only_constant(mock_call, api_client, auth_headers, tmp_path):
+    family = _create_family(tmp_path)
+    mock_call.return_value = OpenRouterResult(content=VARIATIONS_RESPONSE, cost=0.004)
+
+    response = api_client.post(
+        "/api/variations",
+        json=_payload(family, aesthetic="", reference_prompts=["Mara on a rooftop"]),
+        auth=auth_headers,
+    )
+
+    assert response.status_code == 200
+
+
+@patch("app.routes.api.call_openrouter")
+def test_variations_stores_reference_prompts_in_history_params(mock_call, api_client, auth_headers, tmp_path):
+    family = _create_family(tmp_path)
+    mock_call.return_value = OpenRouterResult(content=VARIATIONS_RESPONSE, cost=0.004)
+
+    body = api_client.post(
+        "/api/variations",
+        json=_payload(family, reference_prompts=["Mara on a rooftop ", "  "]),
+        auth=auth_headers,
+    ).json()
+
+    assert body["params"]["reference_prompts"] == ["Mara on a rooftop"]
+    [entry] = history.list_entries(path=str(tmp_path / "history.jsonl"))
+    assert entry["params"]["reference_prompts"] == ["Mara on a rooftop"]
+
+
+@patch("app.routes.api.call_openrouter")
+def test_variations_without_references_leaves_them_out_of_params(mock_call, api_client, auth_headers, tmp_path):
+    family = _create_family(tmp_path)
+    mock_call.return_value = OpenRouterResult(content=VARIATIONS_RESPONSE, cost=0.004)
+
+    body = api_client.post("/api/variations", json=_payload(family), auth=auth_headers).json()
+
+    assert "reference_prompts" not in body["params"]
+    assert "Reference" not in mock_call.call_args.kwargs["user_message"]
+
+
+def test_variations_rejects_too_many_reference_prompts(api_client, auth_headers, tmp_path):
+    family = _create_family(tmp_path)
+
+    response = api_client.post(
+        "/api/variations",
+        json=_payload(family, reference_prompts=[f"prompt {i}" for i in range(13)]),
+        auth=auth_headers,
+    )
+
+    assert response.status_code == 422
 
 
 def test_variations_rejects_unknown_axis(api_client, auth_headers, tmp_path):

@@ -1,13 +1,19 @@
 import {
+  MAX_REFERENCES,
   MODE_LABELS,
+  REFERENCES_KEY,
+  announceReferences,
   confirmButton,
   el,
   formatCost,
+  loadReferences,
+  mergeReferences,
   readStored,
   renderTake,
   request,
   setBusy,
   spawnFloatingCost,
+  storeReferences,
   toast,
   toggleFavorite,
   writeStored,
@@ -26,7 +32,7 @@ const MODE_HINTS = {
   generate: "Convierte una idea en un prompt, o modifica uno que ya tengas pegándolo como prompt de partida.",
   image: "Crea un prompt a partir de una imagen de referencia.",
   story: "Cuenta una historia en varios prompts seguidos, con los mismos personajes y el mismo estilo.",
-  variations: "Mantén el personaje y la estética, y cambia ropa, escenario, luz o pose en cada prompt.",
+  variations: "Mantén el personaje y la estética, y cambia ropa, escenario, luz o pose en cada prompt. Puedes partir de prompts que ya tengas.",
 };
 
 // Placeholder examples for each Variaciones axis: a range to stay within when
@@ -61,6 +67,10 @@ const ui = {
   variationsAesthetic: $("variations-aesthetic"),
   variationsInput: $("variations-input"),
   variationsCount: $("variations-count"),
+  referencesHead: document.querySelector("#references-field .field-head"),
+  referencesList: $("references-list"),
+  referencesFull: $("references-full"),
+  clearReferences: null,
   axes: [...document.querySelectorAll(".axis")],
   charactersField: $("characters-field"),
   chips: $("character-chips"),
@@ -360,10 +370,11 @@ function buildRequest() {
       }
       const aesthetic = ui.variationsAesthetic.value.trim();
       const userInput = ui.variationsInput.value.trim();
-      if (!aesthetic && !userInput && !characterIds.length) {
+      const references = composerReferences();
+      if (!aesthetic && !userInput && !characterIds.length && !references.length) {
         throw new FormProblem(
-          "Añade una estética, una idea base o un personaje: es lo que se mantiene igual en todas.",
-          ui.variationsAesthetic
+          "Añade prompts de referencia, una estética, una idea base o un personaje: es lo que se mantiene igual en todas.",
+          ui.referencesList.querySelector("textarea")
         );
       }
       const count = clampCount(ui.variationsCount);
@@ -377,6 +388,7 @@ function buildRequest() {
           axes,
           llm_model: requireModel(ui.llmModel),
           character_ids: characterIds,
+          reference_prompts: references,
           count,
         },
       };
@@ -389,6 +401,12 @@ function buildRequest() {
 
 const takeHandlers = {
   onIterate: (entry, prompt) => startIteration(prompt.positive_prompt, entry.family_id),
+  onReference: (entry, prompt) => announceReferences(addReferences([prompt.positive_prompt])),
+  onUseReferences: (entry) => {
+    setFamily(entry.family_id);
+    const { references } = addReferences(entry.params.reference_prompts, { replace: true });
+    toast(`Referencias cargadas en Variaciones (${references.length}).`);
+  },
   onExtract: (prompt, button) => extractCharacter({ text: prompt.positive_prompt }, button),
   onFavorite: async (entry, button) => {
     if (await toggleFavorite(entry, button)) saveTakes();
@@ -542,6 +560,103 @@ function setupComposer() {
       })
     );
   });
+}
+
+// ---------- reference prompts (Variaciones) ----------
+
+// The list always ends in one blank slot to paste into, until the limit, so
+// adding a prompt never needs a button.
+function referenceItem(text = "") {
+  const item = el(
+    "li",
+    { class: "reference" },
+    el("span", { class: "reference-no", "aria-hidden": "true" }),
+    el("textarea", { rows: 2, value: text }),
+    el("button", { type: "button", class: "btn-icon reference-remove", text: "×", onclick: () => removeReference(item) })
+  );
+  return item;
+}
+
+function composerReferences() {
+  return [...ui.referencesList.querySelectorAll("textarea")].map((t) => t.value.trim()).filter(Boolean);
+}
+
+function syncReferenceSlots() {
+  const last = ui.referencesList.lastElementChild;
+  if ((!last || last.querySelector("textarea").value.trim()) && ui.referencesList.children.length < MAX_REFERENCES) {
+    ui.referencesList.append(referenceItem());
+  }
+  const items = [...ui.referencesList.children];
+  items.forEach((item, index) => {
+    const textarea = item.querySelector("textarea");
+    const blank = index === items.length - 1 && !textarea.value.trim();
+    item.classList.toggle("is-blank", blank);
+    item.querySelector(".reference-no").textContent = String(index + 1);
+    textarea.setAttribute("aria-label", `Prompt de referencia ${index + 1}`);
+    textarea.placeholder = blank ? (index === 0 ? "Pega aquí un prompt" : "Pega otro") : "";
+    item.querySelector(".reference-remove").setAttribute("aria-label", `Quitar el prompt de referencia ${index + 1}`);
+  });
+  const filled = composerReferences().length;
+  ui.referencesFull.hidden = filled < MAX_REFERENCES;
+  ui.clearReferences.hidden = filled === 0;
+}
+
+function renderReferences(references) {
+  ui.referencesList.replaceChildren(...references.slice(0, MAX_REFERENCES).map((text) => referenceItem(text)));
+  syncReferenceSlots();
+}
+
+function removeReference(item) {
+  const next = item.nextElementSibling || item.previousElementSibling;
+  item.remove();
+  syncReferenceSlots();
+  storeReferences(composerReferences());
+  (next || ui.referencesList.lastElementChild).querySelector("textarea").focus();
+}
+
+// Adds prompts from a result (or replaces the whole list) and shows them in Variaciones.
+function addReferences(prompts, { replace = false } = {}) {
+  const result = mergeReferences(replace ? [] : composerReferences(), prompts);
+  renderReferences(result.references);
+  storeReferences(result.references);
+  setMode("variations");
+  saveSettings();
+  return result;
+}
+
+function setupReferences() {
+  ui.clearReferences = confirmButton(
+    "Quitar todos",
+    () => {
+      renderReferences([]);
+      storeReferences([]);
+      ui.referencesList.querySelector("textarea").focus();
+    },
+    { confirmLabel: "Pulsa otra vez para quitarlos" }
+  );
+  ui.referencesHead.append(ui.clearReferences);
+  ui.referencesFull.textContent = `Has llegado al máximo de ${MAX_REFERENCES} prompts.`;
+
+  ui.referencesList.addEventListener("input", () => {
+    syncReferenceSlots();
+    storeReferences(composerReferences());
+  });
+  // A slot emptied in the middle of the list would leave a gap in the numbering.
+  ui.referencesList.addEventListener("focusout", (event) => {
+    const item = event.target.closest(".reference");
+    if (!event.target.matches("textarea") || event.target.value.trim()) return;
+    if (item === ui.referencesList.lastElementChild || item.contains(event.relatedTarget)) return;
+    item.remove();
+    syncReferenceSlots();
+  });
+  // Historial (in another tab) can add references while this page is open.
+  window.addEventListener("storage", (event) => {
+    if (event.key !== REFERENCES_KEY) return;
+    const incoming = loadReferences();
+    if (incoming.join("\n") !== composerReferences().join("\n")) renderReferences(incoming);
+  });
+
+  renderReferences(loadReferences());
 }
 
 // ---------- reference image ----------
@@ -827,6 +942,13 @@ function applyReuseHandoff() {
   sessionStorage.removeItem(REUSE_KEY);
   if (data.llm_model) ui.llmModel.value = data.llm_model;
   setTemperature(data.temperature);
+  if (data.mode === "variations") {
+    // "Usar estas referencias": Historial already stored the references themselves.
+    setFamily(data.family_id);
+    setMode("variations");
+    saveSettings();
+    return;
+  }
   startIteration(data.positive_prompt || "", data.family_id);
 }
 
@@ -835,6 +957,7 @@ document.addEventListener("DOMContentLoaded", () => {
   applySettings(settings);
   setupModeTabs();
   setupComposer();
+  setupReferences();
   setupImageInput();
   setupSheet();
   setupCharacters();

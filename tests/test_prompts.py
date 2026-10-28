@@ -40,13 +40,13 @@ def test_build_user_message_generate_mode():
 def test_build_user_message_generate_mode_with_example_prompts():
     result = build_user_message("generate", "a cyberpunk samurai", example_prompts="cinematic, moody")
 
-    assert result == "## Idea\na cyberpunk samurai\n\n## Prompts de Ejemplo\ncinematic, moody"
+    assert result == "## Idea\na cyberpunk samurai\n\n## Example Prompts\ncinematic, moody"
 
 
 def test_build_user_message_iterate_mode():
     result = build_user_message("iterate", "add lightning", previous_prompt="a samurai in rain")
 
-    assert result == "## Prompt Previo\na samurai in rain\n\n## Cambios Solicitados\nadd lightning"
+    assert result == "## Previous Prompt\na samurai in rain\n\n## Requested Changes\nadd lightning"
 
 
 def test_build_user_message_with_characters_adds_section_with_instruction():
@@ -57,10 +57,10 @@ def test_build_user_message_with_characters_adds_section_with_instruction():
 
     assert result == (
         "## Idea\na cyberpunk samurai\n\n"
-        "## Personajes\n"
-        "Incluye a los siguientes personajes en el prompt final tal como se describen a "
-        "continuacion, sin modificar ni parafrasear su texto. Completa de forma coherente "
-        "cualquier detalle de cada personaje que no este especificado.\n\n"
+        "## Characters\n"
+        "Include the following characters in the final prompt exactly as described below, "
+        "without modifying or paraphrasing their text. Fill in any detail of each character "
+        "that is not specified, consistently with the rest.\n\n"
         "- Kaito: a stoic ronin with a scarred left eye"
     )
 
@@ -83,26 +83,26 @@ def test_build_user_message_with_multiple_characters_lists_each_on_its_own_line(
 def test_build_user_message_omits_characters_section_when_none_selected():
     result = build_user_message("generate", "a cyberpunk samurai", characters=[])
 
-    assert "Personajes" not in result
+    assert "Characters" not in result
 
 
 def test_build_user_message_omits_characters_section_when_not_passed():
     result = build_user_message("generate", "a cyberpunk samurai")
 
-    assert "Personajes" not in result
+    assert "Characters" not in result
 
 
 def test_build_user_message_image_mode_without_extra_text():
     result = build_user_message("image", "")
 
-    assert result == "## Imagen\nSe adjunta una imagen de referencia para este prompt."
+    assert result == "## Image\nA reference image is attached for this prompt."
 
 
 def test_build_user_message_image_mode_with_extra_text():
     result = build_user_message("image", "make it night time")
 
     assert result == (
-        "## Imagen\nSe adjunta una imagen de referencia para este prompt.\n\n"
+        "## Image\nA reference image is attached for this prompt.\n\n"
         "## Idea\nmake it night time"
     )
 
@@ -138,8 +138,8 @@ def test_build_user_message_story_mode():
     result = build_user_message("story", "two characters have dinner", count=4)
 
     assert result == (
-        "## Historia\ntwo characters have dinner\n\n"
-        "## Numero de Episodios\nGenera exactamente 4 episodios siguiendo el formato indicado."
+        "## Story\ntwo characters have dinner\n\n"
+        "## Number of Episodes\nGenerate exactly 4 episodes in the required format."
     )
 
 
@@ -149,9 +149,33 @@ def test_build_user_message_story_mode_with_characters():
         characters=[{"name": "Kaito", "text": "a stoic ronin with a scarred left eye"}],
     )
 
-    assert "## Personajes" in result
+    assert "## Characters" in result
     assert "Kaito" in result
-    assert result.index("## Historia") < result.index("## Personajes")
+    assert result.index("## Story") < result.index("## Characters")
+
+
+def test_build_user_message_variations_mode_numbers_each_reference_prompt():
+    result = build_user_message(
+        "variations", "", count=3, aesthetic="analog film",
+        axes=[{"key": "outfit", "vary": True, "value": ""}],
+        references=["Mara on a rooftop, red coat", "Mara in a diner,\nneon light"],
+    )
+
+    assert "## Reference Prompts\n" in result
+    assert "Keep the best of each one" in result
+    assert "### Reference 1\nMara on a rooftop, red coat\n\n### Reference 2\nMara in a diner,\nneon light" in result
+    # The references are the starting material, so they come before everything else.
+    assert result.index("## Reference Prompts") < result.index("## Aesthetic")
+
+
+def test_build_user_message_variations_mode_omits_references_section_without_references():
+    result = build_user_message(
+        "variations", "urban portraits", count=3,
+        axes=[{"key": "outfit", "vary": True, "value": ""}],
+        references=[],
+    )
+
+    assert "Reference" not in result
 
 
 def test_parse_multi_response_splits_episodes_in_order():

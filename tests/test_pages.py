@@ -85,6 +85,14 @@ def test_index_renders_every_variation_axis(api_client, auth_headers):
         assert label in response.text
 
 
+def test_index_renders_reference_prompts_field_in_variations(api_client, auth_headers):
+    response = api_client.get("/", auth=auth_headers)
+
+    assert response.status_code == 200
+    assert 'id="references-list"' in response.text
+    assert "Prompts de referencia" in response.text
+
+
 def test_index_prefills_default_models_from_settings(api_client, auth_headers, monkeypatch):
     monkeypatch.setenv("DEFAULT_LLM_MODEL", "vendor/text-model")
     monkeypatch.setenv("DEFAULT_VISION_MODEL", "vendor/vision-model")

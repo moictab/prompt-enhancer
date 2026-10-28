@@ -15,6 +15,7 @@ logger = logging.getLogger("app.api")
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_VARIANTS = 4
+MAX_REFERENCE_PROMPTS = 12
 
 
 def _require_family(family_id: str) -> dict:
@@ -255,6 +256,9 @@ class VariationsRequest(BaseModel):
     example_prompts: str = ""
     character_ids: list[str] = []
     count: int = Field(default=4, ge=2, le=12)
+    # Prompts the user already likes (usually of the same subject) for the LLM to
+    # synthesize the constant base from.
+    reference_prompts: list[str] = Field(default=[], max_length=MAX_REFERENCE_PROMPTS)
 
 
 @router.post("/variations")
@@ -267,10 +271,11 @@ def variations(req: VariationsRequest):
 
     family = _require_family(req.family_id)
     selected_characters = _selected_characters(req.character_ids)
-    if not (req.user_input.strip() or req.aesthetic.strip() or selected_characters):
+    references = [p.strip() for p in req.reference_prompts if p.strip()]
+    if not (req.user_input.strip() or req.aesthetic.strip() or selected_characters or references):
         raise HTTPException(
             status_code=400,
-            detail="Give a base idea, an aesthetic or at least one character to keep constant",
+            detail="Give reference prompts, a base idea, an aesthetic or at least one character to keep constant",
         )
 
     axes = [a.model_dump() for a in req.axes]
@@ -282,12 +287,14 @@ def variations(req: VariationsRequest):
         count=req.count,
         aesthetic=req.aesthetic,
         axes=axes,
+        references=references,
     )
 
     logger.info(
-        "variations request family_id=%s model=%s temperature=%.2f characters=%d count=%d varying=%s",
-        req.family_id, req.llm_model, req.temperature, len(selected_characters), req.count,
-        ",".join(a.key for a in req.axes if a.vary),
+        "variations request family_id=%s model=%s temperature=%.2f characters=%d references=%d "
+        "count=%d varying=%s",
+        req.family_id, req.llm_model, req.temperature, len(selected_characters), len(references),
+        req.count, ",".join(a.key for a in req.axes if a.vary),
     )
     results = _call_llm("variations", req.llm_model, system, [user_message], req.temperature)
     pairs = prompts.parse_multi_response(results[0].content, family["has_negative_prompt"])
@@ -304,6 +311,7 @@ def variations(req: VariationsRequest):
             "aesthetic": req.aesthetic,
             # Labels are stored so history stays readable without the axes table.
             "axes": [{**a, "label": prompts.VARIATION_AXES[a["key"]]} for a in axes],
+            **({"reference_prompts": references} if references else {}),
             **_character_params(selected_characters),
         },
     )
@@ -389,7 +397,7 @@ async def extract_character_from_image(
     image_data_uri, image_bytes = await _read_image_data_uri(image)
 
     system = system_prompt.read_system_prompt("extract_character")
-    user_message = "## Imagen\nExtrae la descripcion del personaje principal de esta imagen."
+    user_message = "## Image\nExtract the description of the main character in this image."
 
     logger.info(
         "extract-character-from-image request vision_model=%s image_bytes=%d",

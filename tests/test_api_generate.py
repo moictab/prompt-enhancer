@@ -226,7 +226,7 @@ def test_generate_resolves_character_ids_into_user_message(mock_call, api_client
     )
 
     sent_user_message = mock_call.call_args.kwargs["user_message"]
-    assert "## Personajes" in sent_user_message
+    assert "## Characters" in sent_user_message
     assert "Kaito" in sent_user_message
     assert "a stoic ronin with a scarred left eye" in sent_user_message
 
@@ -247,7 +247,7 @@ def test_generate_ignores_unknown_character_ids(mock_call, api_client, auth_head
 
     assert response.status_code == 200
     sent_user_message = mock_call.call_args.kwargs["user_message"]
-    assert "Personajes" not in sent_user_message
+    assert "Characters" not in sent_user_message
 
 
 @patch("app.routes.api.call_openrouter")
@@ -262,4 +262,4 @@ def test_generate_without_character_ids_omits_characters_section(mock_call, api_
     )
 
     sent_user_message = mock_call.call_args.kwargs["user_message"]
-    assert "Personajes" not in sent_user_message
+    assert "Characters" not in sent_user_message

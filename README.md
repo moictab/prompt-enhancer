@@ -9,9 +9,9 @@ A small, self-hosted web app that uses an LLM (via OpenRouter) to craft image-ge
 - **Generar** — turn an idea into a ready-to-copy positive/negative prompt pair for the selected model family. Paste an existing prompt as the starting prompt to refine it instead ("Iterar"). Ask for 1–4 variants to get independent alternatives side by side.
 - **Imagen** — generate a prompt from a reference image (pick, drag or paste it) with an OpenRouter vision model, also in 1–4 variants.
 - **Historia** — tell a story as 2–12 sequential prompts that keep characters and style consistent.
-- **Variaciones** — keep characters, aesthetic and base idea constant and choose, per aspect (outfit, setting, lighting, pose, camera, expression), whether it stays fixed (optionally to a given value) or varies across 2–12 prompts (optionally within hints) — a photo shoot of the same subject.
+- **Variaciones** — keep characters, aesthetic and base idea constant and choose, per aspect (outfit, setting, lighting, pose, camera, expression), whether it stays fixed (optionally to a given value) or varies across 2–12 prompts (optionally within hints) — a photo shoot of the same subject. Optionally start from up to 12 prompts you already like, usually of the same character: the LLM reads them together, keeps what they share as the constant subject and takes the best of each. Paste them in, or send any result there with "Añadir a referencias" (also from Historial).
 - **Personajes** — reusable character descriptions, selected as chips and inlined verbatim into the prompt. Create, edit and delete them from the workspace, or extract one from any generated prompt or reference image.
-- **Historial** — every generation, searchable and filterable by mode, family and favorites, with per-entry cost; reuse any prompt in Generar, star it or delete it.
+- **Historial** — every generation, searchable and filterable by mode, family and favorites, with per-entry cost; reuse any prompt in Generar or as a Variaciones reference, reload a past set of references, star an entry or delete it.
 - **Ajustes** — edit the per-mode system prompts (with a one-click reload of the original text), the model families (their rules and whether they use negative prompts) and the characters.
 
 ## Setup

@@ -53,8 +53,16 @@
       </div>
 
       <div class="mode-fields" data-mode="variations" hidden>
+        <div class="field" id="references-field">
+          <div class="field-head">
+            <span class="label" id="references-label">Prompts de referencia <span class="optional">opcional</span></span>
+          </div>
+          <p class="field-help">Prompts que ya te funcionan, normalmente del mismo personaje. Se toma lo mejor de cada uno y lo que comparten se repite en todas. También puedes añadirlos desde cualquier resultado.</p>
+          <ol class="references-list" id="references-list" aria-labelledby="references-label"></ol>
+          <p class="field-help" id="references-full" hidden></p>
+        </div>
         <div class="field">
-          <label for="variations-aesthetic">Estética</label>
+          <label for="variations-aesthetic">Estética <span class="optional">opcional</span></label>
           <textarea id="variations-aesthetic" rows="2" placeholder="Fotografía analógica, grano de 35 mm, colores desaturados"></textarea>
         </div>
         <div class="field">

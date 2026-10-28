@@ -184,6 +184,47 @@ export function toast(message, { error = false } = {}) {
   }, error ? 6000 : 2600);
 }
 
+// Variaciones' reference prompts live under their own key so Historial can add to
+// them as well as Crear, which edits them. The limit matches the API's.
+export const REFERENCES_KEY = "reference-prompts";
+export const MAX_REFERENCES = 12;
+
+export function loadReferences() {
+  const stored = readStored(localStorage, REFERENCES_KEY, []);
+  return Array.isArray(stored) ? stored.filter((p) => typeof p === "string" && p.trim()) : [];
+}
+
+export function storeReferences(references) {
+  writeStored(localStorage, REFERENCES_KEY, references);
+}
+
+// Appends prompts to a reference list, skipping duplicates and anything past the limit.
+export function mergeReferences(current, prompts) {
+  const references = [...current];
+  let added = 0;
+  let skipped = 0;
+  for (const text of prompts.map((p) => p.trim()).filter(Boolean)) {
+    if (references.includes(text)) continue;
+    if (references.length >= MAX_REFERENCES) {
+      skipped += 1;
+      continue;
+    }
+    references.push(text);
+    added += 1;
+  }
+  return { references, added, skipped };
+}
+
+export function announceReferences({ references, added, skipped }, hint = "") {
+  if (skipped) {
+    toast(`Ya hay ${MAX_REFERENCES} prompts de referencia, el máximo. Quita alguno para añadir otro.`, { error: true });
+  } else if (!added) {
+    toast("Ese prompt ya está en las referencias.");
+  } else {
+    toast(`Añadido a las referencias (${references.length} de ${MAX_REFERENCES}).${hint}`);
+  }
+}
+
 export function spawnFloatingCost(cost, originEl) {
   const text = formatCost(cost);
   if (!text) return;
@@ -273,6 +314,13 @@ function renderFrame(entry, prompt, index, handlers) {
     prompt.negative_prompt && copyButton("Copiar negativo", () => prompt.negative_prompt),
     handlers.onIterate &&
       el("button", { type: "button", class: "btn-quiet", text: "Iterar", onclick: () => handlers.onIterate(entry, prompt) }),
+    handlers.onReference &&
+      el("button", {
+        type: "button",
+        class: "btn-quiet",
+        text: "Añadir a referencias",
+        onclick: () => handlers.onReference(entry, prompt),
+      }),
     handlers.onExtract &&
       el("button", {
         type: "button",
@@ -302,7 +350,28 @@ function renderFrame(entry, prompt, index, handlers) {
   );
 }
 
-// handlers: { onIterate(entry, prompt), onExtract(prompt, button), onFavorite(entry, button), onDelete(entry, button) }
+function takeReferences(entry, handlers) {
+  const references = (entry.params || {}).reference_prompts || [];
+  if (!references.length) return null;
+  return el(
+    "details",
+    { class: "disclosure take-references" },
+    el("summary", {
+      text: references.length === 1 ? "1 prompt de referencia" : `${references.length} prompts de referencia`,
+    }),
+    el("ol", { class: "reference-texts" }, references.map((text) => el("li", {}, el("p", { class: "prompt-text", text })))),
+    handlers.onUseReferences &&
+      el("button", {
+        type: "button",
+        class: "btn-quiet",
+        text: "Usar estas referencias",
+        onclick: () => handlers.onUseReferences(entry),
+      })
+  );
+}
+
+// handlers: { onIterate(entry, prompt), onReference(entry, prompt), onExtract(prompt, button),
+// onUseReferences(entry), onFavorite(entry, button), onDelete(entry, button) }
 // Any handler left out hides its action.
 export function renderTake(entry, handlers = {}, { withDate = false } = {}) {
   const cost = formatCost(entry.cost);
@@ -337,6 +406,7 @@ export function renderTake(entry, handlers = {}, { withDate = false } = {}) {
       star
     ),
     takeBrief(entry),
+    takeReferences(entry, handlers),
     warnings.map((text) => el("p", { class: "notice is-warning", text })),
     el("ol", { class: "frames" }, entry.prompts.map((prompt, index) => renderFrame(entry, prompt, index, handlers))),
     handlers.onDelete &&
