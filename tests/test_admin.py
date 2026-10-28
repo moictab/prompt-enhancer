@@ -68,7 +68,7 @@ def test_create_list_update_delete_character(api_client, auth_headers):
 
 
 def test_get_and_update_system_prompt_for_each_mode(api_client, auth_headers):
-    for mode in ["generate", "iterate", "image", "extract_character", "story"]:
+    for mode in ["generate", "iterate", "image", "extract_character", "story", "variations"]:
         get_response = api_client.get(f"/api/admin/system-prompt/{mode}", auth=auth_headers)
         assert get_response.status_code == 200
         assert get_response.json() == {"text": ""}
@@ -105,5 +105,29 @@ def test_update_system_prompt_rejects_unknown_mode(api_client, auth_headers):
     response = api_client.put(
         "/api/admin/system-prompt/bogus", json={"text": "x"}, auth=auth_headers
     )
+
+    assert response.status_code == 400
+
+
+def test_get_default_system_prompt_returns_seed_text_without_touching_saved_prompt(
+    api_client, auth_headers
+):
+    from app.seed import DEFAULT_VARIATIONS_SYSTEM_PROMPT
+
+    api_client.put(
+        "/api/admin/system-prompt/variations", json={"text": "custom"}, auth=auth_headers
+    )
+
+    response = api_client.get("/api/admin/system-prompt/variations/default", auth=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"text": DEFAULT_VARIATIONS_SYSTEM_PROMPT}
+    assert api_client.get(
+        "/api/admin/system-prompt/variations", auth=auth_headers
+    ).json() == {"text": "custom"}
+
+
+def test_get_default_system_prompt_rejects_unknown_mode(api_client, auth_headers):
+    response = api_client.get("/api/admin/system-prompt/bogus/default", auth=auth_headers)
 
     assert response.status_code == 400

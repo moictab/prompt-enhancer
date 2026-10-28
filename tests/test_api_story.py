@@ -47,13 +47,13 @@ def test_story_returns_parsed_episodes(mock_call, api_client, auth_headers, tmp_
     body = response.json()
     assert body["cost"] == 0.0042
     assert body["truncated"] is False
-    assert body["episodes"] == [
+    assert body["prompts"] == [
         {"positive_prompt": "two friends sit down to dinner", "negative_prompt": "blurry"},
         {"positive_prompt": "the mood turns flirtatious", "negative_prompt": "blurry"},
         {"positive_prompt": "cards are dealt for strip poker", "negative_prompt": "blurry"},
         {"positive_prompt": "the game reaches its climax", "negative_prompt": "blurry"},
     ]
-    assert body["episode_count_mismatch"] is False
+    assert body["count_mismatch"] is False
 
 
 @patch("app.routes.api.call_openrouter")
@@ -76,8 +76,8 @@ def test_story_flags_episode_count_mismatch_when_model_ignores_format(mock_call,
 
     assert response.status_code == 200
     body = response.json()
-    assert len(body["episodes"]) == 1
-    assert body["episode_count_mismatch"] is True
+    assert len(body["prompts"]) == 1
+    assert body["count_mismatch"] is True
 
 
 @patch("app.routes.api.call_openrouter")
@@ -116,7 +116,7 @@ def test_story_suppresses_negative_when_family_has_none(mock_call, api_client, a
         auth=auth_headers,
     )
 
-    assert all(ep["negative_prompt"] == "" for ep in response.json()["episodes"])
+    assert all(ep["negative_prompt"] == "" for ep in response.json()["prompts"])
 
 
 @patch("app.routes.api.call_openrouter")
@@ -139,8 +139,8 @@ def test_story_appends_a_single_grouped_history_entry(mock_call, api_client, aut
     entries = history.list_entries(path=str(tmp_path / "history.jsonl"))
     assert len(entries) == 1
     assert entries[0]["mode"] == "story"
-    assert entries[0]["num_episodes"] == 4
-    assert len(entries[0]["episodes"]) == 4
+    assert entries[0]["params"]["num_episodes"] == 4
+    assert len(entries[0]["prompts"]) == 4
 
 
 @patch("app.routes.api.call_openrouter")

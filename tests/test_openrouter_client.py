@@ -29,6 +29,31 @@ def test_call_openrouter_returns_message_content(mock_post):
 
 
 @patch("app.openrouter_client.requests.post")
+def test_call_openrouter_tolerates_null_usage(mock_post):
+    mock_post.return_value = _mock_response(
+        200, {"choices": [{"message": {"content": "ok"}}], "usage": None}
+    )
+
+    result = call_openrouter(api_key="key", model="m", system_prompt="sys", user_message="user")
+
+    assert result.content == "ok"
+    assert result.cost is None
+
+
+@patch("app.openrouter_client.requests.post")
+def test_call_openrouter_treats_null_message_as_malformed_and_retries(mock_post):
+    mock_post.side_effect = [
+        _mock_response(200, {"choices": [{"message": None}]}),
+        _mock_response(200, {"choices": [{"message": {"content": "ok"}}]}),
+    ]
+
+    result = call_openrouter(api_key="key", model="m", system_prompt="sys", user_message="user")
+
+    assert result.content == "ok"
+    assert mock_post.call_count == 2
+
+
+@patch("app.openrouter_client.requests.post")
 def test_call_openrouter_not_truncated_by_default(mock_post):
     mock_post.return_value = _mock_response(
         200, {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}

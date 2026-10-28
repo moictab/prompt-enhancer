@@ -1,139 +1,183 @@
-async function copyText(text) {
-  if (navigator.clipboard && window.isSecureContext) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  const succeeded = document.execCommand("copy");
-  document.body.removeChild(textarea);
-  if (!succeeded) {
-    throw new Error("execCommand copy failed");
-  }
+import { el, formatCost, renderTake, request, toast, toggleFavorite, writeStored } from "./common.js";
+
+const PAGE_SIZE = 25;
+const REUSE_KEY = "reuse-prompt";
+
+const $ = (id) => document.getElementById(id);
+
+const ui = {
+  list: $("history-list"),
+  summary: $("results-summary"),
+  search: $("history-search"),
+  modes: [...document.querySelectorAll("#filter-modes button")],
+  family: $("filter-family"),
+  favorites: $("filter-favorites"),
+  loadMore: $("load-more"),
+};
+
+const state = {
+  entries: [],
+  filters: { query: "", mode: "", family: "", favoritesOnly: false },
+  shown: PAGE_SIZE,
+};
+
+function searchableText(entry) {
+  const params = entry.params || {};
+  return [
+    entry.user_input,
+    entry.previous_prompt,
+    entry.family_name,
+    params.aesthetic,
+    ...(params.character_names || []),
+    ...entry.prompts.flatMap((p) => [p.positive_prompt, p.negative_prompt]),
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLocaleLowerCase("es");
 }
 
-function flashButtonFeedback(button, message, isError) {
-  clearTimeout(button._feedbackTimeout);
-  if (button.dataset.originalText === undefined) {
-    button.dataset.originalText = button.textContent;
-  }
-  button.textContent = message;
-  button.classList.toggle("copy-error", !!isError);
-  button._feedbackTimeout = setTimeout(() => {
-    button.textContent = button.dataset.originalText;
-    button.classList.remove("copy-error");
-  }, 1500);
-}
-
-function buildCopyRow(text) {
-  const wrap = document.createElement("div");
-  wrap.className = "copy-row";
-
-  const textarea = document.createElement("textarea");
-  textarea.readOnly = true;
-  textarea.value = text;
-  textarea.rows = Math.min(12, Math.max(2, Math.ceil(text.length / 70)));
-  wrap.appendChild(textarea);
-
-  const button = document.createElement("button");
-  button.type = "button";
-  button.textContent = "Copiar";
-  button.addEventListener("click", async () => {
-    try {
-      await copyText(text);
-      flashButtonFeedback(button, "Copiado!", false);
-    } catch (err) {
-      flashButtonFeedback(button, "Error al copiar", true);
-    }
+function filteredEntries() {
+  const { query, mode, family, favoritesOnly } = state.filters;
+  const terms = query.toLocaleLowerCase("es").split(/\s+/).filter(Boolean);
+  return state.entries.filter((entry) => {
+    if (mode && entry.mode !== mode) return false;
+    if (family && entry.family_name !== family) return false;
+    if (favoritesOnly && !entry.favorite) return false;
+    if (!terms.length) return true;
+    const haystack = (entry._search ??= searchableText(entry));
+    return terms.every((term) => haystack.includes(term));
   });
-  wrap.appendChild(button);
-
-  return wrap;
 }
 
-function buildPromptField(labelText, text) {
-  const fragment = document.createDocumentFragment();
-  const label = document.createElement("label");
-  label.textContent = labelText;
-  fragment.appendChild(label);
-  fragment.appendChild(buildCopyRow(text));
-  return fragment;
-}
-
-function reuseEntry(entry) {
-  sessionStorage.setItem(
-    "reuse-prompt",
-    JSON.stringify({
-      family_id: entry.family_id,
-      positive_prompt: entry.positive_prompt,
-      llm_model: entry.llm_model,
-      temperature: entry.temperature,
-    })
-  );
+function reuseInGenerar(entry, prompt) {
+  writeStored(sessionStorage, REUSE_KEY, {
+    positive_prompt: prompt.positive_prompt,
+    family_id: entry.family_id,
+    llm_model: entry.llm_model,
+    temperature: entry.temperature,
+  });
   window.location.href = "/";
 }
 
-function buildEntryCard(entry) {
-  const card = document.createElement("section");
-  card.className = "history-entry";
+async function deleteEntry(entry) {
+  try {
+    await request(`/api/history/${entry.id}`, { method: "DELETE" });
+  } catch (err) {
+    toast(err.message, { error: true });
+    return;
+  }
+  state.entries = state.entries.filter((e) => e.id !== entry.id);
+  ui.list.querySelector(`[data-id="${CSS.escape(entry.id)}"]`)?.remove();
+  render({ keepNodes: true });
+  toast("Eliminado del historial.");
+}
 
-  const meta = document.createElement("div");
-  meta.className = "history-meta";
-  meta.textContent = `${new Date(entry.timestamp).toLocaleString()} · ${entry.mode} · ${entry.family_name}`;
-  card.appendChild(meta);
+const handlers = {
+  onIterate: reuseInGenerar,
+  onFavorite: async (entry, button) => {
+    if ((await toggleFavorite(entry, button)) && state.filters.favoritesOnly && !entry.favorite) {
+      render();
+    }
+  },
+  onDelete: deleteEntry,
+};
 
-  if (entry.mode === "story" && entry.episodes) {
-    entry.episodes.forEach((episode, index) => {
-      const episodeCard = document.createElement("section");
-      episodeCard.className = "history-entry";
+function emptyMessage() {
+  if (!state.entries.length) {
+    return el(
+      "div",
+      { class: "sheet-empty" },
+      el("p", { text: "Todavía no has generado nada." }),
+      el("p", {}, "Empieza en ", el("a", { href: "/", text: "Crear" }), ": cada prompt que generes quedará guardado aquí.")
+    );
+  }
+  return el(
+    "div",
+    { class: "sheet-empty" },
+    el("p", { text: "Ningún resultado coincide con estos filtros." }),
+    el("button", { type: "button", class: "btn-link", text: "Quitar los filtros", onclick: resetFilters })
+  );
+}
 
-      const heading = document.createElement("h3");
-      heading.textContent = `Episodio ${index + 1}`;
-      episodeCard.appendChild(heading);
+function render({ keepNodes = false } = {}) {
+  const matches = filteredEntries();
+  const spent = matches.reduce((sum, e) => sum + (e.cost || 0), 0);
+  const count = matches.length === 1 ? "1 resultado" : `${matches.length} resultados`;
+  ui.summary.textContent = spent > 0 ? `${count}, ${formatCost(spent)} en total` : count;
 
-      episodeCard.appendChild(buildPromptField("Positive Prompt", episode.positive_prompt));
-      if (episode.negative_prompt) {
-        episodeCard.appendChild(buildPromptField("Negative Prompt", episode.negative_prompt));
-      }
-
-      card.appendChild(episodeCard);
+  const visible = matches.slice(0, state.shown);
+  if (!keepNodes) {
+    ui.list.replaceChildren(...visible.map((entry) => renderTake(entry, handlers, { withDate: true })));
+  } else {
+    // After a delete, append whatever slid into the visible window instead of re-rendering everything.
+    const present = new Set([...ui.list.children].map((node) => node.dataset.id));
+    visible.filter((e) => !present.has(e.id)).forEach((entry) => {
+      ui.list.append(renderTake(entry, handlers, { withDate: true }));
     });
-    return card;
   }
+  if (!matches.length) ui.list.replaceChildren(emptyMessage());
+  ui.loadMore.hidden = matches.length <= state.shown;
+  if (!ui.loadMore.hidden) ui.loadMore.textContent = `Mostrar más (quedan ${matches.length - state.shown})`;
+}
 
-  card.appendChild(buildPromptField("Positive Prompt", entry.positive_prompt));
-  if (entry.negative_prompt) {
-    card.appendChild(buildPromptField("Negative Prompt", entry.negative_prompt));
-  }
+function rerenderFromTop() {
+  state.shown = PAGE_SIZE;
+  render();
+}
 
-  const reuseButton = document.createElement("button");
-  reuseButton.type = "button";
-  reuseButton.className = "btn-primary history-reuse";
-  reuseButton.textContent = "Reusar en Generar";
-  reuseButton.addEventListener("click", () => reuseEntry(entry));
-  card.appendChild(reuseButton);
+function resetFilters() {
+  state.filters = { query: "", mode: "", family: "", favoritesOnly: false };
+  ui.search.value = "";
+  ui.family.value = "";
+  ui.modes.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === "")));
+  ui.favorites.setAttribute("aria-pressed", "false");
+  rerenderFromTop();
+}
 
-  return card;
+function setupFilters() {
+  let searchTimeout = null;
+  ui.search.addEventListener("input", () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+      state.filters.query = ui.search.value.trim();
+      rerenderFromTop();
+    }, 150);
+  });
+  ui.modes.forEach((button) =>
+    button.addEventListener("click", () => {
+      state.filters.mode = button.dataset.mode;
+      ui.modes.forEach((b) => b.setAttribute("aria-pressed", String(b === button)));
+      rerenderFromTop();
+    })
+  );
+  ui.family.addEventListener("change", () => {
+    state.filters.family = ui.family.value;
+    rerenderFromTop();
+  });
+  ui.favorites.addEventListener("click", () => {
+    state.filters.favoritesOnly = !state.filters.favoritesOnly;
+    ui.favorites.setAttribute("aria-pressed", String(state.filters.favoritesOnly));
+    rerenderFromTop();
+  });
+  ui.loadMore.addEventListener("click", () => {
+    state.shown += PAGE_SIZE;
+    render({ keepNodes: true });
+  });
 }
 
 async function loadHistory() {
-  const response = await fetch("/api/history");
-  const entries = await response.json();
-  const container = document.getElementById("history-list");
-
-  if (entries.length === 0) {
-    const empty = document.createElement("p");
-    empty.textContent = "No hay entradas todavia.";
-    container.appendChild(empty);
+  try {
+    state.entries = await request("/api/history");
+  } catch (err) {
+    ui.list.replaceChildren(el("p", { class: "notice is-error", text: `No se ha podido cargar el historial: ${err.message}` }));
     return;
   }
-
-  entries.forEach((entry) => container.appendChild(buildEntryCard(entry)));
+  const families = [...new Set(state.entries.map((e) => e.family_name).filter(Boolean))].sort();
+  ui.family.append(...families.map((name) => el("option", { value: name, text: name })));
+  render();
 }
 
-document.addEventListener("DOMContentLoaded", loadHistory);
+document.addEventListener("DOMContentLoaded", () => {
+  setupFilters();
+  loadHistory();
+});

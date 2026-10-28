@@ -1,4 +1,5 @@
 import logging
+import mimetypes
 import time
 from contextlib import asynccontextmanager
 
@@ -14,6 +15,10 @@ from .routes import pages as page_routes
 from .seed import ensure_seed_data
 
 request_logger = logging.getLogger("app.request")
+
+# The frontend is plain ES modules, which browsers refuse unless served as JavaScript;
+# on Windows the registry can map .js to text/plain, so pin it explicitly.
+mimetypes.add_type("text/javascript", ".js")
 
 
 @asynccontextmanager
@@ -37,6 +42,10 @@ async def log_requests(request: Request, call_next):
     start = time.monotonic()
     response = await call_next(request)
     duration_ms = (time.monotonic() - start) * 1000
+    if request.url.path.startswith("/static/"):
+        # No build step means no hashed filenames, so make browsers revalidate
+        # (cheap 304s) instead of running stale JS/CSS after a deploy.
+        response.headers["Cache-Control"] = "no-cache"
     request_logger.info(
         "%s %s -> %d (%.1fms)",
         request.method, request.url.path, response.status_code, duration_ms,

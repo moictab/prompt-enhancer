@@ -1,67 +1,89 @@
 {% extends "base.html" %}
-{% block title %}Admin{% endblock %}
+{% block title %}Ajustes{% endblock %}
+{% block body_class %}page-settings{% endblock %}
 {% block content %}
-<h1>Admin</h1>
+<header class="page-head">
+  <h1>Ajustes</h1>
+  <nav class="page-index" aria-label="En esta página">
+    <a href="#system-prompts">Instrucciones del sistema</a>
+    <a href="#families">Familias de modelo</a>
+    <a href="#characters">Personajes</a>
+  </nav>
+</header>
 
-<section>
-  <h2>System Prompt: Generar</h2>
-  <textarea id="system-prompt-generate-text" rows="8"></textarea>
-  <button type="button" id="save-system-prompt-generate" class="btn-primary">Guardar</button>
+<section class="settings-section" id="system-prompts" aria-labelledby="system-prompts-title">
+  <h2 id="system-prompts-title">Instrucciones del sistema</h2>
+  <p class="section-intro">Es lo primero que lee el modelo de texto en cada petición. Hay unas para cada modo, y a continuación se añaden las reglas de la familia de modelo elegida.</p>
+
+  <div class="prompt-editor">
+    <div class="mode-switch mode-switch-wide" role="tablist" aria-label="Modo" id="system-prompt-tabs">
+      {% for mode, label in [("generate", "Generar"), ("iterate", "Iterar"), ("image", "Imagen"), ("story", "Historia"), ("variations", "Variaciones"), ("extract_character", "Crear personaje")] %}
+      <button type="button" role="tab" data-mode="{{ mode }}" id="system-prompt-tab-{{ mode }}" aria-controls="system-prompt-text" aria-selected="{{ 'true' if loop.first else 'false' }}" {% if not loop.first %}tabindex="-1"{% endif %}>{{ label }}</button>
+      {% endfor %}
+    </div>
+    <textarea id="system-prompt-text" rows="18" spellcheck="false" aria-labelledby="system-prompt-tab-generate"></textarea>
+    <div class="editor-actions">
+      <button type="button" class="btn-primary" id="system-prompt-save">Guardar</button>
+      <button type="button" class="btn-quiet" id="system-prompt-default">Cargar el texto original</button>
+      <span class="dirty-state" id="system-prompt-state" aria-live="polite"></span>
+    </div>
+  </div>
 </section>
 
-<section>
-  <h2>System Prompt: Iterar</h2>
-  <textarea id="system-prompt-iterate-text" rows="8"></textarea>
-  <button type="button" id="save-system-prompt-iterate" class="btn-primary">Guardar</button>
+<section class="settings-section" id="families" aria-labelledby="families-title">
+  <h2 id="families-title">Familias de modelo</h2>
+  <p class="section-intro">Las reglas de redacción de cada modelo de imagen (SDXL, Z-Image-Turbo…). Se añaden a las instrucciones del sistema cuando eliges la familia al generar.</p>
+  <div class="crud">
+    <div class="crud-list">
+      <ul class="item-list" id="families-list"></ul>
+      <button type="button" class="btn-secondary" id="family-new">Nueva familia</button>
+    </div>
+    <form class="editor-panel" id="family-form" aria-labelledby="family-form-title">
+      <h3 id="family-form-title">Nueva familia</h3>
+      <input type="hidden" id="family-id">
+      <div class="field">
+        <label for="family-name">Nombre</label>
+        <input type="text" id="family-name" required autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="family-instructions">Reglas</label>
+        <textarea id="family-instructions" rows="12" required spellcheck="false"></textarea>
+      </div>
+      <label class="checkbox"><input type="checkbox" id="family-has-negative"> Usa prompt negativo</label>
+      <p class="field-help">Si no lo usa, el prompt negativo se descarta aunque el modelo de texto lo escriba.</p>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary" id="family-save">Crear familia</button>
+      </div>
+    </form>
+  </div>
 </section>
 
-<section>
-  <h2>System Prompt: Imagen</h2>
-  <textarea id="system-prompt-image-text" rows="8"></textarea>
-  <button type="button" id="save-system-prompt-image" class="btn-primary">Guardar</button>
-</section>
-
-<section>
-  <h2>System Prompt: Extraer Personaje</h2>
-  <textarea id="system-prompt-extract_character-text" rows="8"></textarea>
-  <button type="button" id="save-system-prompt-extract_character" class="btn-primary">Guardar</button>
-</section>
-
-<section>
-  <h2>System Prompt: Historia</h2>
-  <textarea id="system-prompt-story-text" rows="8"></textarea>
-  <button type="button" id="save-system-prompt-story" class="btn-primary">Guardar</button>
-</section>
-
-<section>
-  <h2>Familias</h2>
-  <ul id="families-list"></ul>
-  <form id="family-form">
-    <input type="hidden" id="family-id">
-    <label for="family-name">Nombre</label>
-    <input type="text" id="family-name" required>
-    <label for="family-instructions">Instrucciones</label>
-    <textarea id="family-instructions" rows="6" required></textarea>
-    <label><input type="checkbox" id="family-has-negative"> Usa negative prompt</label>
-    <button type="submit">Guardar familia</button>
-    <button type="button" id="family-cancel">Cancelar edicion</button>
-  </form>
-</section>
-
-<section>
-  <h2>Personajes</h2>
-  <ul id="characters-list"></ul>
-  <form id="character-form">
-    <input type="hidden" id="character-id">
-    <label for="character-name">Nombre</label>
-    <input type="text" id="character-name" required>
-    <label for="character-text">Texto</label>
-    <textarea id="character-text" rows="3" required></textarea>
-    <button type="submit">Guardar personaje</button>
-    <button type="button" id="character-cancel">Cancelar edicion</button>
-  </form>
+<section class="settings-section" id="characters" aria-labelledby="characters-title">
+  <h2 id="characters-title">Personajes</h2>
+  <p class="section-intro">Descripciones reutilizables que se insertan tal cual en el prompt cuando seleccionas el personaje. También puedes crearlos y editarlos desde Crear.</p>
+  <div class="crud">
+    <div class="crud-list">
+      <ul class="item-list" id="characters-list"></ul>
+      <button type="button" class="btn-secondary" id="character-new">Nuevo personaje</button>
+    </div>
+    <form class="editor-panel" id="character-form" aria-labelledby="character-form-title">
+      <h3 id="character-form-title">Nuevo personaje</h3>
+      <input type="hidden" id="character-id">
+      <div class="field">
+        <label for="character-name">Nombre</label>
+        <input type="text" id="character-name" required autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="character-text">Descripción</label>
+        <textarea id="character-text" rows="6" required></textarea>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary" id="character-save">Crear personaje</button>
+      </div>
+    </form>
+  </div>
 </section>
 {% endblock %}
 {% block scripts %}
-<script src="/static/admin.js"></script>
+<script type="module" src="/static/admin.js"></script>
 {% endblock %}

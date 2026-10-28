@@ -1,151 +1,184 @@
 {% extends "base.html" %}
-{% block title %}Prompt Enhancer{% endblock %}
+{% block body_class %}page-workspace{% endblock %}
 {% block content %}
-<div class="tabs">
-  <button class="tab-button active" data-tab="generar" type="button">Generar</button>
-  <button class="tab-button" data-tab="imagen" type="button">Imagen</button>
-  <button class="tab-button" data-tab="historia" type="button">Historia</button>
+<div class="workspace">
+  <section class="composer" aria-labelledby="composer-title">
+    <h1 id="composer-title" class="visually-hidden">Crear prompts</h1>
+
+    <div class="mode-switch" role="tablist" aria-label="Modo">
+      <button type="button" role="tab" id="mode-tab-generate" data-mode="generate" aria-selected="true" aria-controls="composer-form">Generar</button>
+      <button type="button" role="tab" id="mode-tab-image" data-mode="image" aria-selected="false" aria-controls="composer-form" tabindex="-1">Imagen</button>
+      <button type="button" role="tab" id="mode-tab-story" data-mode="story" aria-selected="false" aria-controls="composer-form" tabindex="-1">Historia</button>
+      <button type="button" role="tab" id="mode-tab-variations" data-mode="variations" aria-selected="false" aria-controls="composer-form" tabindex="-1">Variaciones</button>
+    </div>
+    <p class="mode-hint" id="mode-hint"></p>
+
+    <form id="composer-form" class="composer-form" role="tabpanel" aria-labelledby="mode-tab-generate" novalidate>
+      <div class="mode-fields" data-mode="generate">
+        <div class="field">
+          <label for="previous-prompt">Prompt de partida <span class="optional">opcional</span></label>
+          <textarea id="previous-prompt" rows="3" placeholder="Pega aquí un prompt para modificarlo. Si lo dejas vacío, se crea uno nuevo."></textarea>
+        </div>
+        <div class="field">
+          <label for="generate-input" id="generate-input-label">Idea</label>
+          <textarea id="generate-input" rows="4" placeholder="Una bruja leyendo en un bosque de abedules al amanecer"></textarea>
+        </div>
+      </div>
+
+      <div class="mode-fields" data-mode="image" hidden>
+        <div class="field">
+          <span class="label" id="image-label">Imagen de referencia</span>
+          <label class="dropzone" id="dropzone" for="image-file">
+            <input id="image-file" type="file" accept="image/jpeg,image/png,image/webp" aria-labelledby="image-label">
+            <img id="image-preview" alt="Imagen seleccionada" hidden>
+            <span class="dropzone-text" id="dropzone-text">Arrastra una imagen, pégala o haz clic para elegirla. JPG, PNG o WebP de hasta 10 MB.</span>
+          </label>
+          <button type="button" id="extract-character-image" class="btn-quiet btn-inline">Crear personaje desde la imagen</button>
+        </div>
+        <div class="field">
+          <label for="image-input">Indicaciones <span class="optional">opcional</span></label>
+          <textarea id="image-input" rows="3" placeholder="Pásala a acuarela y que sea de noche"></textarea>
+        </div>
+      </div>
+
+      <div class="mode-fields" data-mode="story" hidden>
+        <div class="field">
+          <label for="story-input">Historia</label>
+          <textarea id="story-input" rows="5" placeholder="Dos amigas preparan una cena, se va la luz y acaban contando historias de miedo a la luz de las velas"></textarea>
+        </div>
+        <div class="field field-number">
+          <label for="story-count">Episodios</label>
+          <input id="story-count" type="number" min="2" max="12" value="4">
+        </div>
+      </div>
+
+      <div class="mode-fields" data-mode="variations" hidden>
+        <div class="field">
+          <label for="variations-aesthetic">Estética</label>
+          <textarea id="variations-aesthetic" rows="2" placeholder="Fotografía analógica, grano de 35 mm, colores desaturados"></textarea>
+        </div>
+        <div class="field">
+          <label for="variations-input">Idea base <span class="optional">opcional</span></label>
+          <textarea id="variations-input" rows="2" placeholder="Retratos urbanos de noche"></textarea>
+        </div>
+        <fieldset class="axes" id="axes">
+          <legend>Qué cambia en cada variación</legend>
+          <p class="field-help">Lo que dejes fijo se repite igual en todas. Escribe un valor para fijarlo, o pistas para acotar lo que varía.</p>
+          {% for axis in variation_axes %}
+          <div class="axis" data-axis="{{ axis.key }}" data-label="{{ axis.label }}" data-vary="{{ 'true' if axis.vary else 'false' }}">
+            <span class="axis-name" id="axis-{{ axis.key }}-name">{{ axis.label }}</span>
+            <div class="toggle" role="group" aria-labelledby="axis-{{ axis.key }}-name">
+              <button type="button" data-vary="true" aria-pressed="{{ 'true' if axis.vary else 'false' }}">Varía</button>
+              <button type="button" data-vary="false" aria-pressed="{{ 'false' if axis.vary else 'true' }}">Fija</button>
+            </div>
+            <input type="text" class="axis-value" aria-labelledby="axis-{{ axis.key }}-name">
+          </div>
+          {% endfor %}
+        </fieldset>
+        <div class="field field-number">
+          <label for="variations-count">Variaciones</label>
+          <input id="variations-count" type="number" min="2" max="12" value="4">
+        </div>
+      </div>
+
+      <div class="field" id="characters-field">
+        <div class="field-head">
+          <span class="label" id="characters-label">Personajes</span>
+          <button type="button" id="manage-characters" class="btn-link">Gestionar</button>
+        </div>
+        <div class="chips" id="character-chips" role="group" aria-labelledby="characters-label"></div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="family">Familia de modelo</label>
+          <select id="family">
+            {% for family in families %}
+            <option value="{{ family.id }}">{{ family.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field" id="variants-field">
+          <span class="label" id="variants-label">Variantes</span>
+          <div class="segmented" id="variants" role="group" aria-labelledby="variants-label">
+            {% for n in range(1, 5) %}
+            <button type="button" data-value="{{ n }}" aria-pressed="{{ 'true' if n == 1 else 'false' }}">{{ n }}</button>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <details class="advanced" id="advanced">
+        <summary>Modelo, creatividad y ejemplos</summary>
+        <div class="advanced-body">
+          <div class="field" data-show-for="generate story variations">
+            <label for="llm-model">Modelo de texto</label>
+            <input id="llm-model" type="text" list="openrouter-models" value="{{ default_llm_model }}" spellcheck="false" autocomplete="off">
+          </div>
+          <div class="field" data-show-for="image">
+            <label for="vision-model">Modelo de visión</label>
+            <input id="vision-model" type="text" list="openrouter-vision-models" value="{{ default_vision_model }}" spellcheck="false" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="temperature">Creatividad <output id="temperature-value" for="temperature">0.7</output></label>
+            <input id="temperature" type="range" min="0" max="1" step="0.05" value="0.7">
+          </div>
+          <div class="field">
+            <label for="example-prompts">Prompts de ejemplo <span class="optional">opcional</span></label>
+            <textarea id="example-prompts" rows="3" placeholder="Prompts cuyo estilo quieras imitar"></textarea>
+          </div>
+        </div>
+      </details>
+
+      <div class="submit-row">
+        <button type="submit" class="btn-primary" id="submit">Generar</button>
+        <kbd class="shortcut">Ctrl + Enter</kbd>
+      </div>
+      <p class="notice is-error" id="form-error" role="alert" hidden></p>
+    </form>
+  </section>
+
+  <section class="sheet" aria-labelledby="sheet-title">
+    <header class="sheet-head">
+      <h2 id="sheet-title">Esta sesión</h2>
+      <span class="sheet-stats" id="sheet-stats"></span>
+      <button type="button" id="clear-sheet" class="btn-link" hidden>Vaciar</button>
+    </header>
+    <div class="takes" id="takes" aria-live="polite"></div>
+    <div class="sheet-empty" id="sheet-empty">
+      <p>Los prompts que generes aparecerán aquí, del más reciente al más antiguo, y seguirán aquí aunque cambies de modo.</p>
+      <p>Todo lo que hayas generado antes está en el <a href="/historial">historial</a>.</p>
+    </div>
+  </section>
 </div>
 
-<section id="tab-generar" class="tab-panel active">
-  <form id="form-generar">
-    <label for="generar-previous-prompt">Prompt existente (dejalo vacio para generar desde cero)</label>
-    <textarea id="generar-previous-prompt" name="previous_prompt" rows="4"></textarea>
-
-    <label for="generar-user-input">Idea / cambios solicitados</label>
-    <textarea id="generar-user-input" name="user_input" rows="4" required></textarea>
-
-    <div class="characters" id="generar-characters"></div>
-
-    <label for="generar-family">Familia de modelo</label>
-    <select id="generar-family" name="family_id" required>
-      {% for family in families %}
-      <option value="{{ family.id }}">{{ family.name }}</option>
-      {% endfor %}
-    </select>
-
-    <label for="generar-example-prompts">Prompts de ejemplo (opcional)</label>
-    <textarea id="generar-example-prompts" name="example_prompts" rows="3"></textarea>
-
-    <label for="generar-llm-model">Modelo LLM (OpenRouter)</label>
-    <input id="generar-llm-model" name="llm_model" type="text" list="openrouter-models" value="anthropic/claude-sonnet-4" required>
-
-    <label for="generar-creativity">Creatividad: <span class="creativity-value">0.7</span></label>
-    <input id="generar-creativity" name="temperature" type="range" min="0" max="1" step="0.05" value="0.7">
-
-    <button type="submit">Generar</button>
-  </form>
-</section>
-
-<section id="tab-imagen" class="tab-panel">
-  <form id="form-imagen">
-    <label for="imagen-file">Imagen</label>
-    <input id="imagen-file" name="image" type="file" accept="image/jpeg,image/png,image/webp" required>
-    <img id="imagen-preview" class="image-preview" hidden alt="Previsualizacion">
-
-    <label for="imagen-user-input">Idea adicional (opcional)</label>
-    <textarea id="imagen-user-input" name="user_input" rows="3"></textarea>
-
-    <label for="imagen-family">Familia de modelo</label>
-    <select id="imagen-family" name="family_id" required>
-      {% for family in families %}
-      <option value="{{ family.id }}">{{ family.name }}</option>
-      {% endfor %}
-    </select>
-
-    <label for="imagen-example-prompts">Prompts de ejemplo (opcional)</label>
-    <textarea id="imagen-example-prompts" name="example_prompts" rows="3"></textarea>
-
-    <label for="imagen-vision-model">Modelo de vision (OpenRouter)</label>
-    <input id="imagen-vision-model" name="vision_model" type="text" list="openrouter-vision-models" value="anthropic/claude-sonnet-4" required>
-
-    <label for="imagen-creativity">Creatividad: <span class="creativity-value">0.7</span></label>
-    <input id="imagen-creativity" name="temperature" type="range" min="0" max="1" step="0.05" value="0.7">
-
-    <button type="submit">Generar desde imagen</button>
-    <button type="button" id="extract-character-image">Extraer personaje de esta imagen</button>
-  </form>
-</section>
-
-<section id="tab-historia" class="tab-panel">
-  <form id="form-historia">
-    <label for="historia-user-input">Historia / escena a representar</label>
-    <textarea id="historia-user-input" name="user_input" rows="4" required placeholder="Ej: dos personajes quedan a cenar, la cosa se va poniendo intensa y terminan jugando al strip poker"></textarea>
-
-    <div class="characters" id="historia-characters"></div>
-
-    <label for="historia-family">Familia de modelo</label>
-    <select id="historia-family" name="family_id" required>
-      {% for family in families %}
-      <option value="{{ family.id }}">{{ family.name }}</option>
-      {% endfor %}
-    </select>
-
-    <label for="historia-num-episodes">Numero de episodios</label>
-    <input id="historia-num-episodes" name="num_episodes" type="number" min="2" max="12" value="4" required>
-
-    <label for="historia-example-prompts">Prompts de ejemplo (opcional)</label>
-    <textarea id="historia-example-prompts" name="example_prompts" rows="3"></textarea>
-
-    <label for="historia-llm-model">Modelo LLM (OpenRouter)</label>
-    <input id="historia-llm-model" name="llm_model" type="text" list="openrouter-models" value="anthropic/claude-sonnet-4" required>
-
-    <label for="historia-creativity">Creatividad: <span class="creativity-value">0.7</span></label>
-    <input id="historia-creativity" name="temperature" type="range" min="0" max="1" step="0.05" value="0.7">
-
-    <button type="submit">Generar historia</button>
-  </form>
-</section>
-
-<section id="story-result-panel" class="result-panel" hidden>
-  <div id="story-result-error" class="error-banner" hidden></div>
-  <div id="story-result-success" hidden>
-    <div id="story-result-cost" class="result-cost" hidden></div>
-    <div id="story-result-truncated" class="warning-banner" hidden>La respuesta se ha cortado por el limite de longitud. Puede que falten episodios o esten incompletos.</div>
-    <div id="story-result-mismatch" class="warning-banner" hidden>El modelo no ha seguido el formato de episodios solicitado, asi que el numero o el contenido de los episodios puede no ser el esperado. Revisa el resultado antes de usarlo.</div>
-    <div id="story-episodes"></div>
+<dialog class="dialog" id="characters-dialog" aria-labelledby="characters-dialog-title">
+  <div class="dialog-head">
+    <h2 id="characters-dialog-title">Personajes</h2>
+    <button type="button" class="btn-icon" id="characters-dialog-close" aria-label="Cerrar">×</button>
   </div>
-</section>
-
-<section id="result-panel" class="result-panel" hidden>
-  <div id="result-error" class="error-banner" hidden></div>
-  <div id="result-success" hidden>
-    <div id="result-cost" class="result-cost" hidden></div>
-    <div id="result-truncated" class="warning-banner" hidden>La respuesta se ha cortado por el limite de longitud. Prueba con un prompt mas corto o menos personajes.</div>
-    <label>Positive Prompt</label>
-    <div class="copy-row">
-      <textarea id="result-positive" readonly rows="4"></textarea>
-      <button type="button" id="copy-positive">Copiar</button>
+  <p class="notice" id="character-notice" hidden></p>
+  <form class="character-form" id="character-form">
+    <input type="hidden" id="character-id">
+    <div class="field">
+      <label for="character-name">Nombre</label>
+      <input id="character-name" type="text" required autocomplete="off">
     </div>
-    <div id="result-negative-group">
-      <label>Negative Prompt</label>
-      <div class="copy-row">
-        <textarea id="result-negative" readonly rows="2"></textarea>
-        <button type="button" id="copy-negative">Copiar</button>
-      </div>
+    <div class="field">
+      <label for="character-text">Descripción</label>
+      <textarea id="character-text" rows="5" required placeholder="Rasgos que no cambian: cara, pelo, complexión, ropa habitual"></textarea>
     </div>
-    <button type="button" id="iterate-this">Iterar este prompt</button>
-    <button type="button" id="extract-character">Extraer personaje</button>
-  </div>
-</section>
-
-<section id="extract-character-panel" class="result-panel" hidden>
-  <div id="extract-character-error" class="error-banner" hidden></div>
-  <div id="extract-character-form-wrap" hidden>
-    <div id="extract-character-cost" class="result-cost" hidden></div>
-    <div id="extract-character-truncated" class="warning-banner" hidden>La respuesta se ha cortado por el limite de longitud. Revisa el texto antes de guardarlo.</div>
-    <label for="extract-character-name">Nombre</label>
-    <input type="text" id="extract-character-name">
-    <label for="extract-character-text">Texto</label>
-    <textarea id="extract-character-text" rows="4"></textarea>
-    <button type="button" id="extract-character-save">Guardar personaje</button>
-    <button type="button" id="extract-character-cancel">Cancelar</button>
-  </div>
-</section>
+    <div class="form-actions">
+      <button type="submit" class="btn-primary" id="character-save">Guardar personaje</button>
+      <button type="button" class="btn-quiet" id="character-new">Nuevo personaje</button>
+    </div>
+  </form>
+  <ul class="item-list" id="character-list"></ul>
+</dialog>
 
 <datalist id="openrouter-models"></datalist>
 <datalist id="openrouter-vision-models"></datalist>
 {% endblock %}
 {% block scripts %}
-<script src="/static/app.js"></script>
+<script type="module" src="/static/app.js"></script>
 {% endblock %}

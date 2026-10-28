@@ -49,3 +49,14 @@ def test_read_jsonl_returns_empty_list_when_file_missing(tmp_path):
     path = str(tmp_path / "missing.jsonl")
 
     assert storage.read_jsonl(path) == []
+
+
+def test_write_jsonl_replaces_file_contents(tmp_path):
+    path = str(tmp_path / "history.jsonl")
+    storage.append_jsonl(path, {"id": 1})
+    storage.append_jsonl(path, {"id": 2})
+
+    storage.write_jsonl(path, [{"id": 2, "favorite": True}])
+
+    assert storage.read_jsonl(path) == [{"id": 2, "favorite": True}]
+    assert [p.name for p in tmp_path.iterdir()] == ["history.jsonl"]

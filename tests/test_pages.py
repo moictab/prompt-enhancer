@@ -63,14 +63,36 @@ def test_admin_page_renders(api_client, auth_headers):
     assert response.status_code == 200
 
 
-def test_index_renders_generar_and_imagen_tabs(api_client, auth_headers):
+def test_index_renders_every_mode_in_one_composer(api_client, auth_headers):
     response = api_client.get("/", auth=auth_headers)
 
     assert response.status_code == 200
-    assert 'id="form-generar"' in response.text
-    assert 'id="form-imagen"' in response.text
-    assert 'id="generar-previous-prompt"' in response.text
-    assert 'id="form-iterar"' not in response.text
+    assert 'id="composer-form"' in response.text
+    for mode in ["generate", "image", "story", "variations"]:
+        assert f'data-mode="{mode}"' in response.text
+    assert 'id="previous-prompt"' in response.text
+    assert 'id="takes"' in response.text
+    assert 'id="characters-dialog"' in response.text
+
+
+def test_index_renders_every_variation_axis(api_client, auth_headers):
+    from app.prompts import VARIATION_AXES
+
+    response = api_client.get("/", auth=auth_headers)
+
+    for key, label in VARIATION_AXES.items():
+        assert f'data-axis="{key}"' in response.text
+        assert label in response.text
+
+
+def test_index_prefills_default_models_from_settings(api_client, auth_headers, monkeypatch):
+    monkeypatch.setenv("DEFAULT_LLM_MODEL", "vendor/text-model")
+    monkeypatch.setenv("DEFAULT_VISION_MODEL", "vendor/vision-model")
+
+    response = api_client.get("/", auth=auth_headers)
+
+    assert 'value="vendor/text-model"' in response.text
+    assert 'value="vendor/vision-model"' in response.text
 
 
 def test_index_llm_model_inputs_use_openrouter_models_datalist(api_client, auth_headers):
@@ -95,6 +117,20 @@ def test_admin_page_has_management_sections(api_client, auth_headers):
     assert response.status_code == 200
     assert 'id="family-form"' in response.text
     assert 'id="character-form"' in response.text
-    assert 'id="system-prompt-generate-text"' in response.text
-    assert 'id="system-prompt-iterate-text"' in response.text
-    assert 'id="system-prompt-image-text"' in response.text
+    assert 'id="system-prompt-text"' in response.text
+    for mode in ["generate", "iterate", "image", "story", "variations", "extract_character"]:
+        assert f'data-mode="{mode}"' in response.text
+
+
+def test_nav_marks_the_current_page(api_client, auth_headers):
+    response = api_client.get("/historial", auth=auth_headers)
+
+    assert '<a href="/historial" aria-current="page">' in response.text
+
+
+def test_static_assets_are_served_as_revalidated_javascript(api_client, auth_headers):
+    response = api_client.get("/static/common.js", auth=auth_headers)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/javascript")
+    assert response.headers["cache-control"] == "no-cache"

@@ -36,12 +36,11 @@ def test_generate_returns_parsed_prompt(mock_call, api_client, auth_headers, tmp
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "positive_prompt": "a cyberpunk samurai",
-        "negative_prompt": "blurry",
-        "cost": 0.000123,
-        "truncated": False,
-    }
+    body = response.json()
+    assert body["prompts"] == [{"positive_prompt": "a cyberpunk samurai", "negative_prompt": "blurry"}]
+    assert body["cost"] == 0.000123
+    assert body["truncated"] is False
+    assert body["count_mismatch"] is False
 
 
 @patch("app.routes.api.call_openrouter")
@@ -138,12 +137,11 @@ def test_generate_with_previous_prompt_returns_parsed_prompt(mock_call, api_clie
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "positive_prompt": "a samurai with lightning",
-        "negative_prompt": "blurry",
-        "cost": 0.000123,
-        "truncated": False,
-    }
+    body = response.json()
+    assert body["prompts"] == [{"positive_prompt": "a samurai with lightning", "negative_prompt": "blurry"}]
+    assert body["cost"] == 0.000123
+    assert body["truncated"] is False
+    assert body["count_mismatch"] is False
 
 
 @patch("app.routes.api.call_openrouter")
@@ -203,12 +201,11 @@ def test_generate_with_previous_prompt_suppresses_negative_when_family_has_none(
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "positive_prompt": "updated flowing scene",
-        "negative_prompt": "",
-        "cost": 0.000123,
-        "truncated": False,
-    }
+    body = response.json()
+    assert body["prompts"] == [{"positive_prompt": "updated flowing scene", "negative_prompt": ""}]
+    assert body["cost"] == 0.000123
+    assert body["truncated"] is False
+    assert body["count_mismatch"] is False
 
 
 @patch("app.routes.api.call_openrouter")

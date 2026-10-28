@@ -4,15 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Prompt Enhancer{% endblock %}</title>
+  <link rel="preload" href="/static/fonts/archivo-latin-wdth-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 </head>
-<body>
-  <nav class="topnav">
-    <a href="/">Prompt Enhancer</a>
-    <a href="/historial">Historial</a>
-    <a href="/admin">Admin</a>
-  </nav>
+<body class="{% block body_class %}{% endblock %}">
+  <header class="topbar">
+    <a class="brand" href="/">Prompt Enhancer</a>
+    {% set current = request.url.path %}
+    <nav class="topnav" aria-label="Secciones">
+      <a href="/" {% if current == "/" %}aria-current="page"{% endif %}>Crear</a>
+      <a href="/historial" {% if current == "/historial" %}aria-current="page"{% endif %}>Historial</a>
+      <a href="/admin" {% if current == "/admin" %}aria-current="page"{% endif %}>Ajustes</a>
+    </nav>
+  </header>
   <main>
     {% block content %}{% endblock %}
   </main>

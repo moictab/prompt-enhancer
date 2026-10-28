@@ -41,12 +41,11 @@ def test_from_image_returns_parsed_prompt(mock_call, api_client, auth_headers, t
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "positive_prompt": "a mountain landscape",
-        "negative_prompt": "blurry",
-        "cost": 0.000123,
-        "truncated": False,
-    }
+    body = response.json()
+    assert body["prompts"] == [{"positive_prompt": "a mountain landscape", "negative_prompt": "blurry"}]
+    assert body["cost"] == 0.000123
+    assert body["truncated"] is False
+    assert body["count_mismatch"] is False
 
 
 @patch("app.routes.api.call_openrouter")

@@ -1,9 +1,31 @@
 {% extends "base.html" %}
 {% block title %}Historial{% endblock %}
+{% block body_class %}page-history{% endblock %}
 {% block content %}
-<h1>Historial</h1>
-<div id="history-list"></div>
+<header class="page-head">
+  <h1>Historial</h1>
+  <p class="results-summary" id="results-summary" aria-live="polite"></p>
+</header>
+
+<div class="filters" role="search">
+  <input type="search" id="history-search" placeholder="Buscar en ideas, prompts y personajes" aria-label="Buscar en el historial">
+  <div class="filter-modes" id="filter-modes" role="group" aria-label="Filtrar por modo">
+    <button type="button" data-mode="" aria-pressed="true">Todos</button>
+    <button type="button" data-mode="generate" aria-pressed="false">Generar</button>
+    <button type="button" data-mode="iterate" aria-pressed="false">Iterar</button>
+    <button type="button" data-mode="image" aria-pressed="false">Imagen</button>
+    <button type="button" data-mode="story" aria-pressed="false">Historia</button>
+    <button type="button" data-mode="variations" aria-pressed="false">Variaciones</button>
+  </div>
+  <select id="filter-family" aria-label="Filtrar por familia">
+    <option value="">Todas las familias</option>
+  </select>
+  <button type="button" class="chip" id="filter-favorites" aria-pressed="false">★ Solo favoritos</button>
+</div>
+
+<div class="takes" id="history-list"></div>
+<button type="button" class="btn-secondary load-more" id="load-more" hidden>Mostrar más</button>
 {% endblock %}
 {% block scripts %}
-<script src="/static/historial.js"></script>
+<script type="module" src="/static/historial.js"></script>
 {% endblock %}

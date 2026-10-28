@@ -6,7 +6,10 @@ import requests
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
-TIMEOUT_SECONDS = 60
+# A 12-prompt story or variation set can take a couple of minutes to generate,
+# and a non-streamed completion only arrives once it is complete.
+TIMEOUT_SECONDS = 180
+MODELS_TIMEOUT_SECONDS = 30
 MODELS_CACHE_TTL_SECONDS = 3600
 
 logger = logging.getLogger("app.openrouter")
@@ -106,7 +109,8 @@ def call_openrouter(
             content = choice["message"]["content"]
             if not isinstance(content, str):
                 raise ValueError("content is not a string")
-        except (ValueError, KeyError, IndexError):
+        # TypeError/AttributeError: a null "choices"/"message" or a non-object body
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError):
             if attempt < max_attempts:
                 logger.warning(
                     "openrouter call returned malformed content model=%s attempt=%d, retrying",
@@ -117,7 +121,7 @@ def call_openrouter(
                 f"Unexpected response format from OpenRouter: {response.text[:300]}"
             )
 
-        cost = data.get("usage", {}).get("cost")
+        cost = (data.get("usage") or {}).get("cost")
         truncated = choice.get("finish_reason") == "length"
         if truncated:
             logger.warning(
@@ -136,7 +140,7 @@ def list_models() -> list[dict]:
         return _models_cache["models"]
 
     try:
-        response = requests.get(OPENROUTER_MODELS_URL, timeout=TIMEOUT_SECONDS)
+        response = requests.get(OPENROUTER_MODELS_URL, timeout=MODELS_TIMEOUT_SECONDS)
         response.raise_for_status()
         raw_models = response.json()["data"]
     except (requests.exceptions.RequestException, ValueError, KeyError):

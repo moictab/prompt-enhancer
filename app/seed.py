@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from . import families, storage, system_prompt
+from . import families, storage
 
 DEFAULT_GENERATE_SYSTEM_PROMPT = """You are an expert AI image-generation prompt engineer. The user will describe a new image idea in natural language -- however detailed or vague. Transform it into a high-quality prompt for the selected model family, following that family's specific rules exactly. Fill in reasonable creative details where the user was vague, without contradicting anything they specified.
 
@@ -66,6 +66,39 @@ NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 (continue sequentially for every requested episode, repeating POSITIVE: and NEGATIVE: each time)
 """
 
+DEFAULT_VARIATIONS_SYSTEM_PROMPT = """You are an expert AI image-generation prompt engineer producing a set of variations of the same subject -- like the shots of a photo shoot or the sheets of a character study, where the subject stays the same and only some aspects change from one shot to the next. The user will tell you what must stay constant (characters, aesthetic, base idea and any fixed aspects), which aspects must vary, and how many variations to produce.
+
+Your job:
+- Produce exactly the requested number of variations.
+- Keep everything that is constant IDENTICAL across all variations. Describe each character with the same wording in every prompt -- never paraphrase, shorten or let their appearance drift between variations. Restate the aesthetic with the same wording in every prompt too.
+- For a fixed aspect that comes with a value, use that value in every variation. For a fixed aspect without a value, choose one option and repeat it unchanged in every variation.
+- For every aspect marked to vary, make each variation clearly different from all the others on that aspect -- no two variations may share the same choice. When hints are given for a varying aspect, keep every choice within those hints.
+- Do not change anything that was not marked to vary.
+- Each prompt must be complete and self-contained, as if it had been generated on its own.
+
+Follow the selected model family's specific rules exactly for every variation's prompt.
+
+You MUST output in exactly this format, one block per variation, in order, with nothing before, between, or after the blocks. The literal labels "POSITIVE:" and "NEGATIVE:" MUST be repeated for every single variation without exception:
+VARIACION 1:
+POSITIVE: <the positive prompt for this variation>
+NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
+
+VARIACION 2:
+POSITIVE: <the positive prompt for this variation>
+NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
+
+(continue sequentially for every requested variation, repeating POSITIVE: and NEGATIVE: each time)
+"""
+
+DEFAULT_SYSTEM_PROMPTS = {
+    "generate": DEFAULT_GENERATE_SYSTEM_PROMPT,
+    "iterate": DEFAULT_ITERATE_SYSTEM_PROMPT,
+    "image": DEFAULT_IMAGE_SYSTEM_PROMPT,
+    "story": DEFAULT_STORY_SYSTEM_PROMPT,
+    "variations": DEFAULT_VARIATIONS_SYSTEM_PROMPT,
+    "extract_character": DEFAULT_EXTRACT_CHARACTER_SYSTEM_PROMPT,
+}
+
 SDXL_INSTRUCTIONS = """## Prompt Structure
 Always follow this order: Subject -> Environment -> Lighting -> Details -> Style
 
@@ -117,11 +150,10 @@ def ensure_seed_data(data_dir: str) -> None:
     if not Path(characters_path).exists():
         storage.write_json(characters_path, [])
 
-    if not Path(system_prompts_path).exists():
-        system_prompt.write_system_prompt("generate", DEFAULT_GENERATE_SYSTEM_PROMPT, path=system_prompts_path)
-        system_prompt.write_system_prompt("iterate", DEFAULT_ITERATE_SYSTEM_PROMPT, path=system_prompts_path)
-        system_prompt.write_system_prompt("image", DEFAULT_IMAGE_SYSTEM_PROMPT, path=system_prompts_path)
-        system_prompt.write_system_prompt(
-            "extract_character", DEFAULT_EXTRACT_CHARACTER_SYSTEM_PROMPT, path=system_prompts_path
-        )
-        system_prompt.write_system_prompt("story", DEFAULT_STORY_SYSTEM_PROMPT, path=system_prompts_path)
+    # System prompts are seeded per mode rather than per file: a data dir created
+    # before a mode existed would otherwise run that mode with an empty system
+    # prompt. Modes already present -- edited or not -- are never touched.
+    existing = storage.read_json(system_prompts_path, default={})
+    missing = {mode: text for mode, text in DEFAULT_SYSTEM_PROMPTS.items() if mode not in existing}
+    if missing:
+        storage.write_json(system_prompts_path, {**existing, **missing})

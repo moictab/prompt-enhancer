@@ -14,13 +14,15 @@ def test_get_history_returns_entries_newest_first(api_client, auth_headers, tmp_
     history.append_entry(
         mode="generate", family_id="f", family_name="SDXL", llm_model="m",
         vision_model=None, temperature=0.7, user_input="first", example_prompts="",
-        previous_prompt=None, positive_prompt="first result", negative_prompt="",
+        previous_prompt=None,
+        prompts=[{"positive_prompt": "first result", "negative_prompt": ""}],
         path=path,
     )
     history.append_entry(
         mode="generate", family_id="f", family_name="SDXL", llm_model="m",
         vision_model=None, temperature=0.7, user_input="second", example_prompts="",
-        previous_prompt=None, positive_prompt="second result", negative_prompt="",
+        previous_prompt=None,
+        prompts=[{"positive_prompt": "second result", "negative_prompt": ""}],
         path=path,
     )
 
@@ -28,7 +30,7 @@ def test_get_history_returns_entries_newest_first(api_client, auth_headers, tmp_
 
     assert response.status_code == 200
     body = response.json()
-    assert [e["positive_prompt"] for e in body] == ["second result", "first result"]
+    assert [e["prompts"][0]["positive_prompt"] for e in body] == ["second result", "first result"]
 
 
 def test_get_characters_requires_auth(api_client):

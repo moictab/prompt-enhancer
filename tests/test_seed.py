@@ -23,11 +23,13 @@ def test_ensure_seed_data_creates_empty_characters_file(tmp_path):
     assert characters == []
 
 
-def test_ensure_seed_data_creates_all_five_system_prompts(tmp_path):
+def test_ensure_seed_data_creates_every_mode_system_prompt(tmp_path):
     ensure_seed_data(str(tmp_path))
 
     data = json.loads((tmp_path / "system_prompts.json").read_text())
-    assert set(data.keys()) == {"generate", "iterate", "image", "extract_character", "story"}
+    assert set(data.keys()) == {
+        "generate", "iterate", "image", "extract_character", "story", "variations",
+    }
     assert "POSITIVE:" in data["generate"]
     assert "POSITIVE:" in data["iterate"]
     assert "POSITIVE:" in data["image"]
@@ -36,6 +38,8 @@ def test_ensure_seed_data_creates_all_five_system_prompts(tmp_path):
     assert "TEXT:" in data["extract_character"]
     assert "EPISODIO" in data["story"]
     assert "POSITIVE:" in data["story"]
+    assert "VARIACION" in data["variations"]
+    assert "POSITIVE:" in data["variations"]
 
 
 def test_ensure_seed_data_is_idempotent(tmp_path):
@@ -52,4 +56,18 @@ def test_ensure_seed_data_does_not_overwrite_existing_system_prompts(tmp_path):
     ensure_seed_data(str(tmp_path))
 
     data = json.loads((tmp_path / "system_prompts.json").read_text())
-    assert data == {"generate": "custom"}
+    assert data["generate"] == "custom"
+
+
+def test_ensure_seed_data_fills_in_modes_missing_from_an_older_data_dir(tmp_path):
+    (tmp_path / "system_prompts.json").write_text(
+        '{"generate": "custom", "story": ""}', encoding="utf-8"
+    )
+
+    ensure_seed_data(str(tmp_path))
+
+    data = json.loads((tmp_path / "system_prompts.json").read_text())
+    assert data["generate"] == "custom"
+    assert data["story"] == ""
+    assert "VARIACION" in data["variations"]
+    assert "PRESERVE" in data["iterate"]
