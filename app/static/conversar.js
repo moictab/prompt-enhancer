@@ -261,16 +261,17 @@ function liveParts(raw) {
     .replace(/^[ \t]*```[\w-]*[ \t]*$\n?/gm, "")
     .replace(/<\/?[a-z]*$/i, "");
   const parts = [];
-  const pattern = /<prompt\b[^>]*>([\s\S]*?)(?:<\/prompt>|$)/gi;
+  const pattern = /<prompt\b([^>]*)>([\s\S]*?)(?:<\/prompt>|$)/gi;
   let position = 0;
   for (const match of text.matchAll(pattern)) {
     const before = text.slice(position, match.index).trim();
     if (before) parts.push({ type: "text", text: before });
-    const block = match[1];
+    const block = match[2];
     const negativeAt = block.search(/NEGATIVE\s*:/i);
     const positive = (negativeAt === -1 ? block : block.slice(0, negativeAt)).replace(/^\s*POSITIVE\s*:/i, "").trim();
     const negative = negativeAt === -1 ? "" : block.slice(negativeAt).replace(/^NEGATIVE\s*:/i, "").trim();
-    if (positive) parts.push({ type: "prompt", positive_prompt: positive, negative_prompt: negative });
+    const model = (match[1].match(/\bmodel\s*=\s*["']([^"'>]*)["']/i) || [])[1]?.trim();
+    if (positive) parts.push({ type: "prompt", positive_prompt: positive, negative_prompt: negative, ...(model ? { model } : {}) });
     position = match.index + match[0].length;
   }
   const after = text.slice(position).trim();
@@ -907,6 +908,7 @@ function fillBotMessage(
 // conversation piles them up), with Copiar at hand; unfolded, the whole prompt and its actions.
 function proposal(entry, part, number, live) {
   const key = `${state.conversation?.id}:${number}`;
+  const models = proposalModels(part);
   const details = el(
     "details",
     {
@@ -918,12 +920,18 @@ function proposal(entry, part, number, live) {
       "summary",
       {},
       el("span", { class: "proposal-no", text: String(number) }),
-      // Folded, the start of the prompt; unfolded (the prompt is below), what it is.
-      el("span", { class: "proposal-preview", text: part.positive_prompt || "(vacío)" }),
-      el("span", {
-        class: "proposal-label",
-        text: `Propuesta ${number}${part.negative_prompt ? ", con negativo" : ""}`,
-      })
+      el(
+        "span",
+        { class: "proposal-head" },
+        // Folded, the start of the prompt; unfolded (the prompt is below), what it is.
+        el("span", { class: "proposal-preview", text: part.positive_prompt || "(vacío)" }),
+        el("span", {
+          class: "proposal-label",
+          text: `Propuesta ${number}${part.negative_prompt ? ", con negativo" : ""}`,
+        }),
+        models.length > 0 &&
+          el("span", { class: "proposal-model", title: models.join("\n"), text: models.map(modelName).join(", ") })
+      )
     ),
     frameBody(entry, part, live ? {} : frameHandlers)
   );
@@ -933,6 +941,23 @@ function proposal(entry, part, number, live) {
     details,
     copyButton("Copiar", () => part.positive_prompt, "btn-quiet btn-copy proposal-copy")
   );
+}
+
+// The base model a proposal is for: what its runs used (the same prompt, launched), or else
+// what the bot said it wrote it for.
+function proposalModels(part) {
+  const squash = (text) => (text || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const prompt = squash(part.positive_prompt);
+  const ran = (state.conversation?.runs || [])
+    .filter((run) => run.kind !== "calibration" && squash(run.changes?.positive) === prompt)
+    .flatMap((run) => run.base_models || []);
+  if (ran.length) return [...new Set(ran)];
+  return part.model ? [part.model] : [];
+}
+
+// "krea-2\gonzalomo_v1.0.safetensors" → "krea-2/gonzalomo_v1.0"
+function modelName(file) {
+  return file.replace(/\\/g, "/").replace(/\.(safetensors|ckpt|gguf|sft|pt|pth|bin)$/i, "");
 }
 
 function botMessage(message, firstNumber) {

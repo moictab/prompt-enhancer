@@ -528,6 +528,7 @@ class ToolBox:
         run = conversations.add_run(
             self.conversation_id,
             {"workflow": label, "changes": changes, "count": len(jobs), "status": "pending", "jobs": jobs,
+             "base_models": variants[0][0].base_models(),  # every job's graph differs only in its seed
              "output_folder": f"{comfy.OUTPUT_SUBFOLDER}/{folder}", **(run_fields or {})},
             sent,
         )

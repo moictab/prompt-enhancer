@@ -66,7 +66,9 @@ def test_a_launch_that_goes_through_ends_the_turn(api_client, auth_headers, tmp_
     # No request after the launch: it would only be for the bot to say it launched.
     [first] = script.calls
     assert first["tools"] is conversation_turn.chat_tools.TOOLS and first["tool_choice"] is None
-    assert "## Workflow Library\n- krea-2/txt2img (2:3 portrait, 1 MP by default):" in first["messages"][0]["content"]
+    assert ("## Workflow Library\n- krea-2/txt2img on krea-2\\krea-2-turbo-official-comfy-int8-convrot_v1.0.safetensors "
+            "(2:3 portrait, 1 MP by default):") in first["messages"][0]["content"]
+    assert '<prompt model="krea-2\\name.safetensors">' in first["messages"][0]["content"]
     assert "A launch that goes through ends your reply" in first["messages"][0]["content"]
 
     message = events[-1]["message"]
@@ -79,6 +81,8 @@ def test_a_launch_that_goes_through_ends_the_turn(api_client, auth_headers, tmp_
 
     stored = api_client.get(f"/api/conversations/{conversation['id']}", auth=auth_headers).json()
     assert stored["runs"][0]["status"] == "pending"
+    # The model it ran on, which the chat shows on the card of the prompt it ran.
+    assert stored["runs"][0]["base_models"] == ["krea-2\\krea-2-turbo-official-comfy-int8-convrot_v1.0.safetensors"]
 
     # Next turn replays the reply as it was: the call and its result, then the user's message.
     with patch("app.conversation_turn.stream_chat", Script(("Vale.", []))) as next_turn:

@@ -210,6 +210,16 @@ class Graph:
                     names.append(value)
         return names
 
+    def base_models(self) -> list[str]:
+        """The checkpoints and diffusion models it loads (not text encoders, VAEs or LoRAs)."""
+        names = []
+        for node_id in sorted(self.nodes, key=_id_key):
+            for key in BASE_MODEL_INPUTS:
+                value = self.nodes[node_id]["inputs"].get(key)
+                if isinstance(value, str) and value and value not in names:
+                    names.append(value)
+        return names
+
     def base_model_folder(self) -> str | None:
         """The folder the base model sits in ("krea-2" for "krea-2\\x.safetensors"), which names its
         family; None when there is no base model in a folder, or base models from several."""

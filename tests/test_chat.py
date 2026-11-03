@@ -54,10 +54,11 @@ def test_system_prompt_tells_the_bot_to_keep_terse_notes_and_change_them_without
 def test_system_prompt_lists_the_workflow_library_and_how_to_run_when_comfy_is_available(mock_read):
     result = chat.build_system_prompt(
         FAMILY, [],
-        workflows=[{"name": "krea-2/txt2img", "description": "Text to image."}, {"name": "bare", "description": ""}],
+        workflows=[{"name": "krea-2/txt2img", "description": "Text to image.", "model": "krea-2\\k.safetensors"},
+                   {"name": "bare", "description": ""}],
     )
 
-    assert "## Workflow Library\n- krea-2/txt2img: Text to image.\n- bare\n\n## How This" in result
+    assert "## Workflow Library\n- krea-2/txt2img on krea-2\\k.safetensors: Text to image.\n- bare\n\n## How This" in result
     assert result.endswith(chat.COMFY_MECHANICS)
 
 
@@ -118,6 +119,24 @@ def test_llm_messages_number_prompt_blocks_across_the_conversation():
     assert '<prompt id="2">' in messages[1]["content"]
     assert messages[3]["content"].startswith('<prompt id="3">')
     assert messages[0]["content"] == "a witch"
+
+
+def test_a_prompt_block_names_its_model_and_keeps_it_when_replayed():
+    reply = chat.parse_reply(
+        "Va:\n<prompt model=\"krea-2\\gonzalomo_v1.0.safetensors\">\nPOSITIVE: a witch\n</prompt>\n"
+        "<prompt>\nPOSITIVE: an owl\n</prompt>",
+        has_negative_prompt=False,
+    )
+
+    assert reply.parts[1] == {"type": "prompt", "positive_prompt": "a witch", "negative_prompt": "",
+                              "model": "krea-2\\gonzalomo_v1.0.safetensors"}
+    assert "model" not in reply.parts[2]
+    assert reply.prompts == [{"positive_prompt": "a witch", "negative_prompt": ""},
+                             {"positive_prompt": "an owl", "negative_prompt": ""}]
+    messages = chat.build_llm_messages(_conversation(_user("a witch"), _assistant(reply.content)),
+                                       load_image=lambda image: None)
+    assert '<prompt id="1" model="krea-2\\gonzalomo_v1.0.safetensors">\nPOSITIVE: a witch' in messages[1]["content"]
+    assert '<prompt id="2">\nPOSITIVE: an owl' in messages[1]["content"]
 
 
 def _attached(messages):

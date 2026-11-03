@@ -56,6 +56,7 @@ NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 
 COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workflow launches a workflow -- one from the library above, "image:N" for the one embedded in image N, or "run:N" for an earlier run's -- with changes such as the prompt, seed, LoRAs, sampler settings, size or any node input. inspect_workflow shows a workflow's nodes and settings; list_comfy_models lists the installed models and LoRAs (use their exact file names); save_workflow keeps a modified workflow in the library, only when the user wants it kept.
 - When the user wants to see a prompt rendered or asks for images, run it straight away, without asking first. Show the prompt you run in a <prompt> block in the same reply, before the call, unless it already is one of your blocks. Inspect a workflow before structural edits (adding, removing or rewiring nodes).
+- Every <prompt> block you write names the base model it is written for: <prompt model="krea-2\\name.safetensors">, the exact file of the checkpoint or diffusion model you run it on, or would (the library shows each workflow's). The card shows it to the user.
 - A launch that goes through ends your reply: say what you have to say -- what you run and why -- before calling run_workflow or calibrate_lora, since you won't get to add anything after it. If the launch fails, you get the error back and can fix the call.
 - Choose the image's proportions yourself, for what it shows, without waiting to be told: 2:3 or 3:4 for a portrait or a figure, 9:16 for a full-length figure or anything tall, 1:1 for a face, an object or an icon, 3:2 or 4:3 for a scene, a room or two people side by side, 16:9 for a landscape or a wide scene, 21:9 for a panorama. Set them with the aspect change, which keeps the workflow's pixel count (what its model is made for); change megapixels or give an exact width and height only when the user asks. A workflow's proportions in the library are its default, not a choice made for this image. Decide them at an image's first run and keep them while you refine it (run:N keeps them; a library workflow starts again from its default, so pass aspect again): change them only when the composition changes or the user asks, and say so when you do. The images of one set or story share them, unless a shot calls for others.
 - Each model belongs to the family its folder is named after (krea-2\\… is Krea 2; the library shows each workflow's family in brackets). A prompt follows the rules of the family of the model it runs on: running a model of another family switches the conversation to that family, and the app hands you its rules to rewrite the prompt by before it runs.
@@ -108,8 +109,10 @@ REMEMBER_PATTERN = re.compile(
 )
 FORGET_PATTERN = re.compile(r"<forget\s+id\s*=\s*[\"']?(\d+)[\"']?\s*/?>(?:\s*</forget>)?", re.IGNORECASE)
 # An unclosed block (a reply cut off by the length limit) runs to the end.
-PROMPT_PATTERN = re.compile(r"<prompt\b[^>]*>(.*?)(?:</prompt>|$)", re.IGNORECASE | re.DOTALL)
-PROMPT_OPEN_PATTERN = re.compile(r"<prompt\b[^>]*>", re.IGNORECASE)
+PROMPT_PATTERN = re.compile(r"<prompt\b([^>]*)>(.*?)(?:</prompt>|$)", re.IGNORECASE | re.DOTALL)
+PROMPT_OPEN_PATTERN = re.compile(r"<prompt\b([^>]*)>", re.IGNORECASE)
+# The base model a block is written for: <prompt model="krea-2\x.safetensors">.
+MODEL_ATTRIBUTE = re.compile(r"""\bmodel\s*=\s*["']([^"'>]*)["']""", re.IGNORECASE)
 REVIEW_PATTERN = re.compile(
     r"<review\s+image\s*=\s*[\"']?(\d+)[\"']?(?:\s+verdict\s*=\s*[\"']?(\w+)[\"']?)?\s*>(.*?)(?:</review>|(?=\n)|$)",
     re.IGNORECASE | re.DOTALL,
@@ -148,6 +151,7 @@ def build_system_prompt(
     if workflows is not None:
         lines = "\n".join(
             f"- {w['name']}" + (f" [{w['family']}]" if w.get("family") else "")
+            + (f" on {w['model']}" if w.get("model") else "")
             + (f" ({w['size']} by default)" if w.get("size") else "")
             + (f": {w['description']}" if w.get("description") else "")
             for w in workflows
@@ -388,7 +392,8 @@ def build_llm_messages(
     def number_block(match: re.Match) -> str:
         nonlocal proposal
         proposal += 1
-        return f'<prompt id="{proposal}">'
+        model = block_model(match.group(1))
+        return f'<prompt id="{proposal}" model="{model}">' if model else f'<prompt id="{proposal}">'
 
     def add_user(content: list[dict]) -> None:
         # Consecutive user-side messages (a run's results, then the user) become one.
@@ -490,6 +495,12 @@ def _wrap_bare_prompts(content: str) -> str:
     return "\n\n".join(out)
 
 
+def block_model(attributes: str) -> str:
+    """The model a <prompt> block's attributes name, or ""."""
+    match = MODEL_ATTRIBUTE.search(attributes or "")
+    return " ".join(match.group(1).split()) if match else ""
+
+
 def _note_text(text: str) -> str:
     return " ".join(text.split())[:MAX_NOTE_LENGTH]
 
@@ -533,9 +544,13 @@ def parse_reply(text: str, has_negative_prompt: bool) -> Reply:
         before = content[position:match.start()].strip()
         if before:
             parts.append({"type": "text", "text": before})
-        positive, negative = prompts.parse_response(match.group(1), has_negative_prompt)
+        positive, negative = prompts.parse_response(match.group(2), has_negative_prompt)
         if positive:
-            parts.append({"type": "prompt", "positive_prompt": positive, "negative_prompt": negative})
+            part = {"type": "prompt", "positive_prompt": positive, "negative_prompt": negative}
+            model = block_model(match.group(1))
+            if model:
+                part["model"] = model
+            parts.append(part)
         position = match.end()
     after = content[position:].strip()
     if after:

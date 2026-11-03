@@ -245,7 +245,8 @@ def _library_entry(workflow: dict) -> dict:
     folder = graph.base_model_folder()
     family = families.family_for_folder(folder) if folder else None
     return {"name": workflow["name"], "description": workflow["description"],
-            "family": family["name"] if family else None, "size": graph.shape()}
+            "family": family["name"] if family else None, "size": graph.shape(),
+            "model": ", ".join(graph.base_models()) or None}
 
 
 def _selected_characters(character_ids: list[str]) -> list[dict]:

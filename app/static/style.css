@@ -1213,7 +1213,15 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
+.proposal-head { display: grid; gap: 0.1rem; min-width: 0; }
 .proposal-preview { overflow: hidden; color: var(--paper-dim); text-overflow: ellipsis; white-space: nowrap; }
+.proposal-model {
+  overflow: hidden;
+  color: var(--paper-faint);
+  font-size: var(--step--1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .proposal-label { display: none; color: var(--paper-faint); font-size: var(--step--1); font-weight: 600; }
 .proposal[open] .proposal-preview { display: none; }
 .proposal[open] .proposal-label { display: block; }
