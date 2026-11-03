@@ -43,6 +43,11 @@ def conversar_page(request: Request):
     )
 
 
+@router.get("/peticiones", response_class=HTMLResponse)
+def peticiones_page(request: Request):
+    return templates.TemplateResponse(request, "peticiones.html", {})
+
+
 @router.get("/historial", response_class=HTMLResponse)
 def historial_page(request: Request):
     return templates.TemplateResponse(request, "historial.html", {})

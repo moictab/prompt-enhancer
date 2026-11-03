@@ -16,7 +16,7 @@
       <a href="/" {% if current == "/" %}aria-current="page"{% endif %}>Crear</a>
       <a href="/conversar" {% if current == "/conversar" %}aria-current="page"{% endif %}>Conversar</a>
       <a href="/historial" {% if current == "/historial" %}aria-current="page"{% endif %}>Historial</a>
-      <a href="/admin" {% if current == "/admin" %}aria-current="page"{% endif %}>Ajustes</a>
+      <a href="/admin" {% if current in ("/admin", "/peticiones") %}aria-current="page"{% endif %}>Ajustes</a>
     </nav>
   </header>
   <main>

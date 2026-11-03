@@ -752,6 +752,61 @@ output { margin-left: 0.4rem; color: var(--safelight); font-variant-numeric: tab
 
 /* ---------- small screens ---------- */
 
+/* ---------- Peticiones: the request log ---------- */
+
+a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: none; }
+.single-request-nav { margin-bottom: 1rem; font-size: var(--step--1); }
+.request-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.request {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+.request.has-error { border-left-color: var(--stop); }
+.request > summary { display: flex; flex-direction: column; gap: 0.2rem; padding: 0.6rem 0.9rem; cursor: pointer; list-style: none; }
+.request > summary::-webkit-details-marker { display: none; }
+.request > summary:hover .request-mode { color: var(--safelight); }
+.request[open] > summary { border-bottom: 1px solid var(--line); }
+.request-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.9rem; font-size: var(--step--1); }
+.request-mode { font-weight: 700; }
+.request-model { color: var(--paper); }
+.request-status, .request-meta { color: var(--paper-dim); font-variant-numeric: tabular-nums; }
+.request.has-error .request-status { color: var(--stop); font-weight: 650; }
+.request-preview { overflow: hidden; color: var(--paper-dim); font-size: var(--step--1); text-overflow: ellipsis; white-space: nowrap; }
+.request-detail { display: flex; flex-direction: column; gap: 0.75rem; padding: 0.9rem; }
+.request-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.15rem 0.9rem; margin: 0; font-size: var(--step--1); }
+.request-facts div { display: contents; }
+.request-facts dt { color: var(--paper-faint); }
+.request-facts dd { margin: 0; color: var(--paper-dim); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.request-section { margin-top: 0.5rem; font-size: var(--step-0); }
+.request-message { display: flex; flex-direction: column; gap: 0.4rem; padding-left: 0.75rem; border-left: 2px solid var(--line-strong); }
+.request-message.role-system { border-left-color: var(--paper-faint); }
+.request-message.role-user { border-left-color: var(--safelight); }
+.request-message h4 { margin: 0; color: var(--paper-dim); font-size: var(--step--1); font-weight: 650; }
+.request-text {
+  max-height: 26rem;
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  overflow: auto;
+  background: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.request-body { color: var(--stop-text); }
+.request-image img { display: block; max-width: 14rem; max-height: 14rem; border: 1px solid var(--line); border-radius: var(--radius); }
+.request-empty { color: var(--paper-faint); font-size: var(--step--1); }
+.request-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; margin-left: -0.6rem; }
+.request-raw { flex-basis: 100%; padding-left: 0.6rem; }
+.request-raw .request-text { margin-top: 0.5rem; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 0.75rem; }
+.msg-meta { display: flex; align-items: center; gap: 0.5rem; }
+.msg-meta .btn-quiet { padding: 0.1rem 0.4rem; font-size: 0.75rem; }
+
 /* ---------- Ajustes: the bot's memory ---------- */
 
 .memory-form { display: flex; align-items: flex-end; gap: 0.75rem; max-width: 52rem; margin-bottom: 1rem; }
@@ -917,8 +972,10 @@ output { margin-left: 0.4rem; color: var(--safelight); font-variant-numeric: tab
   font-size: 0.95rem;
 }
 
-.take-links { margin-top: 0.4rem; }
-.take-links .btn-quiet { margin-left: -0.6rem; }
+.take-links { display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem 0.5rem; margin: 0.4rem 0 0 -0.6rem; }
+.take-requests { display: inline-flex; align-items: center; gap: 0.1rem; padding-left: 0.6rem; color: var(--paper-faint); font-size: var(--step--1); }
+.take-requests .btn-quiet { padding-inline: 0.45rem; }
+a.btn-quiet { text-decoration: none; }
 
 @media (max-width: 900px) {
   .workspace { grid-template-columns: minmax(0, 1fr); }

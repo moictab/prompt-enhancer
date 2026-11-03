@@ -388,19 +388,39 @@ function takeReferences(entry, handlers) {
   );
 }
 
+// A link to one logged request in Peticiones, in a new tab so the page stays put.
+export function requestLink(requestId, text = "Ver la petición") {
+  return el("a", {
+    class: "btn-quiet",
+    href: `/peticiones?id=${encodeURIComponent(requestId)}`,
+    target: "_blank",
+    rel: "noopener",
+    text,
+  });
+}
+
 function takeLinks(entry, handlers) {
-  const conversationId = (entry.params || {}).conversation_id;
-  if (!handlers.onOpenConversation || !conversationId) return null;
-  return el(
-    "div",
-    { class: "take-links" },
-    el("button", {
-      type: "button",
-      class: "btn-quiet",
-      text: "Abrir la conversación",
-      onclick: () => handlers.onOpenConversation(conversationId),
-    })
-  );
+  const params = entry.params || {};
+  const requestIds = params.request_ids || [];
+  const links = [];
+  if (handlers.onOpenConversation && params.conversation_id) {
+    links.push(
+      el("button", {
+        type: "button",
+        class: "btn-quiet",
+        text: "Abrir la conversación",
+        onclick: () => handlers.onOpenConversation(params.conversation_id),
+      })
+    );
+  }
+  if (requestIds.length === 1) links.push(requestLink(requestIds[0]));
+  if (requestIds.length > 1) {
+    // One per variant: "Peticiones 1 2 3".
+    links.push(
+      el("span", { class: "take-requests" }, "Peticiones", requestIds.map((id, i) => requestLink(id, String(i + 1))))
+    );
+  }
+  return links.length ? el("div", { class: "take-links" }, links) : null;
 }
 
 function renderFrames(entry, handlers) {

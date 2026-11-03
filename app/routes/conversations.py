@@ -146,7 +146,8 @@ def _image_loader(conversation_id: str):
 def _reply(conversation_id: str, family: dict) -> StreamingResponse:
     """Stream the bot's reply as NDJSON events: {"type": "delta", "text"} while it
     arrives, then {"type": "done", "message", "conversation"} once it is stored, or
-    {"type": "error", "detail"} -- the HTTP status is already 200 by then."""
+    {"type": "error", "detail", "request_id"} -- the HTTP status is already 200 by
+    then. The stored message and the error carry the request's id in request_log."""
     conversation = conversations.get(conversation_id)
     selected_characters = _selected_characters(conversation["character_ids"])
     system = chat.build_system_prompt(
@@ -167,8 +168,9 @@ def _reply(conversation_id: str, family: dict) -> StreamingResponse:
     def events():
         chunks = []
         end = StreamEnd(cost=None)
+        context = {"mode": "conversation", "conversation_id": conversation_id}
         try:
-            for item in stream_chat(api_key, model, messages, temperature):
+            for item in stream_chat(api_key, model, messages, temperature, context=context):
                 if isinstance(item, StreamEnd):
                     end = item
                 else:
@@ -176,10 +178,14 @@ def _reply(conversation_id: str, family: dict) -> StreamingResponse:
                     yield _event({"type": "delta", "text": item})
         except RuntimeError as e:
             logger.warning("conversation reply failed conversation_id=%s error=%s", conversation_id, e)
-            yield _event({"type": "error", "detail": str(e)})
+            yield _event({"type": "error", "detail": str(e), "request_id": getattr(e, "request_id", None)})
             return
         if not "".join(chunks).strip():
-            yield _event({"type": "error", "detail": "The model returned an empty reply. Try again."})
+            yield _event({
+                "type": "error",
+                "detail": "The model returned an empty reply. Try again.",
+                "request_id": end.request_id,
+            })
             return
         updated = _store_reply(conversation_id, family, selected_characters, "".join(chunks), end)
         if updated is None:
@@ -222,6 +228,7 @@ def _store_reply(
             params={
                 "conversation_id": conversation_id,
                 "conversation_title": reply.title or conversations.display_title(conversation),
+                "request_ids": [end.request_id] if end.request_id else [],
                 **_character_params(selected_characters),
             },
         )
@@ -241,6 +248,7 @@ def _store_reply(
             "cost": end.cost,
             "truncated": end.truncated,
             "history_id": history_id,
+            "request_id": end.request_id,
         },
         title=reply.title,
     )

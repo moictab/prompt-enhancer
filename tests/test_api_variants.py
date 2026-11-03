@@ -123,7 +123,9 @@ def test_generate_returns_the_stored_history_entry(mock_call, api_client, auth_h
     character = characters.create_character(
         "Kaito", "a stoic ronin", path=str(tmp_path / "characters.json")
     )
-    mock_call.return_value = OpenRouterResult(content="POSITIVE: a cat\nNEGATIVE: ", cost=0.001)
+    mock_call.return_value = OpenRouterResult(
+        content="POSITIVE: a cat\nNEGATIVE: ", cost=0.001, request_id="20261103-102219-0123abcd"
+    )
 
     body = api_client.post(
         "/api/generate",
@@ -139,7 +141,10 @@ def test_generate_returns_the_stored_history_entry(mock_call, api_client, auth_h
     assert body["mode"] == "generate"
     assert body["family_name"] == "SDXL"
     assert body["favorite"] is False
-    assert body["params"] == {"variants": 1, "character_names": ["Kaito"]}
+    assert body["params"] == {
+        "variants": 1, "character_names": ["Kaito"], "request_ids": ["20261103-102219-0123abcd"],
+    }
+    assert mock_call.call_args.kwargs["context"] == {"mode": "generate"}
     assert stored["cost"] == 0.001
 
 

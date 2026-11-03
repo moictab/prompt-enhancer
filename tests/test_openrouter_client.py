@@ -237,7 +237,9 @@ def test_stream_chat_yields_deltas_then_the_end_with_cost(mock_post):
     items = list(stream_chat("key", "m", [{"role": "user", "content": "hi"}], 0.5))
 
     assert items[:-1] == ["Hola, ", "Lena."]
-    assert items[-1] == StreamEnd(cost=0.0042, truncated=False)
+    assert items[-1].cost == 0.0042
+    assert items[-1].truncated is False
+    assert items[-1].request_id
     payload = mock_post.call_args.kwargs["json"]
     assert payload["stream"] is True
     assert payload["messages"] == [{"role": "user", "content": "hi"}]

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Peticiones{% endblock %}
+{% block body_class %}page-requests{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>Peticiones</h1>
+  <p class="results-summary" id="requests-summary" aria-live="polite"></p>
+</header>
+<p class="section-intro">Todo lo que la app envía a OpenRouter, tal cual salió, y lo que volvió, de la más reciente a la más antigua. Las imágenes se guardan aparte, una vez cada una.</p>
+
+<div class="filters" id="request-filters" role="search">
+  <div class="filter-modes" id="request-modes" role="group" aria-label="Filtrar por modo">
+    <button type="button" data-mode="" aria-pressed="true">Todas</button>
+    <button type="button" data-mode="conversation" aria-pressed="false">Conversar</button>
+    <button type="button" data-mode="generate" aria-pressed="false">Generar</button>
+    <button type="button" data-mode="image" aria-pressed="false">Imagen</button>
+    <button type="button" data-mode="story" aria-pressed="false">Historia</button>
+    <button type="button" data-mode="variations" aria-pressed="false">Variaciones</button>
+    <button type="button" data-mode="extract-character" aria-pressed="false">Personajes</button>
+  </div>
+  <button type="button" class="chip" id="request-errors" aria-pressed="false">Solo errores</button>
+</div>
+<p class="single-request-nav" id="single-request-nav" hidden><a href="/peticiones">Ver todas las peticiones</a></p>
+
+<div class="request-list" id="request-list"></div>
+<button type="button" class="btn-secondary load-more" id="requests-more" hidden>Mostrar más</button>
+{% endblock %}
+{% block scripts %}
+<script type="module" src="/static/peticiones.js"></script>
+{% endblock %}

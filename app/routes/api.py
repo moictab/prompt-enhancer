@@ -74,6 +74,7 @@ def _call_llm(
                 user_message=user_message,
                 temperature=temperature,
                 image_data_uri=image_data_uri,
+                context={"mode": label},
             )
         except RuntimeError as e:
             logger.warning("%s request failed model=%s error=%s", label, model, e)
@@ -126,7 +127,8 @@ def _record(
             for positive, negative in pairs
         ],
         cost=_total_cost(results),
-        params=params,
+        # The requests behind it, to open in Peticiones (failed variants are logged too, unlinked).
+        params={**(params or {}), "request_ids": [r.request_id for r in results if r.request_id]},
     )
     count_mismatch = len(pairs) != expected_count
     logger.info(

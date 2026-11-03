@@ -13,6 +13,7 @@ from .routes import admin as admin_routes
 from .routes import api as api_routes
 from .routes import conversations as conversation_routes
 from .routes import pages as page_routes
+from .routes import requests as request_routes
 from .seed import ensure_seed_data
 
 request_logger = logging.getLogger("app.request")
@@ -56,6 +57,7 @@ async def log_requests(request: Request, call_next):
 
 app.include_router(api_routes.router)
 app.include_router(conversation_routes.router)
+app.include_router(request_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(page_routes.router)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")

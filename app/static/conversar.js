@@ -9,6 +9,7 @@ import {
   readStored,
   renderFrame,
   request,
+  requestLink,
   setBusy,
   shortModel,
   spawnFloatingCost,
@@ -229,7 +230,12 @@ function noteChip(note) {
   return chip;
 }
 
-function fillBotMessage(node, parts, firstNumber, { notes = [], cost = null, truncated = false, live = false } = {}) {
+function fillBotMessage(
+  node,
+  parts,
+  firstNumber,
+  { notes = [], cost = null, truncated = false, request_id: requestId = null, live = false } = {}
+) {
   const entry = { id: state.conversation?.id, ...settings() };
   let number = firstNumber;
   const body = parts.map((part) => {
@@ -247,7 +253,9 @@ function fillBotMessage(node, parts, firstNumber, { notes = [], cost = null, tru
       notes.length > 0 && el("div", { class: "msg-notes" }, notes.map(noteChip)),
       truncated &&
         el("p", { class: "notice is-warning", text: "La respuesta se cortó por el límite de longitud: lo último puede estar incompleto." }),
-      !live && cost !== null && cost !== undefined && el("p", { class: "msg-meta", text: formatCost(cost) }),
+      !live &&
+        (formatCost(cost) || requestId) &&
+        el("p", { class: "msg-meta" }, formatCost(cost), requestId && requestLink(requestId)),
     ].filter(Boolean)
   );
 }
@@ -281,7 +289,7 @@ function developing() {
   return el("div", { class: "developing", "aria-hidden": "true" }, el("span"), el("span"), el("span"));
 }
 
-function failedReply(detail) {
+function failedReply(detail, requestId = null) {
   return el(
     "div",
     { class: "msg-failed" },
@@ -289,6 +297,7 @@ function failedReply(detail) {
       class: "notice is-error",
       text: detail ? `No ha llegado la respuesta. ${detail}` : "Este mensaje se quedó sin respuesta.",
     }),
+    requestId && requestLink(requestId),
     el("button", { type: "button", class: "btn-secondary", text: "Reintentar", onclick: retryReply })
   );
 }
@@ -595,6 +604,7 @@ async function streamReply(url, body, { onRejected } = {}) {
 
   let finished = null;
   let failure = null;
+  let failedRequestId = null;
   try {
     await streamEvents(url, body, (event) => {
       if (event.type === "delta") {
@@ -604,6 +614,7 @@ async function streamReply(url, body, { onRejected } = {}) {
         finished = event;
       } else if (event.type === "error") {
         failure = event.detail;
+        failedRequestId = event.request_id || null;
       }
     });
     if (!finished && !failure) failure = "La respuesta se cortó antes de terminar.";
@@ -630,7 +641,7 @@ async function streamReply(url, body, { onRejected } = {}) {
     spawnFloatingCost(finished.message.cost, ui.send);
     updateSummary(finished.conversation);
   } else {
-    node.replaceWith(failedReply(failure));
+    node.replaceWith(failedReply(failure, failedRequestId));
     await loadSummaries(); // the message itself was stored, so the conversation belongs in the list
   }
   await syncConversation();

@@ -2,7 +2,7 @@ import json
 from unittest.mock import patch
 
 from app import characters, families, history, memory, system_prompt
-from app.openrouter_client import StreamEnd
+from app.openrouter_client import OpenRouterError, StreamEnd
 
 REPLY = (
     "<title>Lena en la playa</title>\nMi propuesta:\n"
@@ -17,10 +17,13 @@ def _family(tmp_path, has_negative_prompt=True):
     )
 
 
+REQUEST_ID = "20261103-102219-0123abcd"
+
+
 def _stream(*chunks, cost=0.003, truncated=False):
-    def fake(api_key, model, messages, temperature):
+    def fake(api_key, model, messages, temperature, context=None):
         yield from chunks
-        yield StreamEnd(cost=cost, truncated=truncated)
+        yield StreamEnd(cost=cost, truncated=truncated, request_id=REQUEST_ID)
     return fake
 
 
@@ -117,6 +120,10 @@ def test_send_message_streams_the_reply_and_stores_it(mock_stream, api_client, a
         {"type": "text", "text": "¿Más cálida?"},
     ]
     assert message["cost"] == 0.003
+    assert message["request_id"] == REQUEST_ID
+    assert mock_stream.call_args.kwargs["context"] == {
+        "mode": "conversation", "conversation_id": conversation["id"],
+    }
     assert done["conversation"]["title"] == "Lena en la playa"
     assert done["conversation"]["cost"] == 0.003
 
@@ -158,6 +165,7 @@ def test_reply_with_prompts_is_logged_to_history(mock_stream, api_client, auth_h
     assert entry["params"]["conversation_id"] == conversation["id"]
     assert entry["params"]["conversation_title"] == "Lena en la playa"
     assert entry["params"]["character_names"] == ["Lena"]
+    assert entry["params"]["request_ids"] == [REQUEST_ID]
 
 
 @patch("app.routes.conversations.stream_chat")
@@ -255,14 +263,18 @@ def test_failed_reply_keeps_the_message_and_can_be_retried(mock_stream, api_clie
     family = _family(tmp_path)
     conversation_id = _create(api_client, auth_headers, family).json()["id"]
 
-    def failing(api_key, model, messages, temperature):
+    def failing(api_key, model, messages, temperature, context=None):
         yield "Empiezo a"
-        raise RuntimeError("OpenRouter reported an error mid-reply: overloaded")
+        raise OpenRouterError("OpenRouter reported an error mid-reply: overloaded", REQUEST_ID)
 
     mock_stream.side_effect = failing
     events = _events(_send(api_client, auth_headers, conversation_id))
 
-    assert events[-1] == {"type": "error", "detail": "OpenRouter reported an error mid-reply: overloaded"}
+    assert events[-1] == {
+        "type": "error",
+        "detail": "OpenRouter reported an error mid-reply: overloaded",
+        "request_id": REQUEST_ID,
+    }
     stored = api_client.get(f"/api/conversations/{conversation_id}", auth=auth_headers).json()
     assert [m["role"] for m in stored["messages"]] == ["user"]
 

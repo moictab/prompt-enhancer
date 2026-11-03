@@ -96,6 +96,14 @@ def test_conversar_page_renders_with_families_and_default_model(api_client, auth
     assert '<a href="/conversar" aria-current="page">' in response.text
 
 
+def test_peticiones_page_renders_under_ajustes(api_client, auth_headers):
+    response = api_client.get("/peticiones", auth=auth_headers)
+
+    assert response.status_code == 200
+    assert 'id="request-list"' in response.text
+    assert '<a href="/admin" aria-current="page">' in response.text
+
+
 def test_index_no_longer_has_a_starting_prompt_field(api_client, auth_headers):
     response = api_client.get("/", auth=auth_headers)
 
