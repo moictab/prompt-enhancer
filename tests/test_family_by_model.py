@@ -117,16 +117,17 @@ def test_the_reply_is_kept_by_the_family_it_ended_in(api_client, auth_headers, t
     run = {"id": "c1", "name": "run_workflow", "arguments": json.dumps({
         "workflow": "illustrious/txt2img", "changes": {"positive": "1girl, witch", "negative": "lowres"}})}
     script = Script(("Pruebo con Illustrious.", [run]),
-                    ("<prompt>\nPOSITIVE: 1girl, witch\nNEGATIVE: lowres\n</prompt>", [{**run, "id": "c2"}]),
-                    ("Lanzada.", []))
+                    ("<prompt>\nPOSITIVE: 1girl, witch\nNEGATIVE: lowres\n</prompt>", [{**run, "id": "c2"}]))
 
     with patch("app.conversation_turn.stream_chat", script):
         api_client.post(f"/api/conversations/{conversation_id}/messages", auth=auth_headers, data={"content": "va"})
 
-    # Step 2 got Illustrious' rules in the result of step 1.
+    # Step 2 got Illustrious' rules in the result of step 1 (a family switch isn't a launch:
+    # the reply goes on); the launch in step 2 ends it.
     assert json.loads(script.calls[1]["messages"][-1]["content"])["family_rules"] == "Write danbooru tags."
+    assert len(script.calls) == 2
     message = conversations.get(conversation_id)["messages"][-1]
-    assert [p["type"] for p in message["parts"]] == ["text", "family", "prompt", "run", "text"]
+    assert [p["type"] for p in message["parts"]] == ["text", "family", "prompt", "run"]
     # Illustrious uses negatives: the card keeps it (Krea 2 would have dropped it).
     assert next(p for p in message["parts"] if p["type"] == "prompt")["negative_prompt"] == "lowres"
     [entry] = history.list_entries()

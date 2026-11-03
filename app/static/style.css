@@ -1111,6 +1111,8 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .tool-line::before { content: "↳ "; }
 .tool-line.is-error { color: var(--stop-text); }
 
+.chat-auto-comment { grid-column: 1 / -1; display: grid; gap: 0.2rem; }
+.chat-auto-comment-hint { margin-left: 1.55rem; color: var(--paper-dim); font-size: var(--step--1); }
 .chat-comfy { grid-column: 1 / -1; color: var(--paper-dim); font-size: var(--step--1); }
 .chat-comfy.is-off { color: var(--stop-text); }
 .reaction-hint { color: var(--safelight); font-size: var(--step--1); }

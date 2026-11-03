@@ -33,6 +33,7 @@ class ConversationSettings(BaseModel):
     llm_model: str
     temperature: float = Field(default=0.7, ge=0, le=2)
     character_ids: list[str] = []
+    auto_comment: bool = True
 
 
 class ConversationSettingsUpdate(BaseModel):
@@ -41,6 +42,7 @@ class ConversationSettingsUpdate(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)
     character_ids: list[str] | None = None
     title: str | None = Field(default=None, max_length=MAX_TITLE_LENGTH)
+    auto_comment: bool | None = None
 
 
 def _require_idle(conversation_id: str) -> None:
@@ -64,7 +66,8 @@ def list_conversations():
 def create_conversation(req: ConversationSettings):
     _require_family(req.family_id)
     return conversations.create(
-        req.family_id, _require_model(req.llm_model), req.temperature, req.character_ids
+        req.family_id, _require_model(req.llm_model), req.temperature, req.character_ids,
+        auto_comment=req.auto_comment,
     )
 
 

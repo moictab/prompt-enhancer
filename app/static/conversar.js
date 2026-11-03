@@ -53,6 +53,7 @@ const ui = {
   temperature: $("chat-temperature"),
   temperatureValue: $("chat-temperature-value"),
   chips: $("chat-chips"),
+  autoComment: $("chat-auto-comment"), // only with ComfyUI configured
   chat: document.querySelector(".chat"),
   scroll: $("chat-scroll"),
   log: $("chat-log"),
@@ -104,6 +105,7 @@ function settings() {
     llm_model: source.llm_model,
     temperature: source.temperature,
     character_ids: source.character_ids || [],
+    auto_comment: source.auto_comment !== false, // conversations from before the setting comment
   };
 }
 
@@ -1031,10 +1033,17 @@ function failedReply(detail, requestId = null) {
 }
 
 function uncommentedResults() {
+  // With the automatic comments off this is the expected state, not a failure.
+  const off = state.conversation?.auto_comment === false;
   return el(
     "div",
     { class: "msg-failed" },
-    el("p", { class: "notice", text: "El bot no ha comentado estos resultados." }),
+    el("p", {
+      class: "notice",
+      text: off
+        ? "El bot verá estas imágenes con tu próximo mensaje."
+        : "El bot no ha comentado estos resultados.",
+    }),
     el("button", { type: "button", class: "btn-secondary", text: "Pedir su opinión", onclick: retryReply })
   );
 }
@@ -1179,6 +1188,7 @@ function applySettingsToForm(values) {
   ui.model.value = values.llm_model || "";
   ui.temperature.value = values.temperature ?? 0.7;
   ui.temperatureValue.textContent = ui.temperature.value;
+  if (ui.autoComment) ui.autoComment.checked = values.auto_comment !== false;
   renderChips();
   renderComfyStatus();
 }
@@ -1212,7 +1222,9 @@ async function changeSettings(changes) {
   }
   try {
     const updated = await request(`/api/conversations/${state.conversation.id}`, { method: "PATCH", json: changes });
-    for (const key of ["family_id", "llm_model", "temperature", "character_ids"]) state.conversation[key] = updated[key];
+    for (const key of ["family_id", "llm_model", "temperature", "character_ids", "auto_comment"]) {
+      state.conversation[key] = updated[key];
+    }
     rememberSettings();
   } catch (err) {
     toast(err.message, { error: true });
@@ -1407,6 +1419,7 @@ function defaultSettings() {
     llm_model: stored.llm_model || ui.model.defaultValue,
     temperature: typeof stored.temperature === "number" ? stored.temperature : 0.7,
     character_ids: Array.isArray(stored.character_ids) ? stored.character_ids : [],
+    auto_comment: stored.auto_comment !== false,
   };
 }
 
@@ -1996,6 +2009,12 @@ function setupSettings() {
   });
   ui.temperature.addEventListener("input", () => (ui.temperatureValue.textContent = ui.temperature.value));
   ui.temperature.addEventListener("change", () => changeSettings({ temperature: Number(ui.temperature.value) }));
+  ui.autoComment?.addEventListener("change", () =>
+    changeSettings({ auto_comment: ui.autoComment.checked }).then(() => {
+      // The note under results waiting for a comment says whether one is coming.
+      if (state.conversation?.messages.at(-1)?.role === "results") renderLog();
+    })
+  );
 
   state.deleteButton = confirmButton("Eliminar", () => state.conversation && deleteConversation(state.conversation.id), {
     confirmLabel: "Pulsa otra vez para eliminarla",

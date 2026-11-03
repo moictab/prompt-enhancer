@@ -2,14 +2,16 @@
 
 A turn streams the reply; when ComfyUI is available and the model takes tools, the bot
 may call them (chat_tools.py), and each call is answered and the reply continues in a
-new request -- up to MAX_STEPS requests per turn, the last one without tools. Each step
-is a request of its own in the request log.
+new request -- up to MAX_STEPS requests per turn, the last one without tools -- except
+after a step that just launched a run, which ends the turn. Each step is a request of
+its own in the request log.
 
 Turns of one conversation never overlap: a per-conversation lock is held from reading
 the conversation to storing the reply. That also keeps a run's results (runs.py) from
 landing before the reply that launched it. When a run finishes, its results message is
-appended and, if nothing else is pending there, the bot gets an automatic turn to
-comment on it, without tools that launch anything.
+appended and, if nothing else is pending there and the conversation's automatic comments
+are on, the bot gets an automatic turn to comment on it, without tools that launch
+anything (unless it is working on its own).
 
 run_turn yields events: {"type": "delta", "text"} as the reply arrives, {"type": "tool",
 "part"} for each tool call, and finally {"type": "done", "message", "conversation"} or
@@ -38,6 +40,11 @@ from .openrouter_client import StreamEnd, list_models, stream_chat
 logger = logging.getLogger("app.conversations")
 
 MAX_STEPS = 6
+# A step that launches a run, and calls nothing else whose result the bot needs to read, ends
+# the turn: asking the model to go on would cost a request for it to say "launched" (the
+# bot says what it runs before the call; COMFY_MECHANICS tells it so).
+LAUNCH_TOOLS = ("run_workflow", "calibrate_lora")
+QUIET_TOOLS = (*LAUNCH_TOOLS, "keep_going", "save_workflow", "cancel_run")
 LOCK_WAIT_SECONDS = 600
 # A follower with nothing new for this long gets None (the route sends a blank line), so a
 # connection waiting on a slow model isn't taken for a dead one.
@@ -300,7 +307,8 @@ def _turn(conversation_id: str, automatic: bool):
     # What changes every turn goes at the end of the latest message, after the cached part.
     turn_context = chat.turn_context(notes, models_section, needs_title=not conversation["title"],
                                      autonomy=chat.autonomy_text(working, automatic, _budget_spent(working))
-                                     if working else None)
+                                     if working else None,
+                                     comments_off=bool(toolbox) and not conversations.comments_on_results(conversation))
     load_image = _image_loader(conversation_id)
     model, temperature = conversation["llm_model"], conversation["temperature"]
     api_key = get_settings().openrouter_api_key
@@ -364,6 +372,8 @@ def _turn(conversation_id: str, automatic: bool):
             step["results"].append(json.dumps(result, ensure_ascii=False))
             step["parts"].append(part)
             yield {"type": "tool", "part": part}
+        if _launched(step):
+            break  # the run is under way: nothing left to say until its images arrive
 
     used_tools = any(s["tool_calls"] for s in steps)
     if failure and not used_tools:
@@ -388,6 +398,16 @@ def _turn(conversation_id: str, automatic: bool):
     if _settle_autonomy(conversation_id):
         updated = conversations.get(conversation_id) or updated
     yield {"type": "done", "message": updated["messages"][-1], "conversation": conversations.summary(updated)}
+
+
+def _launched(step: dict) -> bool:
+    """The step launched a run, every call in it went through (a failed one, or a family
+    switch, comes back as an error for the bot to fix), and none of them returned anything
+    the bot has to read."""
+    names = [call["name"] for call in step["tool_calls"]]
+    return (any(name in LAUNCH_TOOLS for name in names)
+            and all(name in QUIET_TOOLS for name in names)
+            and not any("error" in json.loads(result) for result in step["results"]))
 
 
 def _budget_spent(working: dict) -> bool:
@@ -539,11 +559,13 @@ def _character_params(characters: list[dict]) -> dict:
 def on_run_finished(conversation_id: str, run: dict) -> None:
     """A run is final: put its images in the chat, then let the bot comment on them --
     in one hold of the lock, and flagged as commenting before the images appear, so the
-    chat never sees results with no comment coming (and stop checking back)."""
+    chat never sees results with no comment coming (and stop checking back). With the
+    conversation's automatic comments off, the images wait for the user's next message."""
     # A retried download: its images go into the results message already in the chat.
     if conversations.set_results_images(conversation_id, run["n"], run["images"]):
         return
-    will_comment = run["status"] != "cancelled" and not runs.tracker.pending_in(conversation_id)
+    will_comment = (run["status"] != "cancelled" and not runs.tracker.pending_in(conversation_id)
+                    and conversations.comments_on_results(conversations.get(conversation_id) or {}))
     live = LiveTurn(conversation_id, automatic=True) if will_comment else None
     if will_comment:
         _automatic.add(conversation_id)

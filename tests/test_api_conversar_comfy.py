@@ -53,41 +53,67 @@ def _call(name, call_id="call-1", **arguments):
 RUN_CALL = _call("run_workflow", workflow="krea-2/txt2img", changes={"positive": "a witch at dawn"}, count=2)
 
 
-def test_a_turn_runs_a_workflow_and_keeps_its_steps(api_client, auth_headers, tmp_path, fake_comfy):
+def test_a_launch_that_goes_through_ends_the_turn(api_client, auth_headers, tmp_path, fake_comfy):
     workflows.ensure_seeded()
     conversation = _conversation(api_client, auth_headers, _family(tmp_path))
-    script = Script(("Voy con ello.", [RUN_CALL]),
-                    ("<title>Bruja</title>Lanzada:\n<prompt>\nPOSITIVE: a witch at dawn\n</prompt>", []))
+    script = Script(("<title>Bruja</title>Voy con ello:\n<prompt>\nPOSITIVE: a witch at dawn\n</prompt>", [RUN_CALL]))
 
     with patch("app.conversation_turn.stream_chat", script):
         events = _events(_send(api_client, auth_headers, conversation["id"]))
 
-    assert [e["type"] for e in events] == ["delta", "tool", "delta", "done"]
+    assert [e["type"] for e in events] == ["delta", "tool", "done"]
     assert events[1]["part"] == {"type": "run", "run": 1, "workflow": "krea-2/txt2img", "count": 2}
-    first, second = script.calls
+    # No request after the launch: it would only be for the bot to say it launched.
+    [first] = script.calls
     assert first["tools"] is conversation_turn.chat_tools.TOOLS and first["tool_choice"] is None
     assert "## Workflow Library\n- krea-2/txt2img (2:3 portrait, 1 MP by default):" in first["messages"][0]["content"]
-    assert second["context"]["step"] == 2
-    # The second request carries the call and its result.
-    assert second["messages"][-2]["tool_calls"][0]["function"]["name"] == "run_workflow"
-    assert json.loads(second["messages"][-1]["content"])["run"] == 1
+    assert "A launch that goes through ends your reply" in first["messages"][0]["content"]
 
     message = events[-1]["message"]
-    assert [p["type"] for p in message["parts"]] == ["text", "run", "text", "prompt"]
-    assert message["cost"] == 0.02
-    assert message["request_ids"] == [f"{REQUEST_ID[:-1]}1", f"{REQUEST_ID[:-1]}2"]
-    assert message["steps"][0]["tool_calls"] == [RUN_CALL]
+    assert [p["type"] for p in message["parts"]] == ["text", "prompt", "run"]
+    assert message["cost"] == 0.01 and message["request_id"] == f"{REQUEST_ID[:-1]}1"
+    [step] = message["steps"]
+    assert step["tool_calls"] == [RUN_CALL] and json.loads(step["results"][0])["run"] == 1
     assert events[-1]["conversation"]["title"] == "Bruja"
     assert len(fake_comfy.submitted) == 2
 
     stored = api_client.get(f"/api/conversations/{conversation['id']}", auth=auth_headers).json()
     assert stored["runs"][0]["status"] == "pending"
 
+    # Next turn replays the reply as it was: the call and its result, then the user's message.
+    with patch("app.conversation_turn.stream_chat", Script(("Vale.", []))) as next_turn:
+        _send(api_client, auth_headers, conversation["id"], "otra")
+    replayed = next_turn.calls[0]["messages"]
+    assert replayed[-3]["tool_calls"][0]["function"]["name"] == "run_workflow"
+    assert replayed[-2]["role"] == "tool" and json.loads(replayed[-2]["content"])["run"] == 1
+    assert replayed[-1]["role"] == "user"
+
+
+def test_the_turn_goes_on_after_a_failed_launch_or_a_lookup(api_client, auth_headers, tmp_path, fake_comfy):
+    workflows.ensure_seeded()
+    family = _family(tmp_path)
+    wrong = _call("run_workflow", "call-0", workflow="nope", changes={"positive": "a witch"})
+    inspect = _call("inspect_workflow", "call-2", workflow="krea-2/txt2img")
+
+    # A failed launch: the bot gets the error and fixes the call; that launch ends the turn.
+    failing = Script(("", [wrong]), ("Me equivoqué de nombre.", [RUN_CALL]))
+    with patch("app.conversation_turn.stream_chat", failing):
+        _send(api_client, auth_headers, _conversation(api_client, auth_headers, family)["id"])
+    assert len(failing.calls) == 2
+    assert "There is no workflow" in json.loads(failing.calls[1]["messages"][-1]["content"])["error"]
+
+    # A launch alongside a call whose result the bot reads: it gets to read it.
+    looking = Script(("", [inspect, RUN_CALL]), ("Visto el workflow.", []))
+    with patch("app.conversation_turn.stream_chat", looking):
+        events = _events(_send(api_client, auth_headers, _conversation(api_client, auth_headers, family)["id"]))
+    assert len(looking.calls) == 2
+    assert events[-1]["message"]["content"] == "Visto el workflow."
+
 
 def test_finished_runs_bring_their_images_and_an_automatic_comment(api_client, auth_headers, tmp_path, fake_comfy):
     workflows.ensure_seeded()
     conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
-    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]), ("Lanzada.", []))):
+    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]))):
         _send(api_client, auth_headers, conversation_id)
 
     comment = Script(("La 2 tiene mejor luz.", []))
@@ -124,10 +150,63 @@ def test_finished_runs_bring_their_images_and_an_automatic_comment(api_client, a
     assert "attachment" in download.headers["content-disposition"]
 
 
+def test_with_automatic_comments_off_the_images_wait_for_the_users_message(api_client, auth_headers, tmp_path,
+                                                                           fake_comfy):
+    workflows.ensure_seeded()
+    created = api_client.post("/api/conversations", auth=auth_headers, json={
+        "family_id": _family(tmp_path)["id"], "llm_model": "vendor/model", "auto_comment": False}).json()
+    conversation_id = created["id"]
+    assert created["auto_comment"] is False
+    with patch("app.conversation_turn.stream_chat", Script(("Lanzo dos.", [RUN_CALL]))) as launch:
+        _send(api_client, auth_headers, conversation_id)
+    # The bot knows the images won't come back on their own.
+    assert conversation_turn.chat.COMMENTS_OFF_RULE in message_text(launch.calls[0]["messages"][-1])
+
+    silent = Script()
+    with patch("app.conversation_turn.stream_chat", silent):
+        fake_comfy.finish("prompt-1", "a.png")
+        fake_comfy.finish("prompt-2", "b.png")
+        runs.tracker.poll_once()
+        runs.wait_until_idle()
+    assert silent.calls == []
+    assert [m["role"] for m in conversations.get(conversation_id)["messages"]] == ["user", "assistant", "results"]
+    listed = api_client.get(f"/api/conversations/{conversation_id}", auth=auth_headers).json()
+    assert not listed["commenting"] and not listed["replying"]
+
+    # The user's next message brings them along: the bot sees them as part of it, not on its own.
+    reply = Script(('<review image="1" verdict="ok">clean</review>Me quedo con #1.', []))
+    with patch("app.conversation_turn.stream_chat", reply):
+        _send(api_client, auth_headers, conversation_id, "¿Qué tal han salido?")
+    latest = reply.calls[0]["messages"][-1]
+    assert message_text(latest).startswith("[Run 1 (krea-2/txt2img")
+    assert conversation_turn.chat.AUTOMATIC_NOTE not in message_text(latest)
+    assert "¿Qué tal han salido?" in message_text(latest)
+    assert sum(1 for p in latest["content"] if p["type"] == "image_url") == 2
+    assert conversations.get(conversation_id)["messages"][2]["images"][0]["review"]["verdict"] == "ok"
+
+    # Turned back on, the next run's images get their comment again.
+    assert api_client.patch(f"/api/conversations/{conversation_id}", auth=auth_headers,
+                            json={"auto_comment": True}).json()["auto_comment"] is True
+    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]))):
+        _send(api_client, auth_headers, conversation_id, "otra")
+    comment = Script(("Mejor que antes.", []))
+    with patch("app.conversation_turn.stream_chat", comment):
+        fake_comfy.finish("prompt-3", "c.png")
+        fake_comfy.finish("prompt-4", "d.png")
+        runs.tracker.poll_once()
+        runs.wait_until_idle()
+    assert conversations.get(conversation_id)["messages"][-1]["content"] == "Mejor que antes."
+
+
+def test_a_conversation_from_before_the_setting_comments():
+    assert conversations.comments_on_results({"messages": []})
+    assert not conversations.comments_on_results({"auto_comment": False})
+
+
 def _launch_two(api_client, auth_headers, tmp_path):
     workflows.ensure_seeded()
     conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
-    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]), ("Va.", []))):
+    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]))):
         _send(api_client, auth_headers, conversation_id)
     return conversation_id
 
@@ -197,7 +276,7 @@ def test_a_failed_run_is_reported_and_commented(api_client, auth_headers, tmp_pa
     workflows.ensure_seeded()
     conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
     call = _call("run_workflow", workflow="krea-2/txt2img")
-    with patch("app.conversation_turn.stream_chat", Script(("", [call]), ("Va.", []))):
+    with patch("app.conversation_turn.stream_chat", Script(("", [call]))):
         _send(api_client, auth_headers, conversation_id)
 
     comment = Script(("Se quedó sin memoria; bajo la resolución.", []))
@@ -215,7 +294,7 @@ def test_a_failed_run_is_reported_and_commented(api_client, auth_headers, tmp_pa
 def test_cancelled_runs_get_no_comment(api_client, auth_headers, tmp_path, fake_comfy):
     workflows.ensure_seeded()
     conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
-    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]), ("Va.", []))):
+    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]))):
         _send(api_client, auth_headers, conversation_id)
 
     with patch("app.conversation_turn.stream_chat", Script()) as idle:
@@ -359,7 +438,7 @@ def test_anthropic_models_get_cache_breakpoints():
 def test_deleting_a_conversation_cancels_its_pending_runs(api_client, auth_headers, tmp_path, fake_comfy):
     workflows.ensure_seeded()
     conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
-    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]), ("Va.", []))):
+    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]))):
         _send(api_client, auth_headers, conversation_id)
 
     assert api_client.delete(f"/api/conversations/{conversation_id}", auth=auth_headers).status_code == 200
@@ -373,7 +452,7 @@ def test_the_comment_follows_the_results_within_one_hold_of_the_lock(api_client,
     """While the bot comments, the conversation says so: the chat keeps checking back."""
     workflows.ensure_seeded()
     conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
-    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]), ("Va.", []))):
+    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]))):
         _send(api_client, auth_headers, conversation_id)
     seen = []
 
@@ -396,7 +475,7 @@ def test_the_comment_follows_the_results_within_one_hold_of_the_lock(api_client,
 def test_a_first_run_names_its_folder_after_the_title_being_written(api_client, auth_headers, tmp_path, fake_comfy):
     workflows.ensure_seeded()
     conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
-    script = Script(("<title>Bruja al alba</title>Voy.", [RUN_CALL]), ("Lanzada.", []))
+    script = Script(("<title>Bruja al alba</title>Voy.", [RUN_CALL]))
 
     with patch("app.conversation_turn.stream_chat", script):
         _send(api_client, auth_headers, conversation_id)

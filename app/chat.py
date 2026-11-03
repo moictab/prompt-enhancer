@@ -55,7 +55,8 @@ NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
   Only lasting things -- tastes, what works or fails with a model -- never details of the current image. Rewrite a note rather than add a near-duplicate."""
 
 COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workflow launches a workflow -- one from the library above, "image:N" for the one embedded in image N, or "run:N" for an earlier run's -- with changes such as the prompt, seed, LoRAs, sampler settings, size or any node input. inspect_workflow shows a workflow's nodes and settings; list_comfy_models lists the installed models and LoRAs (use their exact file names); save_workflow keeps a modified workflow in the library, only when the user wants it kept.
-- When the user wants to see a prompt rendered or asks for images, run it straight away, without asking first. Show the prompt you run in a <prompt> block in the same reply, unless it already is one of your blocks. Inspect a workflow before structural edits (adding, removing or rewiring nodes).
+- When the user wants to see a prompt rendered or asks for images, run it straight away, without asking first. Show the prompt you run in a <prompt> block in the same reply, before the call, unless it already is one of your blocks. Inspect a workflow before structural edits (adding, removing or rewiring nodes).
+- A launch that goes through ends your reply: say what you have to say -- what you run and why -- before calling run_workflow or calibrate_lora, since you won't get to add anything after it. If the launch fails, you get the error back and can fix the call.
 - Choose the image's proportions yourself, for what it shows, without waiting to be told: 2:3 or 3:4 for a portrait or a figure, 9:16 for a full-length figure or anything tall, 1:1 for a face, an object or an icon, 3:2 or 4:3 for a scene, a room or two people side by side, 16:9 for a landscape or a wide scene, 21:9 for a panorama. Set them with the aspect change, which keeps the workflow's pixel count (what its model is made for); change megapixels or give an exact width and height only when the user asks. A workflow's proportions in the library are its default, not a choice made for this image. Decide them at an image's first run and keep them while you refine it (run:N keeps them; a library workflow starts again from its default, so pass aspect again): change them only when the composition changes or the user asks, and say so when you do. The images of one set or story share them, unless a shot calls for others.
 - Each model belongs to the family its folder is named after (krea-2\\… is Krea 2; the library shows each workflow's family in brackets). A prompt follows the rules of the family of the model it runs on: running a model of another family switches the conversation to that family, and the app hands you its rules to rewrite the prompt by before it runs.
 - The family rules above are the current family's. To write for another family -- the user asks for one, or you'll work with a model of another family -- call use_family first: its rules come back and the conversation keeps that family. If the user asks you to stay with a family, don't run models of other families unless they ask.
@@ -77,6 +78,12 @@ FAMILY_RULES_INTRO = (
 TITLE_RULE = (
     "- This conversation has no title yet: start your reply with "
     "<title>a 2-6 word title for this conversation, in the user's language</title>."
+)
+
+COMMENTS_OFF_RULE = (
+    "- The user turned off your automatic comments on runs: a run's images reach you with the "
+    "user's next message, not on their own -- unless you're working on your own (keep_going). "
+    "Otherwise, don't say you'll comment on them when they arrive."
 )
 
 CHARACTERS_INSTRUCTION = (
@@ -173,13 +180,16 @@ def autonomy_text(working: dict, automatic: bool, spent: bool) -> str:
 
 
 def turn_context(notes: list[dict], models: str | None = None, needs_title: bool = False,
-                 autonomy: str | None = None) -> str | None:
+                 autonomy: str | None = None, comments_off: bool = False) -> str | None:
     """What changes from turn to turn, sent at the end of the latest message: the title
-    request while the conversation has none, the bot's goal and budget while it works on
-    its own (autonomy_text), the notes (numbered, so the bot can rewrite or forget one) and
-    the installed models, as catalog.prompt_section() writes them (with how the images made
-    with each went)."""
+    request while the conversation has none, that a run's images won't come back on their
+    own (comments_off: the conversation's automatic comments are off), the bot's goal and
+    budget while it works on its own (autonomy_text), the notes (numbered, so the bot can
+    rewrite or forget one) and the installed models, as catalog.prompt_section() writes
+    them (with how the images made with each went)."""
     sections = [TITLE_RULE] if needs_title else []
+    if comments_off:
+        sections.append(COMMENTS_OFF_RULE)
     if autonomy:
         sections.append(autonomy)
     if notes:

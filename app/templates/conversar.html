@@ -41,6 +41,12 @@
         <span class="label" id="chat-characters-label">Personajes</span>
         <div class="chips" id="chat-chips" role="group" aria-labelledby="chat-characters-label"></div>
       </div>
+      {% if comfy_configured %}
+      <div class="chat-auto-comment">
+        <label class="checkbox"><input type="checkbox" id="chat-auto-comment" checked aria-describedby="chat-auto-comment-hint"> Comentar las imágenes cuando lleguen</label>
+        <p class="chat-auto-comment-hint" id="chat-auto-comment-hint">Si lo quitas, el bot las verá con tu siguiente mensaje: una petición menos por cada ejecución. Mientras trabaja por su cuenta las comenta siempre.</p>
+      </div>
+      {% endif %}
       <p class="chat-comfy" id="chat-comfy" hidden></p>
     </div>
 

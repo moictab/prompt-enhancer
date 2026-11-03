@@ -80,7 +80,7 @@ def test_stats_count_images_and_reactions_per_file(api_client, auth_headers, tmp
         "workflow": "krea-2/txt2img", "count": 2,
         # A sloppy name still lands on the installed file.
         "changes": {"loras": [{"name": "krea-2/STYLE-ink_v1", "strength": 0.4}]}})}
-    replies = [("", [call]), ("Va.", []), ("Comentario.", [])]
+    replies = [("", [call]), ("Comentario.", [])]  # the launch ends the turn; then the comment
 
     def fake(api_key, model, messages, temperature, context=None, tools=None, tool_choice=None):
         text, calls = replies.pop(0)

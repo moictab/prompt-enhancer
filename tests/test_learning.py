@@ -108,8 +108,7 @@ def test_calibrate_lora_runs_one_image_per_weight_same_seed_at_idle_priority(fak
 
 def _finish_run_with_reviews(api_client, auth_headers, fake_comfy, conversation_id, reviews_text):
     with patch("app.conversation_turn.stream_chat", Script(("", [{"id": "c1", "name": "run_workflow", "arguments": json.dumps(
-            {"workflow": "krea-2/txt2img", "count": 2, "changes": {"loras": [{"name": INK, "strength": 0.8}]}})}]),
-            ("Va.", []))):
+            {"workflow": "krea-2/txt2img", "count": 2, "changes": {"loras": [{"name": INK, "strength": 0.8}]}})}]))):
         api_client.post(f"/api/conversations/{conversation_id}/messages", auth=auth_headers, data={"content": "dos"})
     run_n = len(conversations.get(conversation_id)["runs"])
     with patch("app.conversation_turn.stream_chat", Script((reviews_text, []))):

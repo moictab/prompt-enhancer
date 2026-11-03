@@ -52,7 +52,11 @@ def create(
     temperature: float,
     character_ids: list[str],
     root: str | None = None,
+    auto_comment: bool = True,
 ) -> dict:
+    """auto_comment: when a run finishes, the bot looks at its images on its own; off, they
+    wait for the user's next message (one request fewer per run). Older conversations,
+    without the field, comment (comments_on_results)."""
     now = _now()
     conversation = {
         "id": str(uuid.uuid4()),
@@ -63,11 +67,18 @@ def create(
         "llm_model": llm_model,
         "temperature": temperature,
         "character_ids": character_ids,
+        "auto_comment": auto_comment,
         "cost": None,
         "messages": [],
     }
     storage.write_json(_path(conversation["id"], root), conversation)
     return conversation
+
+
+def comments_on_results(conversation: dict) -> bool:
+    """Whether the bot comments on a run's images when they arrive: the user's setting, or
+    always while it works on its own (it has to look at them to go on)."""
+    return conversation.get("auto_comment", True) or autonomy(conversation) is not None
 
 
 def get(conversation_id: str, root: str | None = None) -> dict | None:
@@ -123,7 +134,7 @@ def list_summaries(root: str | None = None) -> list[dict]:
 def update_settings(conversation_id: str, changes: dict, root: str | None = None) -> dict | None:
     """Change settings, or the title (the user's: the bot only titles an untitled
     conversation). Neither counts as activity: updated_at, the list's order, stays."""
-    allowed = {"family_id", "llm_model", "temperature", "character_ids", "title"}
+    allowed = {"family_id", "llm_model", "temperature", "character_ids", "title", "auto_comment"}
     with _lock:
         conversation = get(conversation_id, root)
         if conversation is None:
