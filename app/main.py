@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
-from . import comfy, runs
+from . import comfy, mcp_server, runs
 from .auth import require_auth
 from .config import get_settings
 from .logging_config import configure_logging
@@ -38,7 +38,8 @@ async def lifespan(app: FastAPI):
     # still pending from before a restart.
     if comfy.client() is not None:
         runs.tracker.start()
-    yield
+    async with mcp_server.running():
+        yield
     runs.tracker.stop()
 
 
@@ -67,3 +68,5 @@ app.include_router(request_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(page_routes.router)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+# MCP for agents (/mcp): its own Basic Auth check, since the app's dependency covers only its API routes.
+mcp_server.attach(app)

@@ -17,6 +17,7 @@ A small, self-hosted web app that uses an LLM (via OpenRouter) to craft image-ge
 - **Personajes** — reusable character descriptions, selected as chips and inlined verbatim into the prompt. Create, edit and delete them from the workspace, or extract one from any generated prompt or reference image.
 - **Historial** — every generation, searchable and filterable by mode, family and favorites, with per-entry cost (prompts proposed in Conversar included, with a link back to their conversation); take any prompt into a new conversation or use it as a Variaciones reference, reload a past set of references, star an entry or delete it.
 - **Peticiones** (from Ajustes) — every request sent to OpenRouter exactly as it went out, with what came back: messages, images, parameters, tokens, cost, timing and errors. Each Conversar reply and history entry links to its own.
+- **MCP for agents** — everything above, for AI agents that work without the web page: the app is an MCP server at `/mcp` (see [Connecting an agent](#connecting-an-agent)). An agent can write prompts in every mode, hold conversations with the bot, launch runs, wait for the images, look at them and react, and manage families, characters, notes, system prompts, workflows and models.
 - **Ajustes** — edit the per-mode system prompts (with a one-click reload of the original text) including the Conversar bot's personality, the bot's memory, the model families (their rules and whether they use negative prompts), the characters, the ComfyUI workflow library (import from an API-format JSON or from an image ComfyUI generated) and the installed models and LoRAs, with a description of what each one does.
 
 ## Privacy
@@ -38,6 +39,22 @@ A small, self-hosted web app that uses an LLM (via OpenRouter) to craft image-ge
 **On Windows, without Docker** (how it runs next to ComfyUI, using the least memory): double-click `Start.bat`. The first time it prepares a Python environment in `.venv` (and again whenever `requirements.txt` changes); then it starts the server in a minimized window and opens `http://127.0.0.1:8090/conversar`. `Stop.bat` stops it (so does closing that window). It also listens on the local network, so a phone on the same Wi-Fi reaches it at `http://<the PC's IP>:8090/conversar` (with the same login; plain HTTP, so only on a network you trust). It keeps its data in `data/` next to it.
 
 On first run, the app seeds `data/families.json` with SDXL and Z-Image-Turbo. Add more families (Krea 2, Pony, Flux, ...) from Ajustes. System prompts are seeded per mode, so upgrading adds the prompts for new modes without touching the ones you have edited.
+
+## Connecting an agent
+
+The app speaks MCP (Model Context Protocol) over streamable HTTP at `http://<host>:<port>/mcp` (on the Windows setup, `http://<the PC's IP>:8090/mcp`, or `http://127.0.0.1:8090/mcp` on the PC itself), behind the same login as the web page: the agent sends an `Authorization: Basic …` header with your `ADMIN_USERNAME:ADMIN_PASSWORD` in base64. To get that value in PowerShell:
+
+```
+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("user:password"))
+```
+
+With Claude Code, for example:
+
+```
+claude mcp add --transport http prompt-enhancer http://127.0.0.1:8090/mcp --header "Authorization: Basic <that value>"
+```
+
+Any MCP client that does streamable HTTP and lets you set a header works the same way. The tools that call an LLM spend your OpenRouter credit, and runs use your GPU, just as from the web page.
 
 ## Development
 
