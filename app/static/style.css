@@ -1055,6 +1055,44 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .chat-comfy { grid-column: 1 / -1; color: var(--paper-dim); font-size: var(--step--1); }
 .chat-comfy.is-off { color: var(--stop-text); }
 .reaction-hint { color: var(--safelight); font-size: var(--step--1); }
+
+/* "#4" in a message: the image, small, and its number; it opens the viewer. */
+.image-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0 0.1rem;
+  padding: 0.05rem 0.4rem 0.05rem 0.15rem;
+  vertical-align: baseline;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--safelight);
+  font: inherit;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  cursor: pointer;
+}
+.image-ref:hover { border-color: var(--safelight); }
+.image-ref img { width: 1.15em; height: 1.15em; object-fit: cover; border-radius: 2px; }
+
+/* Typing "#": the conversation's images to pick from, newest first. */
+.image-picker { display: flex; gap: 0.4rem; margin: 0; padding: 0.15rem 0 0.25rem; overflow-x: auto; list-style: none; scrollbar-width: thin; }
+.image-pick { position: relative; display: block; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); background: none; cursor: pointer; }
+.image-pick:hover, .image-pick:focus-visible { border-color: var(--safelight); }
+.image-pick img { display: block; width: 3.5rem; height: 3.5rem; object-fit: cover; border-radius: var(--radius); }
+.image-pick span {
+  position: absolute;
+  top: 0.15rem;
+  left: 0.15rem;
+  padding: 0 0.25rem;
+  background: rgba(22, 19, 17, 0.82);
+  border-radius: var(--radius-sm);
+  color: var(--safelight);
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
 .memory-chip-done { color: var(--paper-faint); font-size: 0.75rem; }
 
 .msg-bot { display: flex; flex-direction: column; gap: 0.75rem; max-width: 46rem; }

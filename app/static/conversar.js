@@ -58,6 +58,7 @@ const ui = {
   send: $("chat-send"),
   comfyStatus: $("chat-comfy"),
   reactionHint: $("reaction-hint"),
+  picker: $("image-picker"),
 };
 
 const state = {
@@ -143,12 +144,38 @@ function setBusyState(busy) {
 // `code`) built as DOM nodes: the bot is told to write plain text, but models
 // slip into Markdown anyway.
 function inline(text) {
-  return text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`|\*[^*\s][^*\n]*\*)/).map((piece) => {
-    if (/^\*\*[^*]+\*\*$/.test(piece)) return el("strong", { text: piece.slice(2, -2) });
-    if (/^`[^`]+`$/.test(piece)) return el("code", { text: piece.slice(1, -1) });
-    if (/^\*[^*\s][^*]*\*$/.test(piece)) return el("em", { text: piece.slice(1, -1) });
-    return piece;
+  return text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`|\*[^*\s][^*\n]*\*)/).flatMap((piece) => {
+    if (/^\*\*[^*]+\*\*$/.test(piece)) return [el("strong", {}, withImageRefs(piece.slice(2, -2)))];
+    if (/^`[^`]+`$/.test(piece)) return [el("code", { text: piece.slice(1, -1) })];
+    if (/^\*[^*\s][^*]*\*$/.test(piece)) return [el("em", {}, withImageRefs(piece.slice(1, -1)))];
+    return withImageRefs(piece);
   });
+}
+
+// "#4" is image 4 of the conversation (as in app/chat.py's IMAGE_REF): a link that opens it.
+const IMAGE_REF = /(?<![\w&#])#(\d{1,4})\b/g;
+
+function withImageRefs(text) {
+  const images = (state.conversation?.messages || []).flatMap((m) => m.images || []);
+  if (!images.length || !text.includes("#")) return [text];
+  const nodes = [];
+  let position = 0;
+  for (const match of text.matchAll(IMAGE_REF)) {
+    const image = images[Number(match[1]) - 1];
+    if (!image) continue;
+    if (match.index > position) nodes.push(text.slice(position, match.index));
+    nodes.push(
+      el(
+        "button",
+        { type: "button", class: "image-ref", title: `Ver la imagen ${match[1]}`, onclick: () => openViewer(image.id) },
+        el("img", { src: imageUrl(image, { small: true }), alt: "" }),
+        `#${match[1]}`
+      )
+    );
+    position = match.index + match[0].length;
+  }
+  if (position < text.length) nodes.push(text.slice(position));
+  return nodes;
 }
 
 function withBreaks(lines) {
@@ -524,7 +551,7 @@ function reactionsSummary(reactions, numbers) {
         "li",
         {},
         r.rating && thumbIcon(r.rating === "down"),
-        el("span", { text: `Imagen ${numbers.get(r.image_id)}` }),
+        ...withImageRefs(`#${numbers.get(r.image_id)}`),
         r.comment && el("span", { class: "msg-reactions-comment", text: `«${r.comment}»` })
       )
     )
@@ -787,7 +814,7 @@ function userMessage(message, previews = null) {
     shots.length > 0 && el("div", { class: "msg-images" }, shots),
     ...(previews ? [] : images.map((image) => metadataPanel(image, numbers.get(image.id)))),
     reactionsSummary(message.reactions, numbers),
-    message.content && el("p", { class: "msg-text", text: message.content })
+    message.content && el("p", { class: "msg-text" }, withImageRefs(message.content))
   );
 }
 
@@ -1387,6 +1414,7 @@ async function submitMessage(event) {
     renderHead();
   }
 
+  hidePicker();
   const userNode = userMessage({ content, reactions }, attachments.map((a) => a.url));
   ui.reactionHint.hidden = true;
   ui.log.querySelector(".msg-failed")?.remove();
@@ -1491,7 +1519,83 @@ function setupAttachments() {
 
 // ---------- setup ----------
 
+// ---------- mentioning images with # ----------
+
+// The "#" (and digits) right before the caret, if the user is typing an image reference.
+function refQuery() {
+  const caret = ui.input.selectionStart;
+  if (caret !== ui.input.selectionEnd) return null;
+  const match = ui.input.value.slice(0, caret).match(/(^|[^\w&#])#(\d*)$/);
+  return match ? { start: caret - match[2].length - 1, digits: match[2] } : null;
+}
+
+function hidePicker() {
+  ui.picker.hidden = true;
+  ui.picker.replaceChildren();
+}
+
+function renderPicker() {
+  const query = refQuery();
+  const images = (state.conversation?.messages || []).flatMap((m) => m.images || []);
+  const matches = query
+    ? images
+        .map((image, index) => ({ image, number: index + 1 }))
+        .filter(({ number }) => String(number).startsWith(query.digits))
+        .reverse()
+        .slice(0, 12)
+    : [];
+  if (!matches.length) {
+    hidePicker();
+    return;
+  }
+  ui.picker.replaceChildren(
+    ...matches.map(({ image, number }) =>
+      el(
+        "li",
+        {},
+        el(
+          "button",
+          {
+            type: "button",
+            class: "image-pick",
+            title: `Mencionar la imagen ${number}`,
+            onmousedown: (event) => event.preventDefault(), // keep the caret in the message
+            onclick: () => insertRef(query, number),
+          },
+          el("img", { src: imageUrl(image, { small: true }), alt: `Imagen ${number}` }),
+          el("span", { text: `#${number}` })
+        )
+      )
+    )
+  );
+  ui.picker.hidden = false;
+}
+
+function insertRef(query, number) {
+  const value = ui.input.value;
+  const caret = ui.input.selectionStart;
+  const inserted = `#${number} `;
+  ui.input.value = value.slice(0, query.start) + inserted + value.slice(caret);
+  const position = query.start + inserted.length;
+  ui.input.setSelectionRange(position, position);
+  hidePicker();
+  resizeInput();
+  ui.input.focus();
+}
+
 function setupComposer() {
+  ui.input.addEventListener("input", renderPicker);
+  ui.input.addEventListener("click", renderPicker);
+  ui.input.addEventListener("keyup", (event) => {
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") renderPicker();
+  });
+  ui.input.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !ui.picker.hidden) {
+      event.stopPropagation();
+      hidePicker();
+    }
+  });
+  ui.input.addEventListener("blur", () => setTimeout(hidePicker, 150));
   ui.composer.addEventListener("submit", submitMessage);
   ui.input.addEventListener("input", resizeInput);
   ui.input.addEventListener("keydown", (event) => {

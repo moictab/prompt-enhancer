@@ -22,6 +22,10 @@ MAX_CONTEXT_IMAGES = 4
 # Images that arrived since the bot last spoke are all attached (up to this), so it can
 # review every image of the runs it is looking at.
 MAX_NEW_IMAGES = 8
+# Images the user's latest message mentions as #N are attached to it again (up to this many).
+MAX_REFERENCED_IMAGES = 4
+# "#4": an image's number. Not "#ff0000", "#1a" or a "&#39;" entity.
+IMAGE_REF = re.compile(r"(?<![\w&#])#(\d{1,4})\b")
 MAX_TITLE_LENGTH = 80
 MAX_NOTE_LENGTH = 300
 
@@ -38,7 +42,7 @@ NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 - The app shows each block as a card the user can copy, numbered across the whole conversation. Your earlier blocks appear as <prompt id="n">, so the user may refer to them by number; never write an id yourself.
 - Write your commentary outside the blocks, never inside them. You may propose several alternatives in one reply, one block each, when they are genuinely different.
 - Every proposed prompt must be complete and self-contained, ready to paste into the image model.
-- Images in the conversation are numbered (Image 1, Image 2...), whether the user shared them or a run made them, so either of you can refer to one by number. An image may come with the metadata it was generated with (prompt, models, LoRAs, settings), shown to you as text next to it: use it. Look at what worked and what didn't, and adjust.
+- Images in the conversation are numbered (Image 1, Image 2...), whether the user shared them or a run made them, and either of you refers to one as #N (#4 is image 4; the chat turns it into a link to the image): write #N whenever you mention an image. An image the user mentions by #N is attached to their message again, even if it was shared long ago. An image may come with the metadata it was generated with (prompt, models, LoRAs, settings), shown to you as text next to it: use it. Look at what worked and what didn't, and adjust.
 - You can't open links. The one exception is done for you: a link to a Civitai image (civitai.com, .green or .red, /images/<number>) arrives as the image itself, already in the message. A link that didn't arrive that way (a Civitai post or model page, another site) can't be opened: say so and ask for the image's own Civitai link or the image.
 - An image the user shares from Civitai comes with what Civitai says about it: prompt, settings and the resources it was made with (checkpoint, LoRAs with weights, base model, trigger words). To reproduce one, match those resources with what the user has installed and say what is missing and what you use instead; to borrow its style, take what defines it (its style words, LoRAs and weights) into the image you are working on, within the family's rules.
 - Write plain conversational text: short paragraphs, "- " lists when useful, **bold** sparingly. No headings, no tables, no code blocks.
@@ -161,6 +165,31 @@ def image_numbers(messages: list[dict]) -> dict[str, int]:
 def image_by_number(messages: list[dict], number: int) -> dict | None:
     images = [img for m in messages for img in (m.get("images") or [])]
     return images[number - 1] if 0 < number <= len(images) else None
+
+
+def image_refs(text: str) -> list[int]:
+    """The image numbers a text mentions as #N, in order, without repeats."""
+    return list(dict.fromkeys(int(n) for n in IMAGE_REF.findall(text or "")))
+
+
+def _referenced_images(message: dict, all_messages: list[dict], numbers: dict[str, int], recent: set[str],
+                       load_image, installed) -> list[dict]:
+    """The images a message mentions as #N that aren't attached anyway: attached to it again."""
+    own = {img["id"] for img in message.get("images") or []}
+    content = []
+    for number in image_refs(message.get("content", ""))[:MAX_REFERENCED_IMAGES]:
+        image = image_by_number(all_messages, number)
+        if image is None or image["id"] in recent or image["id"] in own:
+            continue
+        uri = load_image(image)
+        if not uri:
+            continue
+        metadata = image.get("metadata")
+        text = image_metadata.describe(metadata, number, installed) if metadata else ""
+        label = f"Image {number} (mentioned as #{number}, attached again):"
+        content += [{"type": "text", "text": f"{label}\n{text}" if text else label},
+                    {"type": "image_url", "image_url": {"url": uri}}]
+    return content
 
 
 def _recent_image_ids(messages: list[dict]) -> set[str]:
@@ -299,6 +328,7 @@ def build_llm_messages(
     recent = _recent_image_ids(all_messages)
     numbers = image_numbers(all_messages)
     runs = {r["n"]: r for r in conversation.get("runs") or []}
+    last_user = next((m for m in reversed(all_messages) if m["role"] == "user"), None)
     proposal = 0
 
     def number_block(match: re.Match) -> str:
@@ -331,6 +361,8 @@ def build_llm_messages(
             text = f"{text}\n\n{line}" if text else line
         images, attached = _images_content(message, numbers, recent, load_image, with_metadata=True,
                                            installed=installed)
+        if message is last_user:
+            images += _referenced_images(message, all_messages, numbers, recent, load_image, installed)
         parts = ([{"type": "text", "text": text}] if text else []) + images
         if not text and not attached and not images:
             parts = [{"type": "text", "text": "(empty message)"}]
