@@ -67,8 +67,8 @@ def fresh_cache():
 
 def test_image_ids_finds_civitai_image_links():
     text = "mira https://civitai.com/images/123?postId=4 y https://civitai.green/images/77, otra vez civitai.com/images/9 " \
-           "y de nuevo https://www.civitai.com/images/123"
-    assert civitai.image_ids(text) == [123, 77]
+           "y de nuevo https://www.civitai.com/images/123, https://civitai.red/images/55 y https://civitai.red/posts/8"
+    assert civitai.image_ids(text) == [123, 77, 55]
 
 
 def test_fetch_reads_the_image_its_generation_data_and_resources(monkeypatch):

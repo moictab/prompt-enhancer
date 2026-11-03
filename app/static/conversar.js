@@ -1298,7 +1298,7 @@ async function submitMessage(event) {
     return;
   }
   const hasRunImages = (state.conversation?.messages || []).some((m) => m.role === "results" && m.images?.length);
-  const hasCivitaiLink = /civitai\.(?:com|green)\/images\/\d+/i.test(content);
+  const hasCivitaiLink = /civitai\.(?:com|green|red)\/images\/\d+/i.test(content);
   if ((attachments.length || hasRunImages || hasCivitaiLink) && state.visionSupport.get(current.llm_model) === false) {
     setSettingsOpen(true);
     showError(`${shortModel(current.llm_model)} no acepta imágenes. Elige en los ajustes un modelo con visión.`);

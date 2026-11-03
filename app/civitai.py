@@ -1,7 +1,8 @@
 """Images shared from Civitai by URL: the image itself and what Civitai says about how it
 was made, so the Conversar bot can reproduce it or borrow its style.
 
-The user pastes a link like https://civitai.com/images/147084007 in a message; the app (never
+The user pastes a link like https://civitai.com/images/147084007 (or on civitai.green or
+civitai.red) in a message; the app (never
 the bot: it has no way to fetch anything) reads the image's record from Civitai's public API
 (`/images?imageId=…&withMeta=true`), downloads the image, and resolves the resources it was
 made with (`/model-versions/{id}` or `/model-versions/by-hash/{hash}`): checkpoint and LoRAs
@@ -26,7 +27,9 @@ from .config import get_settings
 logger = logging.getLogger("app.civitai")
 
 API = "https://civitai.com/api/v1"
-IMAGE_URL = re.compile(r"https?://(?:www\.)?civitai\.(?:com|green)/images/(\d+)", re.IGNORECASE)
+# civitai.com, and its sister sites civitai.green (safe for work) and civitai.red (adult content):
+# one site behind them, so an image id is the same on all three.
+IMAGE_URL = re.compile(r"https?://(?:www\.)?civitai\.(?:com|green|red)/images/(\d+)", re.IGNORECASE)
 TIMEOUT = (10, 60)
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_LOOKUPS = 10
