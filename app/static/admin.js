@@ -466,6 +466,18 @@ function setupCatalog() {
 
   const FOLDERS = { checkpoints: "Checkpoint", diffusion_models: "Modelo de difusión", loras: "LoRA" };
 
+  const number = (value) => Number(value).toLocaleString("es-ES");
+
+  function describePastUse(past) {
+    if (!past) return "";
+    let text = `usado en ${number(past.jobs)} ${past.jobs === 1 ? "trabajo" : "trabajos"}`;
+    if (past.weight) {
+      const { median, min, max } = past.weight;
+      text += ` con peso ${number(median)}${min !== max ? ` (de ${number(min)} a ${number(max)})` : ""}`;
+    }
+    return text;
+  }
+
   function describeResults(results) {
     if (!results) return "";
     const parts = [`${results.images} ${results.images === 1 ? "imagen" : "imágenes"}`];
@@ -479,6 +491,7 @@ function setupCatalog() {
       FOLDERS[entry.folder] || entry.folder,
       entry.base_model && `base ${entry.base_model}`,
       entry.triggers?.length && `palabras clave: ${entry.triggers.join(", ")}`,
+      describePastUse(entry.past_use),
       describeResults(entry.results_here),
     ].filter(Boolean);
     const text = el("input", {
@@ -527,8 +540,12 @@ function setupCatalog() {
       stateLine.textContent = "ComfyUI no está configurado en este servidor (COMFY_GATEWAY_URL).";
       refreshButton.disabled = true;
     } else {
+      const source = catalog.history_source;
+      const history = source
+        ? ` Uso pasado: ${number(source.jobs)} trabajos del gateway, del ${source.from} al ${source.to} (solo cifras).`
+        : "";
       stateLine.textContent = catalog.refreshed_at
-        ? `${catalog.items.length} archivos. Actualizado el ${new Date(catalog.refreshed_at).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}.`
+        ? `${catalog.items.length} archivos. Actualizado el ${new Date(catalog.refreshed_at).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}.${history}`
         : "Aún no se ha leído: actualízalo para que el bot sepa qué tienes.";
     }
     if (!items.length) {

@@ -195,7 +195,8 @@ def _catalog_view() -> dict:
          **catalog.details(file, data, file_stats)}
         for file, entry in sorted(data["entries"].items())
     ]
-    return {"refreshed_at": data["refreshed_at"], "configured": comfy.client() is not None, "items": items}
+    return {"refreshed_at": data["refreshed_at"], "configured": comfy.client() is not None, "items": items,
+            "history_source": data["history_source"]}
 
 
 @router.get("/catalog")

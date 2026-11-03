@@ -7,8 +7,10 @@ does, written in Ajustes. Refreshed from ComfyUI on demand and once a day in the
 background; descriptions survive a refresh (and a file that disappears for a while).
 
 On top of that, how each file has done here: how many images the bot's runs made with
-it and how many of those the user liked or disliked (reactions in Conversar). That,
-the descriptions and the names go into the bot's system prompt, compactly.
+it and how many of those the user liked or disliked (reactions in Conversar); and its
+past use outside this app, imported once from comfy-gateway's history as aggregates
+(gateway_history.py: jobs, weights, frequent companions -- never prompts or images).
+That, the descriptions and the names go into the bot's system prompt, compactly.
 """
 import json
 import logging
@@ -47,7 +49,8 @@ def _now() -> str:
 def load(path: str | None = None) -> dict:
     data = storage.read_json(path or _default_path(), default=None) or {}
     return {"refreshed_at": data.get("refreshed_at"), "entries": data.get("entries") or {},
-            "descriptions": data.get("descriptions") or {}}
+            "descriptions": data.get("descriptions") or {}, "history": data.get("history") or {},
+            "history_source": data.get("history_source")}
 
 
 def _save(data: dict, path: str | None = None) -> None:
@@ -149,6 +152,20 @@ def refresh_in_background(client, force: bool = False) -> bool:
     return True
 
 
+def set_history(usage: dict, path: str | None = None) -> dict:
+    """Replace the past use (gateway_history.aggregate's output): per file, nothing but numbers
+    and the names of other files."""
+    data = load(path)
+    data["history"] = {
+        name: {k: v for k, v in entry.items() if k in ("jobs", "weight", "used_with", "last_used")}
+        for name, entry in (usage.get("files") or {}).items() if isinstance(name, str) and isinstance(entry, dict)
+    }
+    data["history_source"] = {"jobs": usage.get("jobs"), "from": usage.get("from"), "to": usage.get("to"),
+                              "imported_at": _now()}
+    _save(data, path)
+    return data
+
+
 def set_description(file: str, text: str, path: str | None = None) -> dict:
     data = load(path)
     text = " ".join((text or "").split())
@@ -197,10 +214,23 @@ def details(file: str, data: dict | None = None, file_stats: dict | None = None)
     entry = {k: v for k, v in (data["entries"].get(file) or {}).items() if k not in ("checked", "folder", "family")}
     if data["descriptions"].get(file):
         entry["description"] = data["descriptions"][file]
+    if data["history"].get(file):
+        entry["past_use"] = data["history"][file]
     record = (file_stats if file_stats is not None else stats()).get(file)
     if record:
         entry["results_here"] = record
     return entry
+
+
+def _past_use_text(past: dict | None) -> str:
+    if not past:
+        return ""
+    text = f"used in {past['jobs']} past job{'s' if past['jobs'] != 1 else ''}"
+    weight = past.get("weight")
+    if weight:
+        low, high = weight["min"], weight["max"]
+        text += f" at ~{weight['median']:g}" + (f" ({low:g}-{high:g})" if low != high else "")
+    return text
 
 
 def _record_text(record: dict | None) -> str:
@@ -220,8 +250,9 @@ def prompt_section(data: dict | None = None) -> str | None:
     file_stats = stats()
     lines = [
         "What ComfyUI has installed (file names without .safetensors). After a name: the user's description "
-        "of what it does, and how images made with it here went (the user's reactions). list_comfy_models gives "
-        "details such as trigger words and base model.",
+        "of what it does, how much and at what weight the user has used it before, and how images made with it "
+        "here went (the user's reactions). list_comfy_models gives details such as trigger words, base model "
+        "and the LoRAs it is usually combined with.",
     ]
     for folder, label in FOLDERS.items():
         files = sorted(f for f, e in data["entries"].items() if e.get("folder") == folder)
@@ -229,7 +260,8 @@ def prompt_section(data: dict | None = None) -> str | None:
             continue
         groups: dict[str, list[str]] = {}
         for file in files:
-            extras = [x for x in (data["descriptions"].get(file), _record_text(file_stats.get(file))) if x]
+            extras = [x for x in (data["descriptions"].get(file), _past_use_text(data["history"].get(file)),
+                                  _record_text(file_stats.get(file))) if x]
             name = short_name(file)
             family = family_of(file)
             if family:
