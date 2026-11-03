@@ -68,6 +68,7 @@ class FakeComfy:
         self.model_files = {"loras": ["krea-2\\style-ink_v1.safetensors", "krea-2\\base-real_v3.safetensors",
                                       "illustrious\\detail_v2.safetensors"]}
         self.model_metadata: dict[str, dict] = {}
+        self.node_definitions: dict[str, dict] = {}  # /object_info entries, by class type
         self.reject: Exception | None = None
         self.unreachable = False
 
@@ -101,6 +102,9 @@ class FakeComfy:
 
     def metadata(self, folder, filename):
         return self.model_metadata.get(filename)
+
+    def node_info(self, class_type):
+        return self.node_definitions.get(class_type)
 
     def finish(self, prompt_id, filename=None, status="success", error=None):
         """Make a job done: its image (a real PNG) appears in /history and /view."""

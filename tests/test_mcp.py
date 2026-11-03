@@ -99,12 +99,13 @@ def test_an_agent_writes_a_prompt_for_a_family_named_loosely(mock_call, agent, t
 
 def test_an_agent_converses_launches_and_looks_at_the_images(agent, tmp_path, fake_comfy):
     workflows.ensure_seeded()
+    fake_comfy.model_files["diffusion_models"] = [MODEL]
     families.create_family("Krea", "rules", False, path=str(tmp_path / "families.json"))
     run_call = {"id": "c1", "name": "run_workflow",
                 "arguments": json.dumps({"workflow": "krea-2/txt2img", "changes": {"positive": "a witch at dawn"}})}
     script = Script(
-        ('<title>Bruja</title>Va:\n<prompt model="krea-2\\other.safetensors">\nPOSITIVE: a witch at dawn\n</prompt>',
-         [run_call]),
+        ('<title>Bruja</title>Va:\n<prompt model="krea-2\\krea-2-turbo-official-comfy-int8-convrot_v1.0">\n'
+         'POSITIVE: a witch at dawn\n</prompt>', [run_call]),
         ('<review image="1" verdict="ok">clean</review>Ha salido bien: #1.', []),  # its look at the results
         ("Me alegro de que te guste.", []),
     )
@@ -113,7 +114,7 @@ def test_an_agent_converses_launches_and_looks_at_the_images(agent, tmp_path, fa
         started = agent.call("start_conversation", message="Hazme una bruja", family="Krea")
         conversation_id = started["id"]
         [reply] = [m for m in started["messages"] if m["role"] == "assistant"]
-        # The prompt shows the model its run used, over the one the bot named.
+        # The prompt shows the model it ran on: the one the bot named (resolved to the installed file).
         assert reply["prompts"] == [{"number": 1, "positive": "a witch at dawn", "negative": "", "models": [MODEL]}]
         assert reply["runs_launched"] == [1] and started["runs"][0]["status"] == "pending"
         assert "wait_for_conversation" in started["next"]

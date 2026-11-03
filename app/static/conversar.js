@@ -739,6 +739,11 @@ const RUN_STATUS = {
   cancelled: "Cancelada",
 };
 
+// A workflow the bot wrote itself comes as "custom".
+function workflowName(name) {
+  return name === "custom" ? "workflow propio" : name;
+}
+
 function runCard(part, live) {
   const run = live ? null : runByNumber(part.run);
   const status = run?.status || "pending";
@@ -756,10 +761,10 @@ function runCard(part, live) {
     el("span", {
       class: "run-workflow",
       text: part.calibration
-        ? `calibración de ${part.calibration} en ${part.workflow}`
+        ? `calibración de ${part.calibration} en ${workflowName(part.workflow)}`
         : part.count > 1
-          ? `${part.workflow} ×${part.count}`
-          : part.workflow,
+          ? `${workflowName(part.workflow)} ×${part.count}`
+          : workflowName(part.workflow),
     }),
     el("span", { class: "run-status", text: detail }),
     errors.length > 0 && status !== "cancelled" && el("span", { class: "run-error", text: errors.join(" · ") }),
@@ -809,6 +814,7 @@ const FOLDER_LABELS = {
 
 const TOOL_FAILED = {
   run_workflow: "No ha podido lanzar el workflow",
+  describe_nodes: "No ha podido consultar los nodos",
   inspect_workflow: "No ha podido mirar el workflow",
   list_comfy_models: "No ha podido consultar los modelos",
   save_workflow: "No ha podido guardar el workflow",
@@ -822,6 +828,8 @@ function toolLine(part) {
     text = `${TOOL_FAILED[part.tool] || "Una herramienta ha fallado"}${part.workflow ? ` ${part.workflow}` : ""}: ${part.error}`;
   } else if (part.tool === "inspect_workflow") {
     text = `Ha mirado el workflow ${part.workflow}`;
+  } else if (part.tool === "describe_nodes") {
+    text = part.types?.length ? `Ha consultado los nodos ${part.types.join(", ")}` : "Ha consultado qué nodos tiene a mano";
   } else if (part.tool === "list_comfy_models") {
     const what = FOLDER_LABELS[part.folder] || part.folder;
     text = `Ha buscado ${what}${part.search ? ` «${part.search}»` : ""}: ${part.found} ${part.found === 1 ? "resultado" : "resultados"}`;
@@ -996,7 +1004,7 @@ function resultsMessage(message) {
       el("span", { class: "run-label", text: `Ejecución ${message.run}` }),
       run && el("span", {
         class: "run-workflow",
-        text: run.kind === "calibration" ? `calibración de ${run.lora} en ${run.workflow}` : run.workflow,
+        text: run.kind === "calibration" ? `calibración de ${run.lora} en ${workflowName(run.workflow)}` : workflowName(run.workflow),
       })
     ),
     (message.images || []).length > 0 &&

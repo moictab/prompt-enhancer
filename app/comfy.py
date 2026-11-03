@@ -12,6 +12,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import requests
 
@@ -31,6 +32,7 @@ PRIORITY = "high"  # a person is waiting for the result in the chat
 CONNECT_TIMEOUT = 4
 READ_TIMEOUT = 60
 MODELS_CACHE_SECONDS = 300
+NODE_INFO_CACHE_SECONDS = 3600
 BASE_CACHE_SECONDS = 30
 CONNECT_ERRORS = (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout)
 
@@ -108,6 +110,7 @@ class Comfy:
         self.client_id = uuid.uuid4().hex
         self._base: tuple[str, float] | None = None
         self._models: dict[str, tuple[list[str], float]] = {}
+        self._nodes: dict[str, tuple[dict | None, float]] = {}
 
     def _bases(self) -> list[str]:
         return [b for b in (self.gateway_url, self.direct_url) if b]
@@ -210,6 +213,23 @@ class Comfy:
         except ValueError:
             return None
         return data if isinstance(data, dict) else None
+
+    def node_info(self, class_type: str) -> dict | None:
+        """ComfyUI's definition of a node type (its /object_info entry: inputs, outputs), or None
+        if it has no such node. Raw: it may list files, which the caller filters before the bot
+        sees it (chat_tools.describe_node)."""
+        cached = self._nodes.get(class_type)
+        if cached and time.monotonic() - cached[1] < NODE_INFO_CACHE_SECONDS:
+            return cached[0]
+        base = self.pick_base()
+        response = self._request("GET", f"{base}/object_info/{quote(class_type, safe='')}",
+                                 timeout=(CONNECT_TIMEOUT, 30))
+        try:
+            info = (response.json() or {}).get(class_type)
+        except (ValueError, AttributeError):
+            info = None
+        self._nodes[class_type] = (info, time.monotonic())
+        return info
 
     def models(self, folder: str, max_age: float = MODELS_CACHE_SECONDS, read_timeout: float = 60) -> list[str]:
         if folder not in MODEL_FOLDERS:

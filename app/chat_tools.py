@@ -13,7 +13,7 @@ import re
 
 import requests
 
-from . import catalog, chat, comfy, comfy_policy, conversations, families, runs, workflows
+from . import catalog, chat, comfy, comfy_policy, conversations, families, prompts, runs, workflows
 from .comfy_graph import ASPECTS, SAMPLER_SETTINGS, Graph, GraphError, is_api_workflow, normalize_aspect
 
 logger = logging.getLogger("app.chat_tools")
@@ -37,6 +37,17 @@ WORKFLOW_PARAM = {
     "description": 'A library workflow by name, "image:N" for the workflow embedded in image N of this '
                    'conversation, or "run:N" for the exact workflow of run N.',
 }
+GRAPH_PARAM = {
+    "type": "object",
+    "description": 'Instead of workflow: a whole workflow you write, in ComfyUI\'s API format -- {"<node id>": '
+                   '{"class_type": ..., "inputs": {...}}}, a link written as ["<node id>", <output index>] -- ending '
+                   "in a SaveImage node. Only node types available here (describe_nodes lists them and shows each "
+                   "one's inputs).",
+}
+# The model folder each base model input loads from.
+LOADER_FOLDERS = {"ckpt_name": "checkpoints", "unet_name": "diffusion_models"}
+MAX_DESCRIBED_NODES = 12
+MAX_CHOICES = 40
 
 CHANGES_PARAM = {
     "type": "object",
@@ -45,6 +56,13 @@ CHANGES_PARAM = {
     "properties": {
         "positive": {"type": "string", "description": "The positive prompt, replacing the workflow's."},
         "negative": {"type": "string", "description": "The negative prompt, if the workflow has one."},
+        "model": {
+            "type": "string",
+            "description": "The base model: an installed checkpoint or diffusion model (exact file name), loaded where "
+                           "the workflow loads its own. It must suit the loader: a checkpoint where it loads one, a "
+                           "diffusion model where it loads one -- of the same family, since the workflow's text "
+                           "encoders and VAE are for it.",
+        },
         "seed": {
             "type": "string",
             "description": '"random" (the default: a new seed for every image), "keep" (the workflow\'s own '
@@ -125,17 +143,18 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "run_workflow",
-            "description": "Launch a ComfyUI workflow on the user's machine, with changes. Returns at once with "
-                           "the run's number; its images arrive later in the conversation.",
+            "description": "Launch a ComfyUI workflow on the user's machine -- an existing one with changes, or one "
+                           "you write (graph). Returns at once with the run's number; its images arrive later in the "
+                           "conversation.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "workflow": WORKFLOW_PARAM,
+                    "graph": GRAPH_PARAM,
                     "changes": CHANGES_PARAM,
                     "count": {"type": "integer", "description": f"Images to make, 1-{MAX_RUN_COUNT} (default 1), "
                                                                 "each its own job and seed."},
                 },
-                "required": ["workflow"],
             },
         },
     },
@@ -146,6 +165,20 @@ TOOLS = [
             "description": "A workflow's nodes, with their values and links, and what it does: prompts, sampler "
                            "settings, models, LoRAs, size, image inputs.",
             "parameters": {"type": "object", "properties": {"workflow": WORKFLOW_PARAM}, "required": ["workflow"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "describe_nodes",
+            "description": "The node types you can use here; with types, what each takes (inputs: type, default, "
+                           "range, choices) and gives (outputs, by index) -- before writing or rewiring nodes.",
+            "parameters": {
+                "type": "object",
+                "properties": {"types": {"type": "array", "items": {"type": "string"},
+                                         "description": f"Node class types, at most {MAX_DESCRIBED_NODES}; leave out "
+                                                        "to list the available ones."}},
+            },
         },
     },
     {
@@ -167,18 +200,20 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "save_workflow",
-            "description": "Keep a workflow, with changes, in the library under a new name -- only when the user "
-                           "wants it kept. replace: true overwrites the library workflow with that name.",
+            "description": "Keep a workflow -- an existing one with changes, or one you wrote (graph) -- in the "
+                           "library under a new name, only when the user wants it kept. replace: true overwrites the "
+                           "library workflow with that name.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "workflow": WORKFLOW_PARAM,
+                    "graph": GRAPH_PARAM,
                     "name": {"type": "string", "description": 'Like the others, e.g. "krea-2/txt2img-ink".'},
                     "description": {"type": "string", "description": "One English sentence: what it does."},
                     "changes": CHANGES_PARAM,
                     "replace": {"type": "boolean"},
                 },
-                "required": ["workflow", "name", "description"],
+                "required": ["name", "description"],
             },
         },
     },
@@ -274,6 +309,10 @@ def _usage(working: dict) -> dict:
             "dollars": f"{working['cost']:.2f} of {working['max_cost']:.2f}"}
 
 
+def _squash(text) -> str:
+    return " ".join(str(text or "").split()).casefold()
+
+
 def _link_or_value(value):
     if isinstance(value, list) and len(value) == 2 and isinstance(value[1], int) and not isinstance(value[1], bool):
         return [str(value[0]), value[1]]
@@ -296,6 +335,40 @@ def node_errors_text(node_errors: dict) -> dict:
     return out
 
 
+def describe_node(info: dict) -> dict:
+    """A node type's definition (ComfyUI's /object_info entry) as the bot reads it: inputs with
+    their type, default, range and choices, and outputs by index. Choices that are files of
+    ComfyUI's input folder (LoadImage lists every image there, other projects' too) never reach
+    it -- the isolation (comfy_policy) -- and long lists are cut."""
+    def spec(raw) -> dict:
+        kind, options = (raw[0], raw[1] if len(raw) > 1 and isinstance(raw[1], dict) else {}) \
+            if isinstance(raw, list) and raw else (raw, {})
+        choices = kind if isinstance(kind, list) else options.get("options") if kind == "COMBO" else None
+        out = {"type": "COMBO" if choices is not None else kind}
+        for key in ("default", "min", "max", "step", "multiline", "tooltip"):
+            value = options.get(key)
+            if value is not None and not (isinstance(value, str) and comfy_policy.looks_like_file(value)):
+                out[key] = value
+        if isinstance(choices, list):
+            if any(isinstance(c, str) and comfy_policy.looks_like_file(c) for c in choices):
+                out["choices"] = "images: only this conversation's, fed with input_images"
+            else:
+                out["choices"] = choices[:MAX_CHOICES]
+                if len(choices) > MAX_CHOICES:
+                    out["more_choices"] = f"{len(choices) - MAX_CHOICES} more (for model files: list_comfy_models)"
+        return out
+
+    inputs = info.get("input") or {}
+    return {
+        **({"description": info["description"]} if info.get("description") else {}),
+        "inputs": {group: {name: spec(raw) for name, raw in (inputs.get(group) or {}).items()}
+                   for group in ("required", "optional") if inputs.get(group)},
+        "outputs": [{"index": i, "type": kind, "name": name}
+                    for i, (kind, name) in enumerate(zip(info.get("output") or [],
+                                                         info.get("output_name") or info.get("output") or []))],
+    }
+
+
 class ToolBox:
     def __init__(self, conversation_id: str, client: comfy.Comfy):
         self.conversation_id = conversation_id
@@ -303,6 +376,9 @@ class ToolBox:
         # The title the bot is giving the conversation in the reply being made, if any:
         # a first run may come before the title is stored, and names the output folder.
         self.title_hint = ""
+        # The reply being made, so far: the prompt blocks it wrote before a call say which model
+        # each prompt is for.
+        self.reply_text = ""
 
     definitions = TOOLS
 
@@ -373,6 +449,71 @@ class ToolBox:
             raise ToolError(f'There is no workflow "{reference}". Library: {names}; or image:N, run:N.')
         return Graph(entry["workflow"]), entry["name"]
 
+    def _source(self, workflow, graph) -> tuple[Graph, str]:
+        """The workflow a call works on: a reference (_resolve), or a whole one the bot wrote."""
+        if graph is None:
+            if not workflow:
+                raise ToolError("Give workflow (a name, image:N or run:N) or graph (a workflow you write).")
+            return self._resolve(str(workflow))
+        if workflow:
+            raise ToolError("Give workflow or graph, not both.")
+        if not is_api_workflow(graph):
+            raise ToolError('graph must be a workflow in API format: {"<node id>": {"class_type": ..., '
+                            '"inputs": {...}}}.')
+        written = Graph({str(node_id): {**node, "inputs": {k: _link_or_value(v)
+                                                           for k, v in (node.get("inputs") or {}).items()}}
+                         for node_id, node in graph.items()})
+        broken = written.broken_links()
+        if broken:
+            raise ToolError(f"Links to nodes that don't exist: {', '.join(broken)}")
+        if not written.find("SaveImage"):
+            raise ToolError("Your workflow saves nothing: end it in a SaveImage node.")
+        return written, "custom"
+
+    def _set_model(self, graph: Graph, name: str) -> str:
+        """Load the installed base model `name` where the workflow loads its own; returns the file."""
+        loaders = graph.base_model_loaders()
+        if not loaders:
+            raise ToolError("This workflow loads no base model to change (no checkpoint or diffusion model loader).")
+        kinds = {key for _, key in loaders}
+        if len(kinds) > 1:
+            raise ToolError("This workflow loads both a checkpoint and a diffusion model: change the one you mean "
+                            "with set.")
+        folder = LOADER_FOLDERS[kinds.pop()]
+        other = "diffusion_models" if folder == "checkpoints" else "checkpoints"
+        noun = {"checkpoints": "a checkpoint", "diffusion_models": "a diffusion model"}
+        file = catalog.resolve_file(str(name), folder, self.client)
+        if file not in self.client.models(folder):
+            elsewhere = catalog.resolve_file(str(name), other, self.client)
+            if elsewhere in self.client.models(other):
+                raise ToolError(f"{elsewhere} is {noun[other]}, but this workflow loads {noun[folder]}: use a "
+                                f"workflow that loads {noun[other]} (from the library, an image or a run), or write "
+                                "one.")
+            raise ToolError(f'"{name}" isn\'t an installed checkpoint or diffusion model: check list_comfy_models.')
+        if folder == "diffusion_models":
+            current, new = graph.base_model_folder(), catalog.family_of(file)
+            if current and new and current != new:
+                raise ToolError(f"{file} is a {new} model, and this workflow's text encoders and VAE are for {current}: "
+                                f"use a {new} workflow (from the library, an image or a run), or write one.")
+        graph.set_base_model(file)
+        return file
+
+    def _declared_model(self, graph: Graph) -> str | None:
+        """The model the bot's <prompt> block says the prompt this workflow runs is for: in the
+        reply being made, or else in an earlier one -- the latest block with this prompt."""
+        positive = _squash(graph.generation_info().get("positive"))
+        if not positive:
+            return None
+        for match in reversed(list(chat.PROMPT_PATTERN.finditer(self.reply_text))):
+            parsed, _ = prompts.parse_response(match.group(2), True)
+            if _squash(parsed) == positive:
+                return chat.block_model(match.group(1)) or None
+        for message in reversed(self._conversation()["messages"]):
+            for part in reversed(message.get("parts") or []) if message["role"] == "assistant" else []:
+                if part.get("type") == "prompt" and _squash(part["positive_prompt"]) == positive:
+                    return part.get("model")
+        return None
+
     def _apply(self, graph: Graph, changes: dict, base: str | None) -> list[str]:
         """Apply the changes to graph; returns what was done, in short."""
         if not isinstance(changes, dict):
@@ -401,6 +542,8 @@ class ToolBox:
         broken = graph.broken_links()
         if broken:
             raise ToolError(f"Links to nodes that don't exist: {', '.join(broken)}")
+        if changes.get("model"):
+            done.append(f"model {self._set_model(graph, changes['model'])}")
         if "positive" in changes or "negative" in changes:
             graph.set_prompt(changes.get("positive"), changes.get("negative"))
             done.append("prompt")
@@ -475,12 +618,22 @@ class ToolBox:
 
     # --- the tools -------------------------------------------------------------------------------
 
-    def _tool_run_workflow(self, workflow: str, changes: dict | None = None, count: int = 1) -> tuple[dict, dict]:
+    def _tool_run_workflow(self, workflow: str | None = None, changes: dict | None = None, count: int = 1,
+                           graph: dict | None = None) -> tuple[dict, dict]:
         count = max(1, min(MAX_RUN_COUNT, _number(count or 1, int)))
         changes = changes or {}
-        graph, label = self._resolve(workflow)
+        graph, label = self._source(workflow, graph)
         base = self.client.pick_base()
         done = self._apply(graph, changes, base)
+        if not changes.get("model") and graph.base_model_loaders():
+            # The prompt runs on the model its block names, whatever model the workflow came with.
+            declared = self._declared_model(graph)
+            if declared and declared not in graph.base_models():
+                try:
+                    done.append(f"model {self._set_model(graph, declared)}, as your <prompt> block says")
+                except ToolError as e:
+                    raise ToolError(f"Your <prompt> block says {declared}, which can't run here: {e} Pass "
+                                    "changes.model to run it on another model, or another workflow.")
         # On the workflow as it will be sent: the bot's changes may have swapped the base model.
         switched = self._follow_family(graph)
         if switched:
@@ -502,7 +655,7 @@ class ToolBox:
         size = graph.shape()
         run = self._submit_run(label, changes, base, folder, variants, run_fields={"size": size} if size else None)
         result = {"run": run["n"], "status": "queued", "images": run["count"], "seeds": seeds[:run["count"]],
-                  "applied": done}
+                  "model": ", ".join(run["base_models"]), "applied": done}
         if size:
             result["size"] = size
         return result, {"type": "run", "run": run["n"], "workflow": label, "count": run["count"]}
@@ -653,6 +806,24 @@ class ToolBox:
         }
         return result, {"type": "tool", "tool": "inspect_workflow", "workflow": label}
 
+    def _tool_describe_nodes(self, types: list | None = None) -> tuple[dict, dict]:
+        allowed = comfy_policy.allowed_types(self._conversation())
+        if not types:
+            return ({"available": sorted(allowed),
+                     "note": "Pass types to see what a node takes and gives."},
+                    {"type": "tool", "tool": "describe_nodes", "types": []})
+        if not isinstance(types, list):
+            raise ToolError("types must be a list of node class types")
+        wanted = list(dict.fromkeys(str(t) for t in types))[:MAX_DESCRIBED_NODES]
+        nodes = {}
+        for class_type in wanted:
+            if class_type not in allowed:
+                nodes[class_type] = {"error": "Not a node type available here (describe_nodes without types lists them)."}
+                continue
+            info = self.client.node_info(class_type)
+            nodes[class_type] = describe_node(info) if info else {"error": "ComfyUI has no such node type."}
+        return {"nodes": nodes}, {"type": "tool", "tool": "describe_nodes", "types": wanted}
+
     def _tool_list_comfy_models(self, folder: str, search: str = "") -> tuple[dict, dict]:
         if folder not in MODEL_FOLDERS:
             raise ToolError(f"folder must be one of: {', '.join(MODEL_FOLDERS)}")
@@ -675,9 +846,10 @@ class ToolBox:
         return result, {"type": "tool", "tool": "list_comfy_models", "folder": folder, "search": search or "",
                         "found": len(matches)}
 
-    def _tool_save_workflow(self, workflow: str, name: str, description: str, changes: dict | None = None,
-                            replace: bool = False) -> tuple[dict, dict]:
-        graph, label = self._resolve(workflow)
+    def _tool_save_workflow(self, name: str, description: str, workflow: str | None = None,
+                            changes: dict | None = None, replace: bool = False,
+                            graph: dict | None = None) -> tuple[dict, dict]:
+        graph, label = self._source(workflow, graph)
         changes = changes or {}
         self._apply(graph, {k: v for k, v in changes.items() if k not in ("input_images", "seed")}, None)
         if str(changes.get("seed", "")).strip().lstrip("-").isdigit():

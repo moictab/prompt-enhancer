@@ -20,7 +20,9 @@ Concretely:
   text extension), a path or a URL must be one of this conversation's uploads.
 
 Nothing else is reachable either: the ComfyUI client only asks /history and /view about
-the jobs the bot itself sent, never lists the queue or the history.
+the jobs the bot itself sent, never lists the queue or the history; node definitions
+(/object_info) reach the bot only for the types allowed here, with any list of the input
+folder's files dropped (chat_tools.describe_node).
 """
 import re
 
@@ -88,7 +90,7 @@ def _own_upload(value: str, conversation: dict) -> bool:
     return any(img["id"] == match.group(1) for m in conversation["messages"] for img in m.get("images") or [])
 
 
-def _looks_like_file(value: str) -> bool:
+def looks_like_file(value: str) -> bool:
     if not value or len(value) > MAX_REFERENCE_LENGTH or any(c.isspace() for c in value):
         return False
     lowered = value.lower()
@@ -126,7 +128,7 @@ def problems(graph: Graph, conversation: dict, files: bool = True) -> list[str]:
         if not files:
             continue
         for name, value in node["inputs"].items():
-            if name in DATA_INPUTS or not isinstance(value, str) or not _looks_like_file(value):
+            if name in DATA_INPUTS or not isinstance(value, str) or not looks_like_file(value):
                 continue
             if not _own_upload(value, conversation):
                 found.append(f"node {node_id} ({class_type}) input {name} refers to {value!r}, which isn't an "

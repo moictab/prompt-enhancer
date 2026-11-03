@@ -220,6 +220,26 @@ class Graph:
                     names.append(value)
         return names
 
+    def base_model_loaders(self) -> list[tuple[str, str]]:
+        """(node id, input) of every input that names the base model: ckpt_name or unet_name."""
+        return [(node_id, key) for node_id in sorted(self.nodes, key=_id_key) for key in BASE_MODEL_INPUTS
+                if isinstance(self.nodes[node_id]["inputs"].get(key), str)]
+
+    def set_base_model(self, file: str) -> list[str]:
+        """Load `file` where the workflow loads its base model; returns the inputs changed. The
+        caller checks the file suits the loader (a checkpoint for ckpt_name, a diffusion model
+        for unet_name)."""
+        loaders = self.base_model_loaders()
+        if not loaders:
+            raise GraphError("This workflow loads no base model (no ckpt_name or unet_name input) to change.")
+        current = sorted({self.nodes[n]["inputs"][k] for n, k in loaders})
+        if len(current) > 1:
+            raise GraphError(f"This workflow loads several base models ({', '.join(current)}): change the one you "
+                             "mean with set.")
+        for node_id, key in loaders:
+            self.nodes[node_id]["inputs"][key] = file
+        return [f"{n}.{k}" for n, k in loaders]
+
     def base_model_folder(self) -> str | None:
         """The folder the base model sits in ("krea-2" for "krea-2\\x.safetensors"), which names its
         family; None when there is no base model in a folder, or base models from several."""
