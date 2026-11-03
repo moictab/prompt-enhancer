@@ -18,6 +18,7 @@ def isolated_data_dir(tmp_path, monkeypatch):
     # ComfyUI runs are off unless a test turns them on (a developer's .env may set these).
     monkeypatch.delenv("COMFY_GATEWAY_URL", raising=False)
     monkeypatch.delenv("COMFY_DIRECT_URL", raising=False)
+    monkeypatch.delenv("CIVITAI_API_KEY", raising=False)
     runs.tracker._pending.clear()
     catalog.invalidate_stats()
     yield

@@ -274,13 +274,78 @@ function numberedImage(image, number, { reactable = false } = {}) {
     { class: "shot", "data-image": image.id },
     el(
       "a",
-      { href: imageUrl(image), target: "_blank", rel: "noopener", title: `Abrir la imagen ${number}` },
+      {
+        href: imageUrl(image),
+        target: "_blank",
+        rel: "noopener",
+        title: `Ver la imagen ${number}`,
+        onclick: (event) => {
+          if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return;
+          event.preventDefault();
+          openViewer(image.id);
+        },
+      },
       el("img", { src: imageUrl(image, { small: true }), alt: `Imagen ${number}`, loading: "lazy" })
     ),
     el("span", { class: "shot-no", text: String(number) })
   );
   if (reactable) figure.append(reactionControls(image, number));
   return figure;
+}
+
+// ---------- the image viewer ----------
+
+// Every image of the conversation, in order, browsable with the arrow keys.
+const viewer = { dialog: null, image: null, caption: null, open: null, index: 0, images: [] };
+
+function setupViewer() {
+  viewer.image = el("img", { class: "viewer-image", alt: "" });
+  viewer.caption = el("p", { class: "viewer-caption" });
+  viewer.open = el("a", { class: "btn-quiet", target: "_blank", rel: "noopener", text: "Abrir el original" });
+  const step = (delta) => showInViewer(viewer.index + delta);
+  viewer.prev = el("button", { type: "button", class: "btn-icon viewer-nav", "aria-label": "Imagen anterior", text: "‹", onclick: () => step(-1) });
+  viewer.next = el("button", { type: "button", class: "btn-icon viewer-nav", "aria-label": "Imagen siguiente", text: "›", onclick: () => step(1) });
+  viewer.dialog = el(
+    "dialog",
+    { class: "viewer", "aria-label": "Imagen" },
+    el("div", { class: "viewer-stage" }, viewer.prev, viewer.image, viewer.next),
+    el(
+      "div",
+      { class: "viewer-bar" },
+      viewer.caption,
+      viewer.open,
+      el("button", { type: "button", class: "btn-secondary", text: "Cerrar", onclick: () => viewer.dialog.close() })
+    )
+  );
+  // A click on the dark space around the image closes it.
+  viewer.dialog.addEventListener("click", (event) => {
+    if (event.target === viewer.dialog || event.target.classList.contains("viewer-stage")) viewer.dialog.close();
+  });
+  viewer.dialog.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowLeft") step(-1);
+    else if (event.key === "ArrowRight") step(1);
+  });
+  document.body.append(viewer.dialog);
+}
+
+function showInViewer(index) {
+  if (index < 0 || index >= viewer.images.length) return;
+  viewer.index = index;
+  const image = viewer.images[index];
+  viewer.image.src = imageUrl(image);
+  viewer.image.alt = `Imagen ${index + 1}`;
+  viewer.caption.textContent = `Imagen ${index + 1} de ${viewer.images.length}`;
+  viewer.open.href = imageUrl(image);
+  viewer.prev.disabled = index === 0;
+  viewer.next.disabled = index === viewer.images.length - 1;
+}
+
+function openViewer(imageId) {
+  viewer.images = (state.conversation?.messages || []).flatMap((m) => m.images || []);
+  const index = viewer.images.findIndex((image) => image.id === imageId);
+  if (index === -1) return;
+  showInViewer(index);
+  if (!viewer.dialog.open) viewer.dialog.showModal();
 }
 
 function reactionControls(image, number) {
@@ -363,11 +428,24 @@ function metadataPanel(image, number) {
   const settingsText = Object.entries({ ...(m.parameters || {}), ...(m.settings || {}) })
     .map(([key, value]) => `${key}: ${value}`)
     .join(", ");
+  const resources = (m.resources || [])
+    .map((r) => {
+      const details = [
+        r.base_model && `base ${r.base_model}`,
+        r.weight != null && `peso ${r.weight}`,
+        r.trigger_words?.length && `palabras clave: ${r.trigger_words.join(", ")}`,
+        r.file && r.file !== r.name && r.file,
+      ].filter(Boolean);
+      const name = [r.type, r.name || r.file, r.version].filter(Boolean).join(" ");
+      return details.length ? `${name} (${details.join("; ")})` : name;
+    })
+    .join("\n");
   const rows = [
     ["Prompt", m.positive],
     ["Negativo", m.negative],
     ["Modelos", (m.models || []).join(", ")],
     ["LoRAs", loras],
+    ["Recursos", resources],
     ["Ajustes", settingsText],
   ].filter(([, value]) => value);
   const what = m.has_workflow ? "metadatos y workflow" : "metadatos";
@@ -375,6 +453,13 @@ function metadataPanel(image, number) {
     "details",
     { class: "img-meta" },
     el("summary", { text: `Imagen ${number}: ${what}${m.generator ? ` de ${m.generator}` : ""}` }),
+    m.source &&
+      el(
+        "p",
+        { class: "img-meta-note" },
+        `De ${m.source.site}${m.source.author ? `, publicada por ${m.source.author}` : ""}: `,
+        el("a", { href: m.source.url, target: "_blank", rel: "noopener", text: m.source.url })
+      ),
     el(
       "dl",
       {},
@@ -1213,7 +1298,8 @@ async function submitMessage(event) {
     return;
   }
   const hasRunImages = (state.conversation?.messages || []).some((m) => m.role === "results" && m.images?.length);
-  if ((attachments.length || hasRunImages) && state.visionSupport.get(current.llm_model) === false) {
+  const hasCivitaiLink = /civitai\.(?:com|green)\/images\/\d+/i.test(content);
+  if ((attachments.length || hasRunImages || hasCivitaiLink) && state.visionSupport.get(current.llm_model) === false) {
     setSettingsOpen(true);
     showError(`${shortModel(current.llm_model)} no acepta imágenes. Elige en los ajustes un modelo con visión.`);
     return;
@@ -1416,6 +1502,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupSettings();
   setupThreads();
   setupAttachments();
+  setupViewer();
   await loadSideData();
   // Back on the tab: catch up at once on whatever finished meanwhile.
   document.addEventListener("visibilitychange", () => {

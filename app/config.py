@@ -19,6 +19,8 @@ class Settings:
     # comfy-gateway, and ComfyUI itself as a fallback; both unset turns ComfyUI runs off.
     comfy_gateway_url: str = ""
     comfy_direct_url: str = ""
+    # Civitai's API key: images shared by URL are read with it (optional).
+    civitai_api_key: str = ""
 
 
 def get_settings() -> Settings:
@@ -31,4 +33,5 @@ def get_settings() -> Settings:
         default_vision_model=os.environ.get("DEFAULT_VISION_MODEL", DEFAULT_MODEL),
         comfy_gateway_url=os.environ.get("COMFY_GATEWAY_URL", "").strip(),
         comfy_direct_url=os.environ.get("COMFY_DIRECT_URL", "").strip(),
+        civitai_api_key=os.environ.get("CIVITAI_API_KEY", "").strip(),
     )

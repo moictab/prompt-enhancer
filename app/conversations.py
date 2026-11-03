@@ -164,10 +164,12 @@ def save_image(
     content_type: str,
     root: str | None = None,
     workflow: dict | None = None,
+    metadata: dict | None = None,
 ) -> dict:
     """Store an image, plus a smaller JPEG copy when it is large (what the LLM and the
     thumbnails get) and the ComfyUI workflow it embeds, if any. A run's output passes the
-    workflow it was made with instead: its metadata is the run itself."""
+    workflow it was made with instead: its metadata is the run itself. An image shared from
+    Civitai passes the metadata Civitai gives (and its workflow, if any)."""
     image = {"id": uuid.uuid4().hex, "content_type": content_type}
     folder = f"{_root(root)}/{conversation_id}"
     storage.write_bytes(f"{folder}/{image['id']}.{IMAGE_EXTENSIONS[content_type]}", data)
@@ -175,10 +177,10 @@ def save_image(
     if small:
         storage.write_bytes(f"{folder}/{image['id']}-small.jpg", small)
         image["small"] = True
-    if workflow is None:
+    if metadata is None and workflow is None:
         metadata, workflow = image_metadata.read(data)
-        if metadata:
-            image["metadata"] = metadata
+    if metadata:
+        image["metadata"] = metadata
     if workflow:
         storage.write_json(f"{folder}/{image['id']}.workflow.json", workflow)
     return image

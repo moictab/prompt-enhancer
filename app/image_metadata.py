@@ -230,6 +230,23 @@ def _short(text: str, limit: int = 300) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
+def _resource_text(resource: dict) -> str:
+    name = resource.get("name") or resource.get("file") or "?"
+    text = f"{resource.get('type') or 'resource'} \"{name}\""
+    if resource.get("version"):
+        text += f" {resource['version']}"
+    details = []
+    if resource.get("base_model"):
+        details.append(f"base {resource['base_model']}")
+    if resource.get("weight") is not None:
+        details.append(f"weight {_format_value(resource['weight'])}")
+    if resource.get("trigger_words"):
+        details.append(f"trigger words: {', '.join(resource['trigger_words'])}")
+    if resource.get("file") and resource.get("file") != name:
+        details.append(f"file {resource['file']}")
+    return f"{text} ({'; '.join(details)})" if details else text
+
+
 def describe(metadata: dict, number: int) -> str:
     """The metadata as text for the LLM (English, like everything it reads)."""
     head = f"Image {number} metadata ({metadata.get('format', 'image')}, {metadata.get('width')}x{metadata.get('height')}"
@@ -240,6 +257,10 @@ def describe(metadata: dict, number: int) -> str:
     elif metadata.get("editor_workflow_only"):
         head += "; it embeds only the ComfyUI editor graph, which can't be run from here"
     lines = [head + "):"]
+    source = metadata.get("source")
+    if source:
+        by = f", by {source['author']}" if source.get("author") else ""
+        lines.append(f"- Source: {source.get('site')} image {source.get('image_id')}{by}")
     if metadata.get("positive"):
         lines.append(f"- Positive: {metadata['positive']}")
     if metadata.get("negative"):
@@ -254,6 +275,9 @@ def describe(metadata: dict, number: int) -> str:
                 strengths = strengths[:1]
             loras.append(f"{lora['name']} ({'/'.join(strengths)})" if strengths else lora["name"])
         lines.append(f"- LoRAs: {', '.join(loras)}")
+    if metadata.get("resources"):
+        lines.append(f"- {metadata.get('generator', 'Source')} resources: "
+                     + "; ".join(_resource_text(r) for r in metadata["resources"]))
     settings = {**(metadata.get("parameters") or {}), **(metadata.get("settings") or {})}
     if settings:
         values = [f"{k}: {_short(_format_value(v))}" for k, v in settings.items()]

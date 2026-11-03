@@ -6,7 +6,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .. import catalog, conversation_turn, conversations, runs
+from .. import catalog, civitai, conversation_turn, conversations, runs
 from .api import _require_family, read_image
 
 router = APIRouter(prefix="/api/conversations")
@@ -121,18 +121,30 @@ async def send_message(
     images = images or []
     if not content.strip() and not images and not conversations.unsent_reactions(conversation):
         raise HTTPException(status_code=400, detail="Write a message or attach an image")
-    if len(images) > MAX_IMAGES_PER_MESSAGE:
+    civitai_ids = civitai.image_ids(content)
+    if len(images) + len(civitai_ids) > MAX_IMAGES_PER_MESSAGE:
         raise HTTPException(
-            status_code=400, detail=f"At most {MAX_IMAGES_PER_MESSAGE} images per message"
+            status_code=400,
+            detail=f"At most {MAX_IMAGES_PER_MESSAGE} images per message (Civitai links included)",
         )
     _require_family(conversation["family_id"])
 
     # Validate every image before storing any, so a bad one leaves nothing behind.
     contents = [await read_image(image) for image in images]
+    shared = []
+    for image_id in civitai_ids:
+        try:
+            shared.append(await run_in_threadpool(civitai.fetch_image, image_id))
+        except civitai.CivitaiError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     # Reading metadata and making the small copy takes a moment: off the event loop.
     saved = [
         await run_in_threadpool(conversations.save_image, conversation_id, data, image.content_type)
         for image, data in zip(images, contents)
+    ] + [
+        await run_in_threadpool(conversations.save_image, conversation_id, item.data, item.content_type,
+                                None, item.workflow, item.metadata)
+        for item in shared
     ]
     conversations.append_message(
         conversation_id, {"role": "user", "content": content.strip(), "images": saved}
