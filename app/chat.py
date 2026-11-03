@@ -1,10 +1,12 @@
 """What the Conversar bot is told, and how its replies are read.
 
 The system prompt is the user's editable personality (the "conversation" system
-prompt) followed by fixed mechanics the app depends on -- how to deliver a prompt,
-how to take a note, how to title the conversation -- so editing the personality
-can never break them. Replies mark prompts, notes and the title with tags that
-parse_reply turns into structured parts.
+prompt), then the family rules, characters and notes, and last the fixed mechanics
+the app depends on -- how to deliver a prompt, how to take a note, how to title the
+conversation -- placed last and declared to win, so neither the personality nor a
+family's rules (written for one-shot modes: "output only the prompt") can break
+them. Replies mark prompts, notes and the title with tags that parse_reply turns
+into structured parts.
 """
 import re
 from dataclasses import dataclass, field
@@ -17,7 +19,9 @@ from . import prompts, system_prompt
 MAX_CONTEXT_IMAGES = 4
 MAX_TITLE_LENGTH = 80
 
-CONVERSATION_MECHANICS = """You and the user craft prompts for an AI image model together, in an ongoing conversation. The rules of the selected model family are below, and every prompt you propose must follow them.
+CONVERSATION_MECHANICS = """These mechanics take precedence over anything above that contradicts them, including any instruction about what a reply should contain or look like.
+
+You and the user craft prompts for an AI image model together, in an ongoing conversation. Every prompt you propose must follow the model family rules above.
 
 - Reply in the language the user writes in. Prompts are always written in English.
 - When you propose a prompt, put it in its own block, exactly like this:
@@ -30,7 +34,13 @@ NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 - Every proposed prompt must be complete and self-contained, ready to paste into the image model.
 - The user may share images generated from your prompts, or describe what came out. Look at what worked and what didn't, and adjust.
 - Write plain conversational text: short paragraphs, "- " lists when useful, **bold** sparingly. No headings, no tables, no code blocks.
-- You keep notes about the user across conversations; the ones you have are listed at the end. When you learn something worth remembering in future conversations -- a lasting taste or preference, or something that works or fails with a model -- add one short note anywhere in your reply as <remember>the note</remember>. Only lasting things, never details of the current image, and never a note you already have. The user sees these notes and can edit them."""
+- You keep notes about the user across conversations; any you already have are listed above. When you learn something worth remembering in future conversations -- a lasting taste or preference, or something that works or fails with a model -- add one short note anywhere in your reply as <remember>the note</remember>, right away and without asking first: the user sees every note in the chat and can forget it there. Only lasting things, never details of the current image, and never a note you already have."""
+
+FAMILY_RULES_INTRO = (
+    "These rules say how to write the text inside each <prompt> block. Where they describe "
+    "a whole reply instead (output only the prompt, no commentary, a single prompt), that "
+    "part doesn't apply here: how to reply is set at the end."
+)
 
 TITLE_RULE = (
     "- This conversation has no title yet: start your reply with "
@@ -52,6 +62,10 @@ REMEMBER_PATTERN = re.compile(r"<remember>(.*?)(?:</remember>|(?=\n)|$)", re.IGN
 PROMPT_PATTERN = re.compile(r"<prompt\b[^>]*>(.*?)(?:</prompt>|$)", re.IGNORECASE | re.DOTALL)
 PROMPT_OPEN_PATTERN = re.compile(r"<prompt\b[^>]*>", re.IGNORECASE)
 STRAY_TAG_PATTERN = re.compile(r"</?(?:title|remember)>", re.IGNORECASE)
+# A prompt written bare, as "POSITIVE: ..." at the start of a line (the label maybe in **bold**).
+BARE_POSITIVE_LINE = re.compile(r"^[ \t]*(?:\*\*)?POSITIVE[ \t]*:", re.IGNORECASE | re.MULTILINE)
+BARE_NEGATIVE_START = re.compile(r"^[ \t]*(?:\*\*)?NEGATIVE[ \t]*:", re.IGNORECASE)
+BARE_LABEL = re.compile(r"^[ \t]*(?:\*\*)?(POSITIVE|NEGATIVE)[ \t]*:(?:\*\*)?[ \t]*", re.IGNORECASE | re.MULTILINE)
 CODE_FENCE_LINE = re.compile(r"^[ \t]*```[\w-]*[ \t]*$\n?", re.MULTILINE)
 
 
@@ -62,15 +76,15 @@ def build_system_prompt(
     personality = system_prompt.read_system_prompt("conversation").strip()
     if personality:
         parts.append(personality)
-    mechanics = CONVERSATION_MECHANICS + (f"\n{TITLE_RULE}" if needs_title else "")
-    parts.append(f"## How This Conversation Works\n{mechanics}")
-    parts.append(f"## Model Family Rules\n{family['instructions'].strip()}")
+    parts.append(f"## Model Family Rules\n{FAMILY_RULES_INTRO}\n\n{family['instructions'].strip()}")
     if characters:
         lines = "\n".join(f"- {c['name']}: {c['text']}" for c in characters)
         parts.append(f"## Characters\n{CHARACTERS_INSTRUCTION}\n\n{lines}")
     if notes:
         lines = "\n".join(f"- {n['text']}" for n in notes)
         parts.append(f"## Your Notes About The User\n{NOTES_INTRO}\n{lines}")
+    mechanics = CONVERSATION_MECHANICS + (f"\n{TITLE_RULE}" if needs_title else "")
+    parts.append(f"## How This Conversation Works\n{mechanics}")
     return "\n\n".join(parts)
 
 
@@ -133,6 +147,35 @@ class Reply:
         ]
 
 
+def _wrap_bare_prompts(content: str) -> str:
+    """Put a block around each prompt written bare ("POSITIVE: ..." starting a line,
+    plus a "NEGATIVE: ..." paragraph right after it), as a model may when it follows a
+    family rule like "output only POSITIVE:" over the block format. A bare prompt runs
+    to the end of its paragraph, so commentary after a blank line stays commentary."""
+    paragraphs = re.split(r"\n[ \t]*\n", content)
+    out = []
+    i = 0
+    while i < len(paragraphs):
+        paragraph = paragraphs[i]
+        start = BARE_POSITIVE_LINE.search(paragraph)
+        if start is None:
+            out.append(paragraph)
+            i += 1
+            continue
+        lead = paragraph[:start.start()].rstrip()
+        if lead:
+            out.append(lead)
+        block = paragraph[start.start():]
+        next_is_negative = i + 1 < len(paragraphs) and BARE_NEGATIVE_START.match(paragraphs[i + 1])
+        if next_is_negative and not re.search(r"NEGATIVE[ \t]*:", block, re.IGNORECASE):
+            block += "\n" + paragraphs[i + 1]
+            i += 1
+        block = BARE_LABEL.sub(lambda m: f"{m.group(1).upper()}: ", block)
+        out.append(f"<prompt>\n{block.strip()}\n</prompt>")
+        i += 1
+    return "\n\n".join(out)
+
+
 def parse_reply(text: str, has_negative_prompt: bool) -> Reply:
     title_match = TITLE_PATTERN.search(text)
     title = " ".join(title_match.group(1).split())[:MAX_TITLE_LENGTH] if title_match else ""
@@ -145,6 +188,9 @@ def parse_reply(text: str, has_negative_prompt: bool) -> Reply:
     content = CODE_FENCE_LINE.sub("", content)
     content = re.sub(r"[ \t]+\n", "\n", content)
     content = re.sub(r"\n{3,}", "\n\n", content).strip()
+    if not PROMPT_OPEN_PATTERN.search(content):
+        # Stored wrapped, so next turn the model sees its proposals in the block format.
+        content = _wrap_bare_prompts(content)
 
     parts = []
     position = 0

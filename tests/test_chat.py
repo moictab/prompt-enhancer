@@ -18,23 +18,38 @@ def _assistant(content):
 
 
 @patch("app.chat.system_prompt.read_system_prompt")
-def test_system_prompt_puts_personality_first_then_mechanics_and_family(mock_read):
+def test_system_prompt_puts_personality_first_family_rules_next_and_mechanics_last(mock_read):
     mock_read.return_value = "You are a grumpy art director."
 
     result = chat.build_system_prompt(FAMILY, [], [], needs_title=False)
 
     mock_read.assert_called_once_with("conversation")
-    assert result.startswith("You are a grumpy art director.\n\n## How This Conversation Works\n")
+    assert result.startswith(
+        "You are a grumpy art director.\n\n## Model Family Rules\n" + chat.FAMILY_RULES_INTRO + "\n\nfamily rules"
+    )
+    # Last, and declared to win: a family written for one-shot modes says
+    # "output only the prompt", which a conversation must not follow.
+    mechanics_at = result.index("## How This Conversation Works\n")
+    assert mechanics_at > result.index("family rules")
+    assert result.endswith(chat.CONVERSATION_MECHANICS)
+    assert "take precedence over anything above" in result
     assert "<prompt>\nPOSITIVE:" in result
-    assert result.endswith("## Model Family Rules\nfamily rules")
     assert "<title>" not in result
 
 
-@patch("app.chat.system_prompt.read_system_prompt", return_value="")
-def test_system_prompt_keeps_the_mechanics_when_the_personality_is_empty(mock_read):
+@patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
+def test_system_prompt_tells_the_bot_to_take_notes_without_asking(mock_read):
     result = chat.build_system_prompt(FAMILY, [], [], needs_title=False)
 
-    assert result.startswith("## How This Conversation Works\n")
+    assert "<remember>the note</remember>, right away and without asking first" in result
+
+
+@patch("app.chat.system_prompt.read_system_prompt", return_value="")
+def test_system_prompt_starts_with_the_family_rules_when_the_personality_is_empty(mock_read):
+    result = chat.build_system_prompt(FAMILY, [], [], needs_title=False)
+
+    assert result.startswith("## Model Family Rules\n")
+    assert "## How This Conversation Works\n" in result
 
 
 @patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
@@ -54,9 +69,9 @@ def test_system_prompt_lists_characters_and_notes(mock_read):
 
     assert "## Characters\n" in result
     assert "- Lena: auburn hair, freckles" in result
-    assert result.endswith(
-        "## Your Notes About The User\n" + chat.NOTES_INTRO + "\n- Likes hard light\n- Hates lens flare"
-    )
+    notes = "## Your Notes About The User\n" + chat.NOTES_INTRO + "\n- Likes hard light\n- Hates lens flare"
+    assert notes in result
+    assert result.index("## Characters") < result.index(notes) < result.index("## How This Conversation Works")
 
 
 def test_llm_messages_number_prompt_blocks_across_the_conversation():
@@ -172,6 +187,49 @@ def test_parse_reply_forces_empty_negative_when_the_family_has_none():
     reply = chat.parse_reply("<prompt>\nPOSITIVE: a cat\nNEGATIVE: blurry\n</prompt>", has_negative_prompt=False)
 
     assert reply.prompts == [{"positive_prompt": "a cat", "negative_prompt": ""}]
+
+
+def test_parse_reply_turns_a_bare_prompt_into_a_card():
+    reply = chat.parse_reply(
+        "Here it is:\nPOSITIVE: masterpiece, best quality, 1girl, solo. A witch reads.\n\nWhat do you think?",
+        has_negative_prompt=False,
+    )
+
+    assert reply.parts == [
+        {"type": "text", "text": "Here it is:"},
+        {"type": "prompt", "positive_prompt": "masterpiece, best quality, 1girl, solo. A witch reads.", "negative_prompt": ""},
+        {"type": "text", "text": "What do you think?"},
+    ]
+    # Stored in the block format, so the model sees it that way next turn.
+    assert "<prompt>\nPOSITIVE: masterpiece" in reply.content
+
+
+def test_parse_reply_joins_a_bare_negative_paragraph_and_unbolds_labels():
+    reply = chat.parse_reply(
+        "**POSITIVE:** a cat on a roof\n\n**NEGATIVE:** blurry, watermark\n\nAnother idea:\n\nPOSITIVE: a dog",
+        has_negative_prompt=True,
+    )
+
+    assert reply.prompts == [
+        {"positive_prompt": "a cat on a roof", "negative_prompt": "blurry, watermark"},
+        {"positive_prompt": "a dog", "negative_prompt": ""},
+    ]
+    assert [p["type"] for p in reply.parts] == ["prompt", "text", "prompt"]
+
+
+def test_parse_reply_leaves_bare_labels_alone_when_there_are_blocks():
+    reply = chat.parse_reply(
+        "<prompt>\nPOSITIVE: a cat\n</prompt>\n\nPOSITIVE: words are cheap",
+        has_negative_prompt=True,
+    )
+
+    assert reply.prompts == [{"positive_prompt": "a cat", "negative_prompt": ""}]
+
+
+def test_parse_reply_ignores_positive_in_the_middle_of_a_sentence():
+    reply = chat.parse_reply("El POSITIVE: que te pasé antes funciona mejor.", has_negative_prompt=True)
+
+    assert reply.prompts == []
 
 
 def test_parse_reply_without_tags_is_plain_text():
