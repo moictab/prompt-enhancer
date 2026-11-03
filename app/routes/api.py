@@ -29,7 +29,8 @@ def _selected_characters(character_ids: list[str]) -> list[dict]:
     return [c for c in characters.list_characters() if c["id"] in character_ids]
 
 
-async def _read_image_data_uri(image: UploadFile) -> tuple[str, int]:
+async def read_image(image: UploadFile) -> bytes:
+    """The uploaded image's bytes, after checking its type and size (400 otherwise)."""
     if image.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(
             status_code=400, detail=f"Unsupported image type: {image.content_type}"
@@ -37,8 +38,16 @@ async def _read_image_data_uri(image: UploadFile) -> tuple[str, int]:
     contents = await image.read()
     if len(contents) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Image exceeds 10 MB limit")
-    encoded = base64.b64encode(contents).decode("ascii")
-    return f"data:{image.content_type};base64,{encoded}", len(contents)
+    return contents
+
+
+def data_uri(content_type: str, contents: bytes) -> str:
+    return f"data:{content_type};base64,{base64.b64encode(contents).decode('ascii')}"
+
+
+async def _read_image_data_uri(image: UploadFile) -> tuple[str, int]:
+    contents = await read_image(image)
+    return data_uri(image.content_type, contents), len(contents)
 
 
 def _call_llm(
@@ -98,7 +107,6 @@ def _record(
     example_prompts: str = "",
     llm_model: str | None = None,
     vision_model: str | None = None,
-    previous_prompt: str | None = None,
     params: dict | None = None,
 ) -> dict:
     """Log the generation to history and build the response every prompt-crafting
@@ -112,7 +120,7 @@ def _record(
         temperature=temperature,
         user_input=user_input,
         example_prompts=example_prompts,
-        previous_prompt=previous_prompt,
+        previous_prompt=None,
         prompts=[
             {"positive_prompt": positive, "negative_prompt": negative}
             for positive, negative in pairs
@@ -148,7 +156,6 @@ class GenerateRequest(BaseModel):
     llm_model: str
     temperature: float = 0.7
     example_prompts: str = ""
-    previous_prompt: str = ""
     character_ids: list[str] = []
     variants: int = Field(default=1, ge=1, le=MAX_VARIANTS)
 
@@ -159,17 +166,12 @@ def generate(req: GenerateRequest):
         raise HTTPException(status_code=400, detail="user_input is required")
 
     family = _require_family(req.family_id)
-
-    is_iteration = bool(req.previous_prompt.strip())
-    mode = "iterate" if is_iteration else "generate"
-    previous_prompt = req.previous_prompt if is_iteration else None
     selected_characters = _selected_characters(req.character_ids)
 
-    system = prompts.build_system_prompt(mode, family)
+    system = prompts.build_system_prompt("generate", family)
     user_messages = [
         prompts.build_user_message(
-            mode, req.user_input,
-            previous_prompt=previous_prompt,
+            "generate", req.user_input,
             example_prompts=req.example_prompts,
             characters=selected_characters,
             variant=(index, req.variants),
@@ -178,20 +180,19 @@ def generate(req: GenerateRequest):
     ]
 
     logger.info(
-        "generate request mode=%s family_id=%s model=%s temperature=%.2f characters=%d variants=%d",
-        mode, req.family_id, req.llm_model, req.temperature, len(selected_characters), req.variants,
+        "generate request family_id=%s model=%s temperature=%.2f characters=%d variants=%d",
+        req.family_id, req.llm_model, req.temperature, len(selected_characters), req.variants,
     )
-    results = _call_llm(mode, req.llm_model, system, user_messages, req.temperature)
+    results = _call_llm("generate", req.llm_model, system, user_messages, req.temperature)
     pairs = [prompts.parse_response(r.content, family["has_negative_prompt"]) for r in results]
 
     return _record(
-        mode, family, results, pairs,
+        "generate", family, results, pairs,
         expected_count=req.variants,
         temperature=req.temperature,
         user_input=req.user_input,
         example_prompts=req.example_prompts,
         llm_model=req.llm_model,
-        previous_prompt=previous_prompt,
         params={"variants": req.variants, **_character_params(selected_characters)},
     )
 

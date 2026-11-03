@@ -60,3 +60,24 @@ def test_write_jsonl_replaces_file_contents(tmp_path):
 
     assert storage.read_jsonl(path) == [{"id": 2, "favorite": True}]
     assert [p.name for p in tmp_path.iterdir()] == ["history.jsonl"]
+
+
+def test_write_bytes_creates_parent_directories_and_leaves_no_temp_files(tmp_path):
+    path = tmp_path / "images" / "a.png"
+
+    storage.write_bytes(str(path), b"\x89PNG")
+
+    assert path.read_bytes() == b"\x89PNG"
+    assert [p.name for p in path.parent.iterdir()] == ["a.png"]
+
+
+def test_remove_deletes_files_and_directories_and_ignores_missing_paths(tmp_path):
+    (tmp_path / "dir" / "sub").mkdir(parents=True)
+    (tmp_path / "dir" / "sub" / "f.txt").write_text("x")
+    (tmp_path / "file.json").write_text("{}")
+
+    storage.remove(str(tmp_path / "dir"))
+    storage.remove(str(tmp_path / "file.json"))
+    storage.remove(str(tmp_path / "missing"))
+
+    assert list(tmp_path.iterdir()) == []

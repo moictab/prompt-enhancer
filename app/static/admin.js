@@ -6,6 +6,7 @@ const $ = (id) => document.getElementById(id);
 
 const prompts = {
   tabs: [...document.querySelectorAll("#system-prompt-tabs [role=tab]")],
+  help: $("system-prompt-help"),
   text: $("system-prompt-text"),
   save: $("system-prompt-save"),
   loadDefault: $("system-prompt-default"),
@@ -35,6 +36,8 @@ function showPromptMode(mode) {
     tab.tabIndex = selected ? 0 : -1;
   });
   prompts.text.setAttribute("aria-labelledby", `system-prompt-tab-${mode}`);
+  // Conversar's text is only the bot's personality; the help says what the app adds.
+  prompts.help.hidden = mode !== "conversation";
   prompts.text.value = prompts.drafts[mode] ?? prompts.saved[mode] ?? "";
   refreshPromptState();
 }
@@ -100,6 +103,118 @@ async function setupSystemPrompts() {
     toast(`No se han podido cargar las instrucciones: ${err.message}`, { error: true });
   }
   showPromptMode(prompts.mode);
+}
+
+// ---------- the Conversar bot's memory ----------
+
+function setupMemory() {
+  const list = $("memory-list");
+  const form = $("memory-form");
+  const text = $("memory-text");
+  const addButton = $("memory-add");
+  let notes = [];
+
+  const formatDay = (timestamp) => {
+    const date = new Date(timestamp);
+    return Number.isNaN(date.getTime())
+      ? ""
+      : date.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" });
+  };
+
+  function render() {
+    if (!notes.length) {
+      list.replaceChildren(
+        el("li", { class: "item-empty", text: "Aún no hay notas. El bot irá apuntando lo que aprenda de ti en Conversar." })
+      );
+      return;
+    }
+    list.replaceChildren(...notes.map(noteItem));
+  }
+
+  function noteItem(note) {
+    const item = el(
+      "li",
+      { class: "item", "data-id": note.id },
+      el("span", { class: "item-title memory-text", text: note.text }),
+      el(
+        "span",
+        { class: "item-actions" },
+        el("button", { type: "button", class: "btn-quiet", text: "Editar", onclick: () => edit(item, note) }),
+        confirmButton("Eliminar", () => remove(note))
+      ),
+      el("span", {
+        class: "item-text",
+        text: `${note.conversation_id ? "Apuntada en una conversación" : "Añadida a mano"}, ${formatDay(note.created_at)}`,
+      })
+    );
+    return item;
+  }
+
+  function edit(item, note) {
+    const area = el("textarea", { rows: 3, value: note.text, "aria-label": "Texto de la nota" });
+    const save = el("button", { type: "button", class: "btn-primary", text: "Guardar" });
+    save.addEventListener("click", async () => {
+      const value = area.value.trim();
+      if (!value) {
+        area.focus();
+        return;
+      }
+      setBusy(save, true, "Guardando…");
+      try {
+        const updated = await request(`/api/admin/memory/${note.id}`, { method: "PUT", json: { text: value } });
+        notes = notes.map((n) => (n.id === updated.id ? updated : n));
+        render();
+        toast("Nota guardada.");
+      } catch (err) {
+        setBusy(save, false);
+        toast(err.message, { error: true });
+      }
+    });
+    item.classList.add("is-editing");
+    item.replaceChildren(
+      area,
+      el("div", { class: "form-actions" }, save, el("button", { type: "button", class: "btn-quiet", text: "Cancelar", onclick: render }))
+    );
+    area.focus();
+  }
+
+  async function remove(note) {
+    try {
+      await request(`/api/admin/memory/${note.id}`, { method: "DELETE" });
+      notes = notes.filter((n) => n.id !== note.id);
+      render();
+      toast("Nota eliminada.");
+    } catch (err) {
+      toast(err.message, { error: true });
+    }
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const value = text.value.trim();
+    if (!value) {
+      text.focus();
+      return;
+    }
+    setBusy(addButton, true, "Añadiendo…");
+    try {
+      notes.push(await request("/api/admin/memory", { method: "POST", json: { text: value } }));
+      text.value = "";
+      render();
+      toast("Nota añadida.");
+    } catch (err) {
+      toast(err.message, { error: true });
+    } finally {
+      setBusy(addButton, false);
+    }
+  });
+
+  request("/api/admin/memory")
+    .then((loaded) => {
+      notes = loaded;
+      render();
+    })
+    .catch((err) => toast(`No se ha podido cargar la memoria: ${err.message}`, { error: true }));
 }
 
 // ---------- list + editor panels (families, characters) ----------
@@ -269,6 +384,7 @@ function setupCharacters() {
 
 document.addEventListener("DOMContentLoaded", () => {
   setupSystemPrompts();
+  setupMemory();
   setupFamilies();
   setupCharacters();
 });

@@ -121,58 +121,16 @@ def test_generate_returns_502_on_openrouter_error(mock_call, api_client, auth_he
 
 
 @patch("app.routes.api.call_openrouter")
-def test_generate_with_previous_prompt_returns_parsed_prompt(mock_call, api_client, auth_headers, tmp_path):
-    family = _create_family(tmp_path)
-    mock_call.return_value = OpenRouterResult(content="POSITIVE: a samurai with lightning\nNEGATIVE: blurry", cost=0.000123)
-
-    response = api_client.post(
-        "/api/generate",
-        json={
-            "user_input": "add lightning",
-            "previous_prompt": "a samurai in rain",
-            "family_id": family["id"],
-            "llm_model": "m",
-        },
-        auth=auth_headers,
-    )
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["prompts"] == [{"positive_prompt": "a samurai with lightning", "negative_prompt": "blurry"}]
-    assert body["cost"] == 0.000123
-    assert body["truncated"] is False
-    assert body["count_mismatch"] is False
-
-
-@patch("app.routes.api.call_openrouter")
-def test_generate_with_previous_prompt_appends_to_history_as_iterate_mode(mock_call, api_client, auth_headers, tmp_path):
-    family = _create_family(tmp_path)
-    mock_call.return_value = OpenRouterResult(content="POSITIVE: updated\nNEGATIVE: ", cost=0.000123)
-
-    api_client.post(
-        "/api/generate",
-        json={
-            "user_input": "add lightning", "previous_prompt": "a samurai",
-            "family_id": family["id"], "llm_model": "m",
-        },
-        auth=auth_headers,
-    )
-
-    from app import history
-    entries = history.list_entries(path=str(tmp_path / "history.jsonl"))
-    assert entries[0]["mode"] == "iterate"
-    assert entries[0]["previous_prompt"] == "a samurai"
-
-
-@patch("app.routes.api.call_openrouter")
-def test_generate_treats_blank_previous_prompt_as_generate_mode(mock_call, api_client, auth_headers, tmp_path):
+def test_generate_ignores_a_previous_prompt_from_the_retired_iterate_mode(
+    mock_call, api_client, auth_headers, tmp_path
+):
     family = _create_family(tmp_path)
     mock_call.return_value = OpenRouterResult(content="POSITIVE: a cat\nNEGATIVE: ", cost=0.000123)
 
     api_client.post(
         "/api/generate",
         json={
-            "user_input": "a cat", "previous_prompt": "   ",
+            "user_input": "a cat", "previous_prompt": "a samurai",
             "family_id": family["id"], "llm_model": "m",
         },
         auth=auth_headers,
@@ -182,30 +140,7 @@ def test_generate_treats_blank_previous_prompt_as_generate_mode(mock_call, api_c
     entries = history.list_entries(path=str(tmp_path / "history.jsonl"))
     assert entries[0]["mode"] == "generate"
     assert entries[0]["previous_prompt"] is None
-
-
-@patch("app.routes.api.call_openrouter")
-def test_generate_with_previous_prompt_suppresses_negative_when_family_has_none(
-    mock_call, api_client, auth_headers, tmp_path
-):
-    family = _create_family(tmp_path, has_negative_prompt=False)
-    mock_call.return_value = OpenRouterResult(content="POSITIVE: updated flowing scene\nNEGATIVE: blurry", cost=0.000123)
-
-    response = api_client.post(
-        "/api/generate",
-        json={
-            "user_input": "make it night time", "previous_prompt": "a flowing scene",
-            "family_id": family["id"], "llm_model": "m",
-        },
-        auth=auth_headers,
-    )
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["prompts"] == [{"positive_prompt": "updated flowing scene", "negative_prompt": ""}]
-    assert body["cost"] == 0.000123
-    assert body["truncated"] is False
-    assert body["count_mismatch"] is False
+    assert "a samurai" not in mock_call.call_args.kwargs["user_message"]
 
 
 @patch("app.routes.api.call_openrouter")

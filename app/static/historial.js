@@ -7,6 +7,7 @@ import {
   mergeReferences,
   renderTake,
   request,
+  startConversationFrom,
   storeReferences,
   toast,
   toggleFavorite,
@@ -41,6 +42,7 @@ function searchableText(entry) {
     entry.previous_prompt,
     entry.family_name,
     params.aesthetic,
+    params.conversation_title,
     ...(params.character_names || []),
     ...(params.reference_prompts || []),
     ...entry.prompts.flatMap((p) => [p.positive_prompt, p.negative_prompt]),
@@ -61,16 +63,6 @@ function filteredEntries() {
     const haystack = (entry._search ??= searchableText(entry));
     return terms.every((term) => haystack.includes(term));
   });
-}
-
-function reuseInGenerar(entry, prompt) {
-  writeStored(sessionStorage, REUSE_KEY, {
-    positive_prompt: prompt.positive_prompt,
-    family_id: entry.family_id,
-    llm_model: entry.llm_model,
-    temperature: entry.temperature,
-  });
-  window.location.href = "/";
 }
 
 // Stays on the page so several prompts can be collected; Crear picks them up
@@ -106,9 +98,12 @@ async function deleteEntry(entry) {
 }
 
 const handlers = {
-  onIterate: reuseInGenerar,
+  onIterate: startConversationFrom,
   onReference: addToReferences,
   onUseReferences: useReferencesInVariaciones,
+  onOpenConversation: (conversationId) => {
+    window.location.href = `/conversar?id=${encodeURIComponent(conversationId)}`;
+  },
   onFavorite: async (entry, button) => {
     if ((await toggleFavorite(entry, button)) && state.filters.favoritesOnly && !entry.favorite) {
       render();

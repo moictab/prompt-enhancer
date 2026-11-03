@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import characters, families, system_prompt
+from .. import characters, families, memory, system_prompt
 from ..seed import DEFAULT_SYSTEM_PROMPTS
 
 router = APIRouter(prefix="/api/admin")
@@ -67,6 +67,41 @@ def update_character(character_id: str, payload: CharacterPayload):
 def delete_character(character_id: str):
     if not characters.delete_character(character_id):
         raise HTTPException(status_code=404, detail="Unknown character_id")
+    return {"deleted": True}
+
+
+class NotePayload(BaseModel):
+    text: str
+
+
+def _require_note_text(payload: NotePayload) -> str:
+    if not payload.text.strip():
+        raise HTTPException(status_code=400, detail="text is required")
+    return payload.text.strip()
+
+
+@router.get("/memory")
+def list_notes():
+    return memory.list_notes()
+
+
+@router.post("/memory")
+def create_note(payload: NotePayload):
+    return memory.create_note(_require_note_text(payload))
+
+
+@router.put("/memory/{note_id}")
+def update_note(note_id: str, payload: NotePayload):
+    updated = memory.update_note(note_id, _require_note_text(payload))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Unknown note")
+    return updated
+
+
+@router.delete("/memory/{note_id}")
+def delete_note(note_id: str):
+    if not memory.delete_note(note_id):
+        raise HTTPException(status_code=404, detail="Unknown note")
     return {"deleted": True}
 
 

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Conversar{% endblock %}
+{% block body_class %}page-chat{% endblock %}
+{% block content %}
+<div class="chat-layout" id="chat-layout">
+  <aside class="threads" aria-labelledby="threads-title">
+    <h2 id="threads-title" class="visually-hidden">Conversaciones</h2>
+    <button type="button" class="btn-secondary threads-new" id="new-conversation">Nueva conversación</button>
+    <ol class="thread-list" id="thread-list"></ol>
+  </aside>
+
+  <section class="chat" aria-labelledby="chat-title">
+    <header class="chat-head">
+      <button type="button" class="btn-quiet threads-toggle" id="threads-toggle" aria-expanded="false" aria-controls="thread-list">Conversaciones</button>
+      <div class="chat-heading">
+        <h1 id="chat-title">Nueva conversación</h1>
+        <p class="chat-meta" id="chat-meta"></p>
+      </div>
+      <button type="button" class="btn-quiet" id="settings-toggle" aria-expanded="false" aria-controls="chat-settings">Ajustes</button>
+      <span id="delete-slot"></span>
+    </header>
+
+    <div class="chat-settings" id="chat-settings" hidden>
+      <div class="field">
+        <label for="chat-family">Familia de modelo</label>
+        <select id="chat-family">
+          {% for family in families %}
+          <option value="{{ family.id }}">{{ family.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="chat-model">Modelo de texto</label>
+        <input id="chat-model" type="text" list="openrouter-models" value="{{ default_llm_model }}" spellcheck="false" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="chat-temperature">Creatividad <output id="chat-temperature-value" for="chat-temperature">0.7</output></label>
+        <input id="chat-temperature" type="range" min="0" max="1" step="0.05" value="0.7">
+      </div>
+      <div class="field chat-characters">
+        <span class="label" id="chat-characters-label">Personajes</span>
+        <div class="chips" id="chat-chips" role="group" aria-labelledby="chat-characters-label"></div>
+      </div>
+    </div>
+
+    <div class="chat-scroll" id="chat-scroll">
+      <div class="chat-log" id="chat-log" aria-live="polite"></div>
+    </div>
+
+    <form class="chat-composer" id="chat-composer" novalidate>
+      <p class="notice is-error" id="chat-error" role="alert" hidden></p>
+      <ul class="attachments" id="attachments" aria-label="Imágenes adjuntas" hidden></ul>
+      <div class="composer-row">
+        <label class="btn-icon attach" title="Adjuntar imágenes">
+          <input type="file" id="chat-images" accept="image/jpeg,image/png,image/webp" multiple>
+          <span aria-hidden="true">+</span>
+          <span class="visually-hidden">Adjuntar imágenes</span>
+        </label>
+        <textarea id="chat-input" rows="1" placeholder="Escribe un mensaje" aria-label="Mensaje"></textarea>
+        <button type="submit" class="btn-primary" id="chat-send">Enviar</button>
+      </div>
+      <p class="composer-hint">Intro envía; Mayús + Intro, nueva línea. Hasta 4 imágenes por mensaje.</p>
+    </form>
+  </section>
+</div>
+
+<datalist id="openrouter-models"></datalist>
+{% endblock %}
+{% block scripts %}
+<script type="module" src="/static/conversar.js"></script>
+{% endblock %}

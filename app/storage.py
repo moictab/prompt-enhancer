@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Callable, TextIO
@@ -29,6 +30,29 @@ def _write_atomically(path: str, suffix: str, write: Callable[[TextIO], None]) -
 
 def write_json(path: str, data: Any) -> None:
     _write_atomically(path, ".json", lambda f: json.dump(data, f, indent=2, ensure_ascii=False))
+
+
+def write_bytes(path: str, data: bytes) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=str(p.parent), prefix=".tmp-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp_path, p)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+
+
+def remove(path: str) -> None:
+    """Delete a file or a whole directory; a missing path is not an error."""
+    p = Path(path)
+    if p.is_dir():
+        shutil.rmtree(p)
+    elif p.exists():
+        p.unlink()
 
 
 def append_jsonl(path: str, entry: dict) -> None:

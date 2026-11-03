@@ -31,6 +31,18 @@ def index(request: Request):
     )
 
 
+@router.get("/conversar", response_class=HTMLResponse)
+def conversar_page(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "conversar.html",
+        {
+            "families": families.list_families(),
+            "default_llm_model": get_settings().default_llm_model,
+        },
+    )
+
+
 @router.get("/historial", response_class=HTMLResponse)
 def historial_page(request: Request):
     return templates.TemplateResponse(request, "historial.html", {})

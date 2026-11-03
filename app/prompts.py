@@ -89,7 +89,6 @@ def _variation_axes_parts(axes: list[dict]) -> list[str]:
 def build_user_message(
     mode: str,
     user_input: str,
-    previous_prompt: str | None = None,
     example_prompts: str | None = None,
     characters: list[dict] | None = None,
     count: int | None = None,
@@ -99,10 +98,7 @@ def build_user_message(
     references: list[str] | None = None,
 ) -> str:
     parts = []
-    if mode == "iterate":
-        parts.append(f"## Previous Prompt\n{previous_prompt}")
-        parts.append(f"## Requested Changes\n{user_input}")
-    elif mode == "image":
+    if mode == "image":
         parts.append("## Image\nA reference image is attached for this prompt.")
         if user_input and user_input.strip():
             parts.append(f"## Idea\n{user_input.strip()}")

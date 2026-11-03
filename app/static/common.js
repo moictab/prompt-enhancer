@@ -238,13 +238,27 @@ export function spawnFloatingCost(cost, originEl) {
 
 export const MODE_LABELS = {
   generate: "Generar",
-  iterate: "Iterar",
+  iterate: "Iterar", // retired one-shot refine; older history entries still carry it
   image: "Imagen",
   story: "Historia",
   variations: "Variaciones",
+  conversation: "Conversación",
 };
 
-const FRAME_NOUNS = { story: "Episodio", variations: "Variación" };
+const FRAME_NOUNS = { story: "Episodio", variations: "Variación", conversation: "Propuesta" };
+
+// "Iterar" on any prompt opens a new conversation in Conversar that starts from it.
+export const CONVERSATION_START_KEY = "conversation-start";
+
+export function startConversationFrom(entry, prompt) {
+  writeStored(sessionStorage, CONVERSATION_START_KEY, {
+    positive_prompt: prompt.positive_prompt,
+    family_id: entry.family_id,
+    llm_model: entry.llm_model,
+    temperature: entry.temperature,
+  });
+  window.location.href = "/conversar";
+}
 
 function expectedCount(entry) {
   const params = entry.params || {};
@@ -282,6 +296,9 @@ function takeBrief(entry) {
     if (fixed.length) lines.push(["Fijo", fixed.join(", ")]);
   } else if (entry.mode === "iterate") {
     lines.push(["Cambios", entry.user_input]);
+  } else if (entry.mode === "conversation") {
+    if (params.conversation_title) lines.push(["Conversación", params.conversation_title]);
+    if (entry.user_input) lines.push(["Tú", entry.user_input]);
   } else if (entry.user_input) {
     lines.push([entry.mode === "story" ? "Historia" : "Idea", entry.user_input]);
   }
@@ -304,9 +321,10 @@ function formatWhen(timestamp, withDate) {
     : date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
 }
 
-function renderFrame(entry, prompt, index, handlers) {
-  const multiple = entry.prompts.length > 1;
-  const noun = FRAME_NOUNS[entry.mode] || "Variante";
+// One prompt as a frame: its text, its negative, and the actions whose handlers
+// are given. With a number it gets the amber frame number (and label for screen
+// readers); without, it is a lone prompt.
+export function renderFrame(entry, prompt, handlers = {}, { number = null, label = null } = {}) {
   const actions = el(
     "div",
     { class: "frame-actions" },
@@ -332,8 +350,8 @@ function renderFrame(entry, prompt, index, handlers) {
 
   return el(
     "li",
-    { class: multiple ? "frame" : "frame is-single", "aria-label": multiple ? `${noun} ${index + 1}` : null },
-    multiple && el("span", { class: "frame-no", "aria-hidden": "true", text: String(index + 1) }),
+    { class: number ? "frame" : "frame is-single", "aria-label": label },
+    number && el("span", { class: "frame-no", "aria-hidden": "true", text: String(number) }),
     el(
       "div",
       { class: "frame-body" },
@@ -370,8 +388,32 @@ function takeReferences(entry, handlers) {
   );
 }
 
+function takeLinks(entry, handlers) {
+  const conversationId = (entry.params || {}).conversation_id;
+  if (!handlers.onOpenConversation || !conversationId) return null;
+  return el(
+    "div",
+    { class: "take-links" },
+    el("button", {
+      type: "button",
+      class: "btn-quiet",
+      text: "Abrir la conversación",
+      onclick: () => handlers.onOpenConversation(conversationId),
+    })
+  );
+}
+
+function renderFrames(entry, handlers) {
+  const multiple = entry.prompts.length > 1;
+  const noun = FRAME_NOUNS[entry.mode] || "Variante";
+  return entry.prompts.map((prompt, index) =>
+    renderFrame(entry, prompt, handlers, multiple ? { number: index + 1, label: `${noun} ${index + 1}` } : {})
+  );
+}
+
 // handlers: { onIterate(entry, prompt), onReference(entry, prompt), onExtract(prompt, button),
-// onUseReferences(entry), onFavorite(entry, button), onDelete(entry, button) }
+// onUseReferences(entry), onOpenConversation(conversationId), onFavorite(entry, button),
+// onDelete(entry, button) }
 // Any handler left out hides its action.
 export function renderTake(entry, handlers = {}, { withDate = false } = {}) {
   const cost = formatCost(entry.cost);
@@ -406,9 +448,10 @@ export function renderTake(entry, handlers = {}, { withDate = false } = {}) {
       star
     ),
     takeBrief(entry),
+    takeLinks(entry, handlers),
     takeReferences(entry, handlers),
     warnings.map((text) => el("p", { class: "notice is-warning", text })),
-    el("ol", { class: "frames" }, entry.prompts.map((prompt, index) => renderFrame(entry, prompt, index, handlers))),
+    el("ol", { class: "frames" }, renderFrames(entry, handlers)),
     handlers.onDelete &&
       el(
         "footer",

@@ -13,6 +13,7 @@ import {
   request,
   setBusy,
   spawnFloatingCost,
+  startConversationFrom,
   storeReferences,
   toast,
   toggleFavorite,
@@ -29,7 +30,7 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 const MODE_HINTS = {
-  generate: "Convierte una idea en un prompt, o modifica uno que ya tengas pegándolo como prompt de partida.",
+  generate: "Convierte una idea en un prompt. Para trabajar a fondo uno que ya tengas, usa Conversar.",
   image: "Crea un prompt a partir de una imagen de referencia.",
   story: "Cuenta una historia en varios prompts seguidos, con los mismos personajes y el mismo estilo.",
   variations: "Mantén el personaje y la estética, y cambia ropa, escenario, luz o pose en cada prompt. Puedes partir de prompts que ya tengas.",
@@ -49,13 +50,10 @@ const AXIS_EXAMPLES = {
 const $ = (id) => document.getElementById(id);
 
 const ui = {
-  composer: document.querySelector(".composer"),
   form: $("composer-form"),
   tabs: [...document.querySelectorAll(".mode-switch [role=tab]")],
   hint: $("mode-hint"),
-  previousPrompt: $("previous-prompt"),
   generateInput: $("generate-input"),
-  generateInputLabel: $("generate-input-label"),
   imageFile: $("image-file"),
   imagePreview: $("image-preview"),
   dropzone: $("dropzone"),
@@ -223,10 +221,6 @@ function setMode(mode) {
   updateSubmitLabel();
 }
 
-function isIterating() {
-  return state.mode === "generate" && ui.previousPrompt.value.trim() !== "";
-}
-
 function submitLabel() {
   const variants = selectedVariants();
   switch (state.mode) {
@@ -237,17 +231,11 @@ function submitLabel() {
     case "variations":
       return `Generar ${ui.variationsCount.value || 4} variaciones`;
     default:
-      if (isIterating()) return variants > 1 ? `Iterar en ${variants} variantes` : "Iterar";
       return variants > 1 ? `Generar ${variants} variantes` : "Generar";
   }
 }
 
 function updateSubmitLabel() {
-  const iterating = isIterating();
-  ui.generateInputLabel.textContent = iterating ? "Cambios" : "Idea";
-  ui.generateInput.placeholder = iterating
-    ? "Que sea de noche, con niebla y luz de farolas"
-    : "Una bruja leyendo en un bosque de abedules al amanecer";
   if (!state.busy) ui.submit.textContent = submitLabel();
 }
 
@@ -316,19 +304,13 @@ function buildRequest() {
   switch (state.mode) {
     case "generate": {
       const userInput = ui.generateInput.value.trim();
-      if (!userInput) {
-        throw new FormProblem(
-          isIterating() ? "Escribe qué quieres cambiar del prompt de partida." : "Escribe una idea.",
-          ui.generateInput
-        );
-      }
+      if (!userInput) throw new FormProblem("Escribe una idea.", ui.generateInput);
       return {
         url: "/api/generate",
         count: selectedVariants(),
         json: {
           ...common,
           user_input: userInput,
-          previous_prompt: ui.previousPrompt.value,
           llm_model: requireModel(ui.llmModel),
           character_ids: characterIds,
           variants: selectedVariants(),
@@ -400,7 +382,7 @@ function buildRequest() {
 // ---------- the sheet (session results) ----------
 
 const takeHandlers = {
-  onIterate: (entry, prompt) => startIteration(prompt.positive_prompt, entry.family_id),
+  onIterate: startConversationFrom,
   onReference: (entry, prompt) => announceReferences(addReferences([prompt.positive_prompt])),
   onUseReferences: (entry) => {
     setFamily(entry.family_id);
@@ -459,7 +441,7 @@ function pendingTake(count) {
     el(
       "header",
       { class: "take-head" },
-      el("span", { class: "take-mode", text: MODE_LABELS[isIterating() ? "iterate" : state.mode] }),
+      el("span", { class: "take-mode", text: MODE_LABELS[state.mode] }),
       el("span", { class: "take-family", text: ui.family.selectedOptions[0]?.textContent || "" }),
       el("span", { class: "take-meta", text: count > 1 ? `Generando ${count} ${noun}…` : "Generando…" })
     ),
@@ -513,19 +495,6 @@ async function submitComposer(event) {
     updateSubmitLabel();
     updateSheet();
   }
-}
-
-function startIteration(positivePrompt, familyId) {
-  setMode("generate");
-  setFamily(familyId);
-  ui.previousPrompt.value = positivePrompt;
-  ui.generateInput.value = "";
-  updateSubmitLabel();
-  saveSettings();
-  if (window.matchMedia("(max-width: 900px)").matches) {
-    ui.composer.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-  ui.generateInput.focus({ preventScroll: true });
 }
 
 function setupComposer() {
@@ -936,20 +905,16 @@ async function setupModelSuggestions() {
 
 // ---------- hand-off from Historial ----------
 
+// "Usar estas referencias": Historial already stored the references themselves.
 function applyReuseHandoff() {
   const data = readStored(sessionStorage, REUSE_KEY, null);
   if (!data) return;
   sessionStorage.removeItem(REUSE_KEY);
   if (data.llm_model) ui.llmModel.value = data.llm_model;
   setTemperature(data.temperature);
-  if (data.mode === "variations") {
-    // "Usar estas referencias": Historial already stored the references themselves.
-    setFamily(data.family_id);
-    setMode("variations");
-    saveSettings();
-    return;
-  }
-  startIteration(data.positive_prompt || "", data.family_id);
+  setFamily(data.family_id);
+  setMode("variations");
+  saveSettings();
 }
 
 document.addEventListener("DOMContentLoaded", () => {

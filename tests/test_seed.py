@@ -28,12 +28,13 @@ def test_ensure_seed_data_creates_every_mode_system_prompt(tmp_path):
 
     data = json.loads((tmp_path / "system_prompts.json").read_text())
     assert set(data.keys()) == {
-        "generate", "iterate", "image", "extract_character", "story", "variations",
+        "generate", "image", "extract_character", "story", "variations", "conversation",
     }
     assert "POSITIVE:" in data["generate"]
-    assert "POSITIVE:" in data["iterate"]
     assert "POSITIVE:" in data["image"]
-    assert "PRESERVE" in data["iterate"]
+    assert "partner in crime" in data["conversation"]
+    # The personality alone: the prompt format is appended by app.chat, not editable.
+    assert "<prompt>" not in data["conversation"]
     assert "NAME:" in data["extract_character"]
     assert "TEXT:" in data["extract_character"]
     assert "EPISODE 1:" in data["story"]
@@ -70,4 +71,4 @@ def test_ensure_seed_data_fills_in_modes_missing_from_an_older_data_dir(tmp_path
     assert data["generate"] == "custom"
     assert data["story"] == ""
     assert "VARIATION 1:" in data["variations"]
-    assert "PRESERVE" in data["iterate"]
+    assert "partner in crime" in data["conversation"]

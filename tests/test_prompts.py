@@ -21,14 +21,14 @@ def test_build_system_prompt_combines_mode_prompt_and_family(mock_read):
 
 
 @patch("app.prompts.system_prompt.read_system_prompt")
-def test_build_system_prompt_uses_iterate_mode_prompt(mock_read):
-    mock_read.return_value = "iterate rules"
+def test_build_system_prompt_uses_the_requested_mode_prompt(mock_read):
+    mock_read.return_value = "story rules"
     family = {"instructions": "family rules"}
 
-    result = build_system_prompt("iterate", family)
+    result = build_system_prompt("story", family)
 
-    assert result == "iterate rules\n\nfamily rules"
-    mock_read.assert_called_once_with("iterate")
+    assert result == "story rules\n\nfamily rules"
+    mock_read.assert_called_once_with("story")
 
 
 def test_build_user_message_generate_mode():
@@ -41,12 +41,6 @@ def test_build_user_message_generate_mode_with_example_prompts():
     result = build_user_message("generate", "a cyberpunk samurai", example_prompts="cinematic, moody")
 
     assert result == "## Idea\na cyberpunk samurai\n\n## Example Prompts\ncinematic, moody"
-
-
-def test_build_user_message_iterate_mode():
-    result = build_user_message("iterate", "add lightning", previous_prompt="a samurai in rain")
-
-    assert result == "## Previous Prompt\na samurai in rain\n\n## Requested Changes\nadd lightning"
 
 
 def test_build_user_message_with_characters_adds_section_with_instruction():

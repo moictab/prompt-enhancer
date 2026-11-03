@@ -1,9 +1,10 @@
-from unittest.mock import Mock, patch
+import json
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import requests
 
-from app.openrouter_client import call_openrouter
+from app.openrouter_client import StreamEnd, call_openrouter, stream_chat
 
 
 def _mock_response(status_code=200, json_data=None, text=""):
@@ -206,3 +207,82 @@ def test_call_openrouter_raises_on_json_decode_error(mock_post):
 
     with pytest.raises(RuntimeError, match="Unexpected response format"):
         call_openrouter(api_key="key", model="m", system_prompt="s", user_message="u")
+
+
+def _stream_response(lines, status_code=200, text=""):
+    response = MagicMock()
+    response.status_code = status_code
+    response.text = text
+    response.iter_lines.return_value = [line.encode("utf-8") for line in lines]
+    response.__enter__.return_value = response
+    return response
+
+
+def _data(payload):
+    return "data: " + json.dumps(payload)
+
+
+@patch("app.openrouter_client.requests.post")
+def test_stream_chat_yields_deltas_then_the_end_with_cost(mock_post):
+    mock_post.return_value = _stream_response([
+        ": OPENROUTER PROCESSING",
+        _data({"choices": [{"delta": {"role": "assistant", "content": ""}}]}),
+        _data({"choices": [{"delta": {"content": "Hola, "}}]}),
+        "",
+        _data({"choices": [{"delta": {"content": "Lena."}, "finish_reason": "stop"}]}),
+        _data({"choices": [], "usage": {"cost": 0.0042}}),
+        "data: [DONE]",
+    ])
+
+    items = list(stream_chat("key", "m", [{"role": "user", "content": "hi"}], 0.5))
+
+    assert items[:-1] == ["Hola, ", "Lena."]
+    assert items[-1] == StreamEnd(cost=0.0042, truncated=False)
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["stream"] is True
+    assert payload["messages"] == [{"role": "user", "content": "hi"}]
+    assert payload["temperature"] == 0.5
+    assert mock_post.call_args.kwargs["stream"] is True
+
+
+@patch("app.openrouter_client.requests.post")
+def test_stream_chat_flags_a_reply_cut_by_the_length_limit(mock_post):
+    mock_post.return_value = _stream_response([
+        _data({"choices": [{"delta": {"content": "long"}, "finish_reason": "length"}]}),
+        "data: [DONE]",
+    ])
+
+    items = list(stream_chat("key", "m", [], 0.7))
+
+    assert items[-1].truncated is True
+
+
+@patch("app.openrouter_client.requests.post")
+def test_stream_chat_raises_on_an_error_reported_mid_stream(mock_post):
+    mock_post.return_value = _stream_response([
+        _data({"choices": [{"delta": {"content": "Empie"}}]}),
+        _data({"error": {"message": "Provider overloaded"}}),
+    ])
+
+    stream = stream_chat("key", "m", [], 0.7)
+    assert next(stream) == "Empie"
+    with pytest.raises(RuntimeError, match="Provider overloaded"):
+        next(stream)
+
+
+@patch("app.openrouter_client.requests.post")
+def test_stream_chat_raises_on_http_errors(mock_post):
+    mock_post.return_value = _stream_response([], status_code=402)
+
+    with pytest.raises(RuntimeError, match="insufficient credits"):
+        list(stream_chat("key", "m", [], 0.7))
+
+
+@patch("app.openrouter_client.requests.post")
+def test_stream_chat_raises_when_the_connection_drops(mock_post):
+    response = _stream_response([])
+    response.iter_lines.side_effect = requests.exceptions.ChunkedEncodingError("reset")
+    mock_post.return_value = response
+
+    with pytest.raises(RuntimeError, match="dropped mid-reply"):
+        list(stream_chat("key", "m", [], 0.7))

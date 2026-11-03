@@ -68,7 +68,7 @@ def test_create_list_update_delete_character(api_client, auth_headers):
 
 
 def test_get_and_update_system_prompt_for_each_mode(api_client, auth_headers):
-    for mode in ["generate", "iterate", "image", "extract_character", "story", "variations"]:
+    for mode in ["generate", "image", "extract_character", "story", "variations", "conversation"]:
         get_response = api_client.get(f"/api/admin/system-prompt/{mode}", auth=auth_headers)
         assert get_response.status_code == 200
         assert get_response.json() == {"text": ""}
@@ -90,9 +90,42 @@ def test_system_prompt_modes_are_independent(api_client, auth_headers):
         "/api/admin/system-prompt/generate", json={"text": "generate text"}, auth=auth_headers
     )
 
-    assert api_client.get("/api/admin/system-prompt/iterate", auth=auth_headers).json() == {
+    assert api_client.get("/api/admin/system-prompt/conversation", auth=auth_headers).json() == {
         "text": ""
     }
+
+
+def test_retired_iterate_system_prompt_mode_is_rejected(api_client, auth_headers):
+    response = api_client.get("/api/admin/system-prompt/iterate", auth=auth_headers)
+
+    assert response.status_code == 400
+
+
+def test_create_list_update_delete_memory_note(api_client, auth_headers):
+    created = api_client.post(
+        "/api/admin/memory", json={"text": "  Prefers hard light  "}, auth=auth_headers
+    ).json()
+    assert created["text"] == "Prefers hard light"
+
+    assert [n["text"] for n in api_client.get("/api/admin/memory", auth=auth_headers).json()] == [
+        "Prefers hard light"
+    ]
+
+    updated = api_client.put(
+        f"/api/admin/memory/{created['id']}", json={"text": "Prefers soft light"}, auth=auth_headers
+    ).json()
+    assert updated["text"] == "Prefers soft light"
+
+    assert api_client.delete(f"/api/admin/memory/{created['id']}", auth=auth_headers).status_code == 200
+    assert api_client.get("/api/admin/memory", auth=auth_headers).json() == []
+
+
+def test_memory_rejects_blank_notes_and_unknown_ids(api_client, auth_headers):
+    assert api_client.post("/api/admin/memory", json={"text": " "}, auth=auth_headers).status_code == 400
+    assert api_client.put(
+        "/api/admin/memory/nope", json={"text": "x"}, auth=auth_headers
+    ).status_code == 404
+    assert api_client.delete("/api/admin/memory/nope", auth=auth_headers).status_code == 404
 
 
 def test_get_system_prompt_rejects_unknown_mode(api_client, auth_headers):

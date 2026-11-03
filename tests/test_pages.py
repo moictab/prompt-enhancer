@@ -70,7 +70,6 @@ def test_index_renders_every_mode_in_one_composer(api_client, auth_headers):
     assert 'id="composer-form"' in response.text
     for mode in ["generate", "image", "story", "variations"]:
         assert f'data-mode="{mode}"' in response.text
-    assert 'id="previous-prompt"' in response.text
     assert 'id="takes"' in response.text
     assert 'id="characters-dialog"' in response.text
 
@@ -83,6 +82,25 @@ def test_index_renders_every_variation_axis(api_client, auth_headers):
     for key, label in VARIATION_AXES.items():
         assert f'data-axis="{key}"' in response.text
         assert label in response.text
+
+
+def test_conversar_page_renders_with_families_and_default_model(api_client, auth_headers, monkeypatch):
+    monkeypatch.setenv("DEFAULT_LLM_MODEL", "vendor/chat-model")
+
+    response = api_client.get("/conversar", auth=auth_headers)
+
+    assert response.status_code == 200
+    assert 'id="chat-log"' in response.text
+    assert 'value="vendor/chat-model"' in response.text
+    assert ">SDXL</option>" in response.text
+    assert '<a href="/conversar" aria-current="page">' in response.text
+
+
+def test_index_no_longer_has_a_starting_prompt_field(api_client, auth_headers):
+    response = api_client.get("/", auth=auth_headers)
+
+    assert 'id="previous-prompt"' not in response.text
+    assert '<a href="/conversar"' in response.text
 
 
 def test_index_renders_reference_prompts_field_in_variations(api_client, auth_headers):
@@ -126,8 +144,10 @@ def test_admin_page_has_management_sections(api_client, auth_headers):
     assert 'id="family-form"' in response.text
     assert 'id="character-form"' in response.text
     assert 'id="system-prompt-text"' in response.text
-    for mode in ["generate", "iterate", "image", "story", "variations", "extract_character"]:
+    assert 'id="memory-list"' in response.text
+    for mode in ["generate", "image", "story", "variations", "conversation", "extract_character"]:
         assert f'data-mode="{mode}"' in response.text
+    assert 'data-mode="iterate"' not in response.text
 
 
 def test_nav_marks_the_current_page(api_client, auth_headers):
