@@ -56,7 +56,7 @@ def test_running_another_familys_model_switches_the_conversation_first(fake_comf
     assert "Not run yet" in result["error"]
     assert result["family"] == "Illustrious" and result["uses_negative_prompt"] is True
     assert result["family_rules"] == "Write danbooru tags."
-    assert part == {"type": "family", "family": "Illustrious", "previous": "Krea 2"}
+    assert part == {"type": "family", "family": "Illustrious", "previous": "Krea 2", "reason": "model"}
     assert conversations.get(conversation_id)["family_id"] == illustrious["id"]
     assert fake_comfy.submitted == []
 

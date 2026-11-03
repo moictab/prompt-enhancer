@@ -180,7 +180,8 @@ function liveParts(raw) {
     .replace(/<title>[\s\S]*?(?:<\/title>|(?=\n)|$)/gi, "")
     .replace(/<remember\b[^>]*>[\s\S]*?(?:<\/remember>|(?=\n)|$)/gi, "")
     .replace(/<forget\b[^>]*>(?:\s*<\/forget>)?/gi, "")
-    .replace(/<\/?(?:title|remember|forget)\b[^>]*>/gi, "")
+    .replace(/<review\b[^>]*>[\s\S]*?(?:<\/review>|(?=\n)|$)/gi, "")
+    .replace(/<\/?(?:title|remember|forget|review)\b[^>]*>/gi, "")
     .replace(/^[ \t]*```[\w-]*[ \t]*$\n?/gm, "")
     .replace(/<\/?[a-z]*$/i, "");
   const parts = [];
@@ -348,6 +349,8 @@ function openViewer(imageId) {
   if (!viewer.dialog.open) viewer.dialog.showModal();
 }
 
+// A thumbs up is one click; a thumbs down asks why -- a dislike is only worth learning from
+// with its reason. The comment is the reason when the image is disliked.
 function reactionControls(image, number) {
   const reaction = image.reaction || {};
   const wrap = el("figcaption", { class: "reactions" });
@@ -366,44 +369,21 @@ function reactionControls(image, number) {
     wrap.replaceWith(reactionControls(image, number));
     renderReactionHint();
   };
-  const vote = (rating, label) => {
-    const button = el(
-      "button",
-      {
-        type: "button",
-        class: "btn-icon react",
-        "aria-pressed": String(reaction.rating === rating),
-        "aria-label": `${label} la imagen ${number}`,
-        title: label,
-      },
-      thumbIcon(rating === "down")
-    );
-    button.addEventListener("click", () =>
-      save(reaction.rating === rating ? null : rating, reaction.comment || "", button)
-    );
-    return button;
-  };
-  const commentButton = el("button", {
-    type: "button",
-    class: "btn-quiet react-comment",
-    text: reaction.comment ? `«${reaction.comment}»` : "Comentar",
-    title: reaction.comment ? "Cambiar el comentario" : `Comentar la imagen ${number}`,
-  });
-  commentButton.addEventListener("click", () => {
+  // Swaps the comment button for a text field; done(text) with the text, or done(null) if dropped.
+  const ask = ({ placeholder, label, done }) => {
     const input = el("input", {
       type: "text",
       class: "react-input",
       value: reaction.comment || "",
       maxlength: "500",
-      placeholder: "Qué cambiarías",
-      "aria-label": `Comentario sobre la imagen ${number}`,
+      placeholder,
+      "aria-label": label,
     });
-    let done = false;
+    let finished = false;
     const finish = (keep) => {
-      if (done) return;
-      done = true;
-      if (keep && input.value.trim() !== (reaction.comment || "")) save(reaction.rating ?? null, input.value.trim());
-      else wrap.replaceWith(reactionControls(image, number));
+      if (finished) return;
+      finished = true;
+      done(keep ? input.value.trim() : null);
     };
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
@@ -414,8 +394,68 @@ function reactionControls(image, number) {
     input.addEventListener("blur", () => finish(true));
     commentButton.replaceWith(input);
     input.focus();
+  };
+  const restore = () => wrap.replaceWith(reactionControls(image, number));
+  const disliked = reaction.rating === "down";
+
+  const up = el(
+    "button",
+    {
+      type: "button",
+      class: "btn-icon react",
+      "aria-pressed": String(reaction.rating === "up"),
+      "aria-label": `Me gusta la imagen ${number}`,
+      title: "Me gusta",
+    },
+    thumbIcon(false)
+  );
+  up.addEventListener("click", () => save(reaction.rating === "up" ? null : "up", reaction.comment || "", up));
+
+  const down = el(
+    "button",
+    {
+      type: "button",
+      class: "btn-icon react",
+      "aria-pressed": String(disliked),
+      "aria-label": disliked ? `Quitar el no me gusta de la imagen ${number}` : `No me gusta la imagen ${number}`,
+      title: disliked ? "Quitar el no me gusta" : "No me gusta: di qué ha fallado",
+    },
+    thumbIcon(true)
+  );
+  down.addEventListener("click", () => {
+    if (disliked) {
+      save(null, reaction.comment || "", down); // the reason stays, as a plain comment
+      return;
+    }
+    down.setAttribute("aria-pressed", "true");
+    ask({
+      placeholder: "¿Qué ha fallado?",
+      label: `Qué ha fallado en la imagen ${number}`,
+      done: (text) => (text ? save("down", text) : restore()),
+    });
   });
-  wrap.append(vote("up", "Me gusta"), vote("down", "No me gusta"), commentButton);
+
+  const commentButton = el("button", {
+    type: "button",
+    class: "btn-quiet react-comment",
+    text: reaction.comment ? `«${reaction.comment}»` : "Comentar",
+    title: reaction.comment ? "Cambiar el comentario" : `Comentar la imagen ${number}`,
+  });
+  commentButton.addEventListener("click", () =>
+    ask({
+      placeholder: disliked ? "¿Qué ha fallado?" : "Qué cambiarías",
+      label: `Comentario sobre la imagen ${number}`,
+      done: (text) => {
+        if (text === null || text === (reaction.comment || "")) return restore();
+        if (disliked && !text) {
+          toast("Un «no me gusta» necesita su motivo: quítalo o di qué ha fallado.", { error: true });
+          return restore();
+        }
+        save(reaction.rating ?? null, text);
+      },
+    })
+  );
+  wrap.append(up, down, commentButton);
   return wrap;
 }
 
@@ -572,13 +612,21 @@ function runCard(part, live) {
   const made = (run?.jobs || []).flatMap((job) => job.images || []).filter((id) => numbers.has(id));
   const errors = [...new Set((run?.jobs || []).map((job) => job.error).filter(Boolean))];
   let detail = live ? "Lanzada" : RUN_STATUS[status];
+  if (status === "pending" && run?.kind === "calibration") detail = "En espera: se genera cuando la GPU está libre";
   if (status === "pending" && run) detail += `, desde las ${formatWhen(run.created_at)}`;
   if (made.length) detail += `: ${made.length === 1 ? "imagen" : "imágenes"} ${made.map((id) => numbers.get(id)).join(", ")}`;
   const card = el(
     "div",
     { class: `run-card is-${live ? "pending" : status}` },
     el("span", { class: "run-label", text: `Ejecución ${part.run}` }),
-    el("span", { class: "run-workflow", text: part.count > 1 ? `${part.workflow} ×${part.count}` : part.workflow }),
+    el("span", {
+      class: "run-workflow",
+      text: part.calibration
+        ? `calibración de ${part.calibration} en ${part.workflow}`
+        : part.count > 1
+          ? `${part.workflow} ×${part.count}`
+          : part.workflow,
+    }),
     el("span", { class: "run-status", text: detail }),
     errors.length > 0 && status !== "cancelled" && el("span", { class: "run-error", text: errors.join(" · ") }),
     run?.output_folder && el("span", { class: "run-folder", text: `En ComfyUI: output/${run.output_folder}/` })
@@ -646,6 +694,8 @@ function toolLine(part) {
     text = `${part.replaced ? "Ha reemplazado" : "Ha guardado"} «${part.name}» en la biblioteca de workflows`;
   } else if (part.tool === "cancel_run") {
     text = `Ha cancelado la ejecución ${part.run}`;
+  } else if (part.tool === "use_family") {
+    text = `Ya trabajaba con la familia ${part.family}`;
   } else {
     text = `Ha usado ${part.tool}`;
   }
@@ -675,9 +725,10 @@ function fillBotMessage(
     if (part.type === "run") return runCard(part, live);
     if (part.type === "tool") return toolLine(part);
     if (part.type === "family") {
+      const why = part.reason === "asked" ? "" : ": el modelo base que va a usar es de esa familia";
       return el("p", {
         class: "tool-line",
-        text: `Ha pasado a la familia ${part.family}${part.previous ? ` (antes, ${part.previous})` : ""}: el modelo base que va a usar es de esa familia.`,
+        text: `Ha pasado a la familia ${part.family}${part.previous ? ` (antes, ${part.previous})` : ""}${why}.`,
       });
     }
     number += 1;
@@ -752,13 +803,21 @@ function resultsMessage(message) {
       "p",
       { class: "results-head" },
       el("span", { class: "run-label", text: `Ejecución ${message.run}` }),
-      run && el("span", { class: "run-workflow", text: run.workflow })
+      run && el("span", {
+        class: "run-workflow",
+        text: run.kind === "calibration" ? `calibración de ${run.lora} en ${run.workflow}` : run.workflow,
+      })
     ),
     (message.images || []).length > 0 &&
       el(
         "div",
         { class: "contact-sheet" },
-        message.images.map((image) => numberedImage(image, numbers.get(image.id), { reactable: true }))
+        message.images.map((image) => {
+          const shot = numberedImage(image, numbers.get(image.id), { reactable: true });
+          const job = run?.kind === "calibration" && run.jobs.find((j) => (j.images || []).includes(image.id));
+          if (job) shot.querySelector("a").after(el("span", { class: "shot-weight", text: `peso ${job.calibration_weight}` }));
+          return shot;
+        })
       ),
     failed.length > 0 &&
       el("p", {

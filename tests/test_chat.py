@@ -25,7 +25,7 @@ def test_system_prompt_puts_personality_first_family_rules_next_and_mechanics_la
 
     mock_read.assert_called_once_with("conversation")
     assert result.startswith(
-        "You are a grumpy art director.\n\n## Model Family Rules\n" + chat.FAMILY_RULES_INTRO + "\n\nfamily rules"
+        "You are a grumpy art director.\n\n## Model Family Rules: SDXL\n" + chat.FAMILY_RULES_INTRO + "\n\nfamily rules"
     )
     # Last, and declared to win: a family written for one-shot modes says
     # "output only the prompt", which a conversation must not follow.
@@ -74,7 +74,7 @@ def test_system_prompt_shows_an_empty_library(mock_read):
 def test_system_prompt_starts_with_the_family_rules_when_the_personality_is_empty(mock_read):
     result = chat.build_system_prompt(FAMILY, [], [], needs_title=False)
 
-    assert result.startswith("## Model Family Rules\n")
+    assert result.startswith("## Model Family Rules: SDXL\n")
     assert "## How This Conversation Works\n" in result
 
 

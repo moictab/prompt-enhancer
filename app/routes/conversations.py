@@ -104,6 +104,9 @@ class Reaction(BaseModel):
 def react_to_image(conversation_id: str, image_id: str, reaction: Reaction):
     """Like, dislike or comment on an image; it reaches the bot with the next message."""
     _require_conversation(conversation_id)
+    if reaction.rating == "down" and not reaction.comment.strip():
+        # A dislike is only worth learning from with its reason.
+        raise HTTPException(status_code=400, detail="A thumbs down needs its reason: say what went wrong")
     image = conversations.set_reaction(conversation_id, image_id, reaction.rating, reaction.comment)
     if image is None:
         raise HTTPException(status_code=404, detail="Unknown image")

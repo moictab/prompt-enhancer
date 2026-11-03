@@ -152,11 +152,11 @@ class Comfy:
         self._base = None
         raise Unreachable("ComfyUI isn't reachable (neither the gateway nor ComfyUI answer): the PC may be off.")
 
-    def submit(self, base: str, workflow: dict, tag: str = "conversar") -> str:
+    def submit(self, base: str, workflow: dict, tag: str = "conversar", priority: str = PRIORITY) -> str:
         body = {
             "prompt": workflow,
             "client_id": self.client_id,
-            "extra_data": {"gateway": {"project": self.project, "priority": PRIORITY, "tag": tag}},
+            "extra_data": {"gateway": {"project": self.project, "priority": priority, "tag": tag}},
         }
         try:
             response = self._request("POST", f"{base}/prompt", json=body)

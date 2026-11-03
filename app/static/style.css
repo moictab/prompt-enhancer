@@ -1001,6 +1001,7 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 /* Uncropped: judging an image means seeing all of it (hands, edges, framing). */
 .contact-sheet .shot img { display: block; width: 100%; height: auto; border-radius: var(--radius); }
 .contact-sheet .shot-no { font-size: 0.8125rem; }
+.shot-weight { display: block; margin-top: 0.3rem; color: var(--safelight); font-size: var(--step--1); font-variant-numeric: tabular-nums; }
 .reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem; margin-top: 0.35rem; }
 .react {
   width: 2rem;

@@ -104,8 +104,9 @@ def test_stats_count_images_and_reactions_per_file(api_client, auth_headers, tmp
     assert api_client.put(f"{put}/{first}/reaction", json={"rating": "up"}, auth=auth_headers).status_code == 200
     api_client.put(f"{put}/{second}/reaction", json={"rating": "down", "comment": "too inky"}, auth=auth_headers)
 
-    assert catalog.stats()[INK] == {"images": 2, "liked": 1, "disliked": 1}
-    assert catalog.details(INK)["results_here"] == {"images": 2, "liked": 1, "disliked": 1}
+    expected = {"images": 2, "liked": 1, "disliked": 1, "latest_dislike_reasons": ["at 0.4: too inky"]}
+    assert catalog.stats()[INK] == expected
+    assert catalog.details(INK)["results_here"] == expected
 
 
 def test_admin_catalog_routes(api_client, auth_headers, fake_comfy):

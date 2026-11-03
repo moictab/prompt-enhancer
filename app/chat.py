@@ -19,6 +19,9 @@ from . import image_metadata, prompts, system_prompt
 # Every image is re-sent with each request, so only the most recent ones are;
 # older ones are replaced by a short note in the message they belonged to.
 MAX_CONTEXT_IMAGES = 4
+# Images that arrived since the bot last spoke are all attached (up to this), so it can
+# review every image of the runs it is looking at.
+MAX_NEW_IMAGES = 8
 MAX_TITLE_LENGTH = 80
 MAX_NOTE_LENGTH = 300
 
@@ -48,10 +51,13 @@ NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workflow launches a workflow -- one from the library above, "image:N" for the one embedded in image N, or "run:N" for an earlier run's -- with changes such as the prompt, seed, LoRAs, sampler settings, size or any node input. inspect_workflow shows a workflow's nodes and settings; list_comfy_models lists the installed models and LoRAs (use their exact file names); save_workflow keeps a modified workflow in the library, only when the user wants it kept.
 - When the user wants to see a prompt rendered or asks for images, run it straight away, without asking first. Show the prompt you run in a <prompt> block in the same reply, unless it already is one of your blocks. Inspect a workflow before structural edits (adding, removing or rewiring nodes).
 - Each model belongs to the family its folder is named after (krea-2\\… is Krea 2; the library shows each workflow's family in brackets). A prompt follows the rules of the family of the model it runs on: running a model of another family switches the conversation to that family, and the app hands you its rules to rewrite the prompt by before it runs.
+- The family rules above are the current family's. To write for another family -- the user asks for one, or you'll work with a model of another family -- call use_family first: its rules come back and the conversation keeps that family. If the user asks you to stay with a family, don't run models of other families unless they ask.
 - Before telling the user a model or LoRA isn't installed, check with list_comfy_models, searching its file name or the words of its name: files are often renamed, and models are installed all the time. A Civitai image's resources say which installed file each matches, when one does.
 - You work in isolation: the only images you can feed a workflow are this conversation's (with input_images), and only node types from the library, from workflows the user shared here, and common core nodes are available; anything that reads ComfyUI's folders, files or URLs is refused. If a node you need isn't available, say so: the user can add a workflow that has it to the library.
 - Runs take a while; their images arrive later, in a message of their own. A message that only reports finished runs is automatic: the user hasn't written. Look at the images, say briefly what worked and what didn't against what was intended, and suggest the next step; don't launch anything on that turn.
-- The user can react to the images runs make -- liked, disliked, a comment -- and the reactions come with their next message. Take them as the most direct feedback there is: keep what was liked, fix what wasn't.
+- Review every image a run brings, in the reply that first sees it: <review image="N" verdict="ok">…</review> or verdict="flawed", one per image, saying in a few words what's wrong (hands, anatomy, duplicated bodies or faces, garbage text, burnt or washed-out colors, wrong style, not what was asked…) and its likely cause in the recipe (which LoRA or weight, the size, the steps…). Reviews are kept with each image's recipe: the installed models list shows how often each LoRA and weight has failed, and why.
+- calibrate_lora shows what a LoRA does and from which weight it breaks: the same prompt and seed at several weights, run when the GPU is free (idle priority, so it can take a while). Review its images weight by weight and note the conclusion as "<lora>: <effect>; fine up to <weight>, breaks at <weight>".
+- The user can react to the images runs make -- liked, or disliked with the reason -- and the reactions come with their next message. Take them as the most direct feedback there is, above your own reviews: keep what was liked, fix what wasn't.
 - Choose models and LoRAs with what is known about them (installed models above: the user's description, how images made with them went), and note what you learn about how one shapes images, as "<model name>: <effect>"."""
 
 FAMILY_RULES_INTRO = (
@@ -88,7 +94,11 @@ FORGET_PATTERN = re.compile(r"<forget\s+id\s*=\s*[\"']?(\d+)[\"']?\s*/?>(?:\s*</
 # An unclosed block (a reply cut off by the length limit) runs to the end.
 PROMPT_PATTERN = re.compile(r"<prompt\b[^>]*>(.*?)(?:</prompt>|$)", re.IGNORECASE | re.DOTALL)
 PROMPT_OPEN_PATTERN = re.compile(r"<prompt\b[^>]*>", re.IGNORECASE)
-STRAY_TAG_PATTERN = re.compile(r"</?(?:title|remember|forget)\b[^>]*>", re.IGNORECASE)
+REVIEW_PATTERN = re.compile(
+    r"<review\s+image\s*=\s*[\"']?(\d+)[\"']?(?:\s+verdict\s*=\s*[\"']?(\w+)[\"']?)?\s*>(.*?)(?:</review>|(?=\n)|$)",
+    re.IGNORECASE | re.DOTALL,
+)
+STRAY_TAG_PATTERN = re.compile(r"</?(?:title|remember|forget|review)\b[^>]*>", re.IGNORECASE)
 # A prompt written bare, as "POSITIVE: ..." at the start of a line (the label maybe in **bold**).
 BARE_POSITIVE_LINE = re.compile(r"^[ \t]*(?:\*\*)?POSITIVE[ \t]*:", re.IGNORECASE | re.MULTILINE)
 BARE_NEGATIVE_START = re.compile(r"^[ \t]*(?:\*\*)?NEGATIVE[ \t]*:", re.IGNORECASE)
@@ -103,15 +113,18 @@ def build_system_prompt(
     needs_title: bool,
     workflows: list[dict] | None = None,
     models: str | None = None,
+    families: list[str] | None = None,
 ) -> str:
     """workflows: the library ({name, description}) when the bot can run ComfyUI
     workflows (None when it can't: no ComfyUI configured, or a model without tools);
-    models: the installed models, as catalog.prompt_section() writes them."""
+    models: the installed models, as catalog.prompt_section() writes them;
+    families: the names of the families it can switch to (with use_family)."""
     parts = []
     personality = system_prompt.read_system_prompt("conversation").strip()
     if personality:
         parts.append(personality)
-    parts.append(f"## Model Family Rules\n{FAMILY_RULES_INTRO}\n\n{family['instructions'].strip()}")
+    heading = f"## Model Family Rules: {family['name']}" if family.get("name") else "## Model Family Rules"
+    parts.append(f"{heading}\n{FAMILY_RULES_INTRO}\n\n{family['instructions'].strip()}")
     if characters:
         lines = "\n".join(f"- {c['name']}: {c['text']}" for c in characters)
         parts.append(f"## Characters\n{CHARACTERS_INSTRUCTION}\n\n{lines}")
@@ -127,6 +140,9 @@ def build_system_prompt(
         parts.append(f"## Workflow Library\n{lines or '(empty)'}")
         if models:
             parts.append(f"## Installed Models\n{models}")
+        others = [name for name in families or [] if name != family.get("name")]
+        if others:
+            parts.append(f"## Model Families\nThe current one is {family.get('name')}; the others: {', '.join(others)}.")
     mechanics = CONVERSATION_MECHANICS
     if workflows is not None:
         mechanics += f"\n{COMFY_MECHANICS}"
@@ -149,7 +165,9 @@ def image_by_number(messages: list[dict], number: int) -> dict | None:
 
 def _recent_image_ids(messages: list[dict]) -> set[str]:
     ids = [img["id"] for m in messages for img in (m.get("images") or [])]
-    return set(ids[-MAX_CONTEXT_IMAGES:])
+    last_reply = max((i for i, m in enumerate(messages) if m["role"] == "assistant"), default=-1)
+    new = [img["id"] for m in messages[last_reply + 1:] for img in (m.get("images") or [])]
+    return set(ids[-MAX_CONTEXT_IMAGES:]) | set(new[-MAX_NEW_IMAGES:])
 
 
 def results_text(run: dict | None, numbers: dict[str, int], automatic: bool) -> str:
@@ -158,13 +176,20 @@ def results_text(run: dict | None, numbers: dict[str, int], automatic: bool) -> 
     note = f" {AUTOMATIC_NOTE}" if automatic else ""
     if run is None:
         return f"[A run finished.]{note}"
+    calibration = run.get("kind") == "calibration"
     label = f"Run {run['n']} ({run['workflow']})"
+    if calibration:
+        seed = next((j.get("seed") for j in run["jobs"]), None)
+        label = f"Run {run['n']} (calibration of {run.get('lora')} on {run['workflow']}, seed {seed})"
     done = [j for j in run["jobs"] if j.get("images")]
     failed = [j for j in run["jobs"] if j.get("status") in ("error", "interrupted")]
     pieces = []
     for job in done:
         refs = ", ".join(f"image {numbers[i]}" for i in job["images"] if i in numbers)
-        pieces.append(f"{refs} (seed {job.get('seed')})" if job.get("seed") is not None else refs)
+        if calibration:
+            pieces.append(f"{refs} (weight {job.get('calibration_weight'):g})")
+        else:
+            pieces.append(f"{refs} (seed {job.get('seed')})" if job.get("seed") is not None else refs)
     if done:
         text = f"[{label} finished: {'; '.join(pieces)}."
     else:
@@ -322,6 +347,7 @@ class Reply:
     notes: list[str] = field(default_factory=list)  # new notes
     note_updates: list[tuple[int, str]] = field(default_factory=list)  # (note number, new text)
     note_forgets: list[int] = field(default_factory=list)  # note numbers
+    reviews: list[tuple[int, str, str]] = field(default_factory=list)  # (image number, ok|flawed, note)
     title: str = ""
 
     @property
@@ -379,10 +405,18 @@ def parse_reply(text: str, has_negative_prompt: bool) -> Reply:
         else:
             notes.append(note)
     forgets = list(dict.fromkeys(int(n) for n in FORGET_PATTERN.findall(text)))
+    reviews = []
+    for number, verdict, note in REVIEW_PATTERN.findall(text):
+        note = _note_text(note)
+        verdict = (verdict or "").lower()
+        if verdict not in ("ok", "flawed"):
+            verdict = "ok" if note.lower().startswith("ok") else "flawed"
+        reviews.append((int(number), verdict, note))
 
     content = TITLE_PATTERN.sub("", text)
     content = REMEMBER_PATTERN.sub("", content)
     content = FORGET_PATTERN.sub("", content)
+    content = REVIEW_PATTERN.sub("", content)
     content = STRAY_TAG_PATTERN.sub("", content)
     content = CODE_FENCE_LINE.sub("", content)
     content = re.sub(r"[ \t]+\n", "\n", content)
@@ -406,5 +440,6 @@ def parse_reply(text: str, has_negative_prompt: bool) -> Reply:
         parts.append({"type": "text", "text": after})
 
     return Reply(
-        content=content, parts=parts, notes=notes, note_updates=updates, note_forgets=forgets, title=title
+        content=content, parts=parts, notes=notes, note_updates=updates, note_forgets=forgets, reviews=reviews,
+        title=title,
     )

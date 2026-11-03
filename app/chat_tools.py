@@ -22,6 +22,10 @@ MAX_RUN_COUNT = 4
 MAX_LISTED_MODELS = 80
 MODEL_FOLDERS = list(comfy.MODEL_FOLDERS)
 MAX_SEED = 2 ** 48
+CALIBRATION_WEIGHTS = [0, 0.25, 0.5, 0.75, 1.0]
+MAX_CALIBRATION_WEIGHTS = 6
+# Calibrations run at idle priority: only when nothing else wants the GPU, so they may wait long.
+CALIBRATION_TIMEOUT_SECONDS = 12 * 3600
 
 WORKFLOW_PARAM = {
     "type": "string",
@@ -164,6 +168,45 @@ TOOLS = [
                     "replace": {"type": "boolean"},
                 },
                 "required": ["workflow", "name", "description"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "use_family",
+            "description": "Switch this conversation to another model family, to write prompts by its rules: when the "
+                           "user asks for one, or before working with a model of another family. Returns its rules; "
+                           "the conversation keeps that family.",
+            "parameters": {
+                "type": "object",
+                "properties": {"family": {"type": "string", "description": "A family's name, as listed."}},
+                "required": ["family"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calibrate_lora",
+            "description": "Show what a LoRA does and from which weight it breaks: one image per weight, the same "
+                           "prompt and seed, on a workflow of the LoRA's family. Runs at idle priority (when the GPU "
+                           "is free), so it can take a while; review its images weight by weight when they arrive.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lora": {"type": "string", "description": "The LoRA's file name, as installed."},
+                    "prompt": {"type": "string", "description": "The positive prompt for every image, by the "
+                                                                "family's rules; include its trigger words."},
+                    "workflow": {"type": "string", "description": "The workflow to calibrate on (default: the "
+                                                                  "library's plain text-to-image of the LoRA's family)."},
+                    "weights": {"type": "array", "items": {"type": "number"},
+                                "description": f"Default {CALIBRATION_WEIGHTS}; at most {MAX_CALIBRATION_WEIGHTS}."},
+                    "keep_other_loras": {"type": "boolean", "description": "Keep the workflow's other LoRAs (the "
+                                                                          "default: how it behaves in the usual stack); "
+                                                                          "false shows it alone."},
+                },
+                "required": ["lora", "prompt"],
             },
         },
     },
@@ -404,15 +447,26 @@ class ToolBox:
         comfy_policy.check(graph, conversation)  # the isolation: before anything reaches ComfyUI
         seed_mode = str(changes.get("seed", "random")).strip().lower()
         seeds = self._seeds(changes.get("seed"), count, graph)
-        jobs, sent = [], []
+        variants = []
         for seed in seeds:
             job_graph = graph.copy()
             if seed_mode != "keep" and seed is not None:
                 job_graph.set_seed(seed)
             job_graph.set_output_prefix(comfy.output_prefix(folder, number, seed))
+            variants.append((job_graph, seed, {}))
+        run = self._submit_run(label, changes, base, folder, variants)
+        result = {"run": run["n"], "status": "queued", "images": run["count"], "seeds": seeds[:run["count"]],
+                  "applied": done}
+        return result, {"type": "run", "run": run["n"], "workflow": label, "count": run["count"]}
+
+    def _submit_run(self, label: str, changes: dict, base: str, folder: str, variants: list,
+                    priority: str = comfy.PRIORITY, run_fields: dict | None = None) -> dict:
+        """Send one job per (graph, seed, job fields) and record the run."""
+        jobs, sent = [], []
+        for job_graph, seed, fields in variants:
             payload = job_graph.to_api()
             try:
-                prompt_id = self.client.submit(base, payload)
+                prompt_id = self.client.submit(base, payload, priority=priority)
             except comfy.ComfyError:
                 if not jobs:
                     raise
@@ -420,22 +474,85 @@ class ToolBox:
             jobs.append({"prompt_id": prompt_id, "base_url": base, "seed": seed, "status": "pending",
                          "images": [], "error": None, "models": job_graph.models(),
                          "loras": [{"name": lora["name"], "strength": lora.get("strength")}
-                                   for lora in job_graph.loras()]})
+                                   for lora in job_graph.loras()], **fields})
             sent.append(payload)
         run = conversations.add_run(
             self.conversation_id,
             {"workflow": label, "changes": changes, "count": len(jobs), "status": "pending", "jobs": jobs,
-             "output_folder": f"{comfy.OUTPUT_SUBFOLDER}/{folder}"},
+             "output_folder": f"{comfy.OUTPUT_SUBFOLDER}/{folder}", **(run_fields or {})},
             sent,
         )
         if run is None:
             raise ToolError("The conversation is gone.")
         runs.tracker.watch(self.conversation_id, run["n"])
-        logger.info("run launched conversation_id=%s run=%s workflow=%s jobs=%d base=%s",
-                    self.conversation_id, run["n"], label, len(jobs), base)
-        result = {"run": run["n"], "status": "queued", "images": len(jobs), "seeds": seeds[:len(jobs)],
-                  "applied": done}
-        return result, {"type": "run", "run": run["n"], "workflow": label, "count": len(jobs)}
+        logger.info("run launched conversation_id=%s run=%s workflow=%s jobs=%d priority=%s base=%s",
+                    self.conversation_id, run["n"], label, len(jobs), priority, base)
+        return run
+
+    def _tool_use_family(self, family: str) -> tuple[dict, dict]:
+        wanted = families._key(family)
+        target = next((f for f in families.list_families() if families._key(f["name"]) == wanted), None)
+        if target is None:
+            names = ", ".join(f["name"] for f in families.list_families())
+            raise ToolError(f'There is no family "{family}". Families: {names}.')
+        current = families.get_family(self._conversation()["family_id"])
+        if current and current["id"] == target["id"]:
+            return ({"family": target["name"], "note": "Already this conversation's family."},
+                    {"type": "tool", "tool": "use_family", "family": target["name"]})
+        conversations.update_settings(self.conversation_id, {"family_id": target["id"]})
+        logger.info("conversation family switched conversation_id=%s family=%s", self.conversation_id, target["name"])
+        return ({"family": target["name"], "uses_negative_prompt": target["has_negative_prompt"],
+                 "family_rules": target["instructions"]},
+                {"type": "family", "family": target["name"], "previous": (current or {}).get("name"),
+                 "reason": "asked"})
+
+    def _calibration_workflow(self, folder: str) -> str:
+        candidates = [w["name"] for w in workflows.list_workflows()
+                      if Graph(w["workflow"]).base_model_folder() == folder]
+        plain = [n for n in candidates
+                 if "txt2img" in n and not any(x in n for x in ("detail", "upscale", "hires"))]
+        if not (plain or candidates):
+            raise ToolError(f"No library workflow runs a {folder} model: pass one with workflow.")
+        return (plain or candidates)[0]
+
+    def _tool_calibrate_lora(self, lora: str, prompt: str, workflow: str | None = None, weights=None,
+                             keep_other_loras: bool = True) -> tuple[dict, dict]:
+        lora_file = catalog.resolve_file(str(lora), "loras", self.client)
+        folder = catalog.family_of(lora_file)
+        workflow = workflow or self._calibration_workflow(folder)
+        weights = list(dict.fromkeys(_number(w) for w in (weights or CALIBRATION_WEIGHTS)))
+        if not 2 <= len(weights) <= MAX_CALIBRATION_WEIGHTS or any(not -2 <= w <= 3 for w in weights):
+            raise ToolError(f"Give 2 to {MAX_CALIBRATION_WEIGHTS} weights between -2 and 3")
+        graph, label = self._resolve(workflow)
+        base = self.client.pick_base()
+        self._apply(graph, {"positive": prompt}, base)
+        switched = self._follow_family(graph)
+        if switched:
+            return switched
+        chain = graph.lora_chain()
+        others = [{"name": c["name"], "strength": c["strength"],
+                   **({"strength_clip": c["strength_clip"]} if c.get("strength_clip") is not None else {})}
+                  for c in chain if c["name"] != lora_file] if keep_other_loras else []
+        conversation = self._conversation()
+        out_folder = conversations.output_folder(self.conversation_id, self.title_hint)
+        number = len(conversation.get("runs") or []) + 1
+        seed = random.randint(1, MAX_SEED)
+        variants = []
+        for weight in weights:
+            job_graph = graph.copy()
+            job_graph.set_loras(others + [{"name": lora_file, "strength": weight}])
+            job_graph.set_seed(seed)
+            job_graph.set_output_prefix(f"{comfy.output_prefix(out_folder, number, seed)}_w-{weight:g}")
+            variants.append((job_graph, seed, {"calibration_weight": weight}))
+        comfy_policy.check(variants[0][0], conversation)
+        run = self._submit_run(label, {"positive": prompt}, base, out_folder, variants, priority="idle",
+                               run_fields={"kind": "calibration", "lora": lora_file,
+                                           "timeout_seconds": CALIBRATION_TIMEOUT_SECONDS})
+        result = {"run": run["n"], "status": "queued at idle priority: it runs when the GPU is free", "lora": lora_file,
+                  "workflow": label, "weights": weights[:run["count"]], "seed": seed,
+                  "other_loras": [o["name"] for o in others]}
+        return result, {"type": "run", "run": run["n"], "workflow": label, "count": run["count"],
+                        "calibration": lora_file}
 
     def _follow_family(self, graph: Graph) -> tuple[dict, dict] | None:
         """Prompts follow the rules of the family of the model they run on. When the workflow
@@ -463,7 +580,8 @@ class ToolBox:
             "uses_negative_prompt": target["has_negative_prompt"],
             "family_rules": target["instructions"],
         }
-        return result, {"type": "family", "family": target["name"], "previous": (current or {}).get("name")}
+        return result, {"type": "family", "family": target["name"], "previous": (current or {}).get("name"),
+                        "reason": "model"}
 
     def _tool_inspect_workflow(self, workflow: str) -> tuple[dict, dict]:
         graph, label = self._resolve(workflow)

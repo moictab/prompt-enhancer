@@ -220,6 +220,20 @@ def image_workflow(conversation_id: str, image_id: str, root: str | None = None)
 MAX_REACTION_COMMENT = 500
 
 
+def set_review(conversation_id: str, image_id: str, verdict: str, note: str, root: str | None = None) -> dict | None:
+    """The bot's own review of an image a run made: "ok" or "flawed", and what's wrong and why."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        image = next((img for m in (conversation or {}).get("messages") or [] for img in m.get("images") or []
+                      if img["id"] == image_id), None)
+        if image is None:
+            return None
+        image["review"] = {"verdict": verdict, "note": " ".join((note or "").split())[:MAX_REACTION_COMMENT],
+                           "at": _now()}
+        storage.write_json(_path(conversation_id, root), conversation)
+        return image
+
+
 def set_reaction(
     conversation_id: str, image_id: str, rating: str | None, comment: str, root: str | None = None
 ) -> dict | None:

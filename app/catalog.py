@@ -278,29 +278,66 @@ def set_description(file: str, text: str, path: str | None = None) -> dict:
     return data
 
 
+MAX_REASONS = 3
+
+
 def stats() -> dict[str, dict]:
-    """Per file: images the bot's runs made with it, and how many the user liked or disliked."""
+    """Per file, from the images the bot's runs made with it: how many; how many the user liked
+    or disliked (and the latest reasons); how many the bot's own review found flawed, unless the
+    user liked them (and at which weights, and the latest flaws); and, for a LoRA, what its
+    latest calibration found at each weight."""
     if _stats_cache["stats"] is not None and time.monotonic() - _stats_cache["at"] < STATS_CACHE_SECONDS:
         return _stats_cache["stats"]
-    totals: dict[str, Counter] = {}
+    totals: dict[str, dict] = {}
+    calibrations: dict[str, tuple[str, dict]] = {}
     root = Path(f"{get_settings().data_dir}/conversations")
     for path in root.glob("*.json") if root.is_dir() else []:
         conversation = storage.read_json(str(path), default=None) or {}
-        reactions = {img["id"]: (img.get("reaction") or {}).get("rating")
-                     for m in conversation.get("messages") or [] for img in m.get("images") or []}
+        images = {img["id"]: img for m in conversation.get("messages") or [] for img in m.get("images") or []}
         for run in conversation.get("runs") or []:
+            calibrated = run.get("lora") if run.get("kind") == "calibration" else None
+            verdicts = {}
             for job in run.get("jobs") or []:
-                files = {lora["name"] for lora in job.get("loras") or []} | set(job.get("models") or [])
+                strengths = {lora["name"]: lora.get("strength") for lora in job.get("loras") or []}
                 for image_id in job.get("images") or []:
-                    rating = reactions.get(image_id)
-                    for file in files:
-                        counter = totals.setdefault(file, Counter())
-                        counter["images"] += 1
+                    image = images.get(image_id) or {}
+                    reaction, review = image.get("reaction") or {}, image.get("review") or {}
+                    rating = reaction.get("rating")
+                    flawed = review.get("verdict") == "flawed" and rating != "up"
+                    for file in set(strengths) | set(job.get("models") or []):
+                        record = totals.setdefault(file, {"images": 0, "liked": 0, "disliked": 0, "flawed": 0,
+                                                          "weights": [], "flaws": [], "reasons": []})
+                        weight = strengths.get(file)
+                        at = f"at {weight:g}: " if isinstance(weight, (int, float)) else ""
+                        record["images"] += 1
                         if rating == "up":
-                            counter["liked"] += 1
+                            record["liked"] += 1
                         elif rating == "down":
-                            counter["disliked"] += 1
-    result = {file: dict(counter) for file, counter in totals.items()}
+                            record["disliked"] += 1
+                            record["reasons"].append((reaction.get("at") or "", at + (reaction.get("comment") or "")))
+                        if flawed:
+                            record["flawed"] += 1
+                            if isinstance(weight, (int, float)):
+                                record["weights"].append(weight)
+                            record["flaws"].append((review.get("at") or "", at + (review.get("note") or "")))
+                    weight = job.get("calibration_weight")
+                    if calibrated and weight is not None and review.get("verdict"):
+                        verdict = "flawed" if flawed else "ok"
+                        verdicts[f"{weight:g}"] = verdict + (f": {review.get('note')}" if flawed and review.get("note")
+                                                             else "")
+            if verdicts and run.get("created_at", "") >= calibrations.get(calibrated, ("", {}))[0]:
+                calibrations[calibrated] = (run.get("created_at", ""), verdicts)
+    result = {}
+    for file, record in totals.items():
+        out = {k: record[k] for k in ("images", "liked", "disliked", "flawed") if record[k] or k == "images"}
+        if record["weights"]:
+            out["flawed_weights"] = [min(record["weights"]), max(record["weights"])]
+        for key, label in (("flaws", "latest_flaws"), ("reasons", "latest_dislike_reasons")):
+            if record[key]:
+                out[label] = [text for _, text in sorted(record[key])[-MAX_REASONS:]]
+        result[file] = out
+    for file, (_, verdicts) in calibrations.items():
+        result.setdefault(file, {"images": 0})["calibration"] = verdicts
     _stats_cache.update(at=time.monotonic(), stats=result)
     return result
 
@@ -334,12 +371,30 @@ def _past_use_text(past: dict | None) -> str:
     return text
 
 
+def _calibration_text(verdicts: dict) -> str:
+    weights = sorted((float(w), v) for w, v in verdicts.items())
+    flawed = [w for w, v in weights if v.startswith("flawed")]
+    if not flawed:
+        return f"calibrated: fine up to {weights[-1][0]:g}"
+    fine = [w for w, v in weights if v == "ok" and w < flawed[0]]
+    return (f"calibrated: fine up to {fine[-1]:g}, flawed from {flawed[0]:g}" if fine
+            else f"calibrated: flawed from {flawed[0]:g}")
+
+
 def _record_text(record: dict | None) -> str:
     if not record:
         return ""
-    text = f"{record['images']} image{'s' if record['images'] != 1 else ''}"
-    reactions = [f"{record[k]} {k}" for k in ("liked", "disliked") if record.get(k)]
-    return f"{text}, {', '.join(reactions)}" if reactions else text
+    parts = []
+    if record.get("images"):
+        parts.append(f"{record['images']} image{'s' if record['images'] != 1 else ''}")
+        parts += [f"{record[k]} {k}" for k in ("liked", "disliked") if record.get(k)]
+        if record.get("flawed"):
+            low, high = record.get("flawed_weights") or (None, None)
+            where = "" if low is None else (f" at {low:g}" if low == high else f" at {low:g}-{high:g}")
+            parts.append(f"{record['flawed']} flawed{where}")
+    if record.get("calibration"):
+        parts.append(_calibration_text(record["calibration"]))
+    return ", ".join(parts)
 
 
 def prompt_section(data: dict | None = None) -> str | None:

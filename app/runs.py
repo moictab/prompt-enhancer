@@ -110,9 +110,10 @@ class RunTracker:
             logger.info("run history failed conversation_id=%s run=%s error=%r", conversation_id, run["n"], e)
             result = None
         if result is None:
-            if _age_seconds(run) > JOB_TIMEOUT_SECONDS:
+            timeout = run.get("timeout_seconds") or JOB_TIMEOUT_SECONDS  # idle runs wait for a free GPU
+            if _age_seconds(run) > timeout:
                 self._set_job(conversation_id, run["n"], index, status="error",
-                              error=f"No result after {JOB_TIMEOUT_SECONDS // 60} minutes")
+                              error=f"No result after {timeout // 60} minutes")
             return
         images, error = [], result.error
         workflows = conversations.run_workflows(conversation_id, run["n"])

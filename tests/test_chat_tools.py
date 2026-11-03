@@ -247,7 +247,7 @@ def test_cancel_run(setup):
 def test_a_frozen_comfyui_is_explained(setup):
     box, fake, _ = setup
 
-    def frozen(base, workflow, tag="conversar"):
+    def frozen(base, workflow, tag="conversar", priority="high"):
         raise requests.exceptions.ReadTimeout("read timed out")
 
     fake.submit = frozen

@@ -160,6 +160,7 @@ def _turn(conversation_id: str, automatic: bool):
     system = chat.build_system_prompt(
         family, characters, notes, needs_title=not conversation["title"],
         workflows=library if toolbox else None, models=models_section,
+        families=[f["name"] for f in families.list_families()] if toolbox else None,
     )
     load_image = _image_loader(conversation_id)
     model, temperature = conversation["llm_model"], conversation["temperature"]
@@ -270,7 +271,7 @@ def _store_reply(conversation_id, family, characters, notes_at_start, steps, end
     conversation = conversations.get(conversation_id)
     if conversation is None:
         return None
-    parts, new_notes, updates, forgets, title, contents = [], [], [], [], "", []
+    parts, new_notes, updates, forgets, title, contents, reviews = [], [], [], [], "", [], []
     stored_steps = []
     for step in steps:
         reply = chat.parse_reply(step["text"], family["has_negative_prompt"])
@@ -279,11 +280,13 @@ def _store_reply(conversation_id, family, characters, notes_at_start, steps, end
         new_notes += reply.notes
         updates += reply.note_updates
         forgets += reply.note_forgets
+        reviews += reply.reviews
         if reply.content:
             contents.append(reply.content)
         stored_steps.append({"content": reply.content, "tool_calls": step["tool_calls"], "results": step["results"]})
 
     created = [memory.create_note(note, conversation_id) for note in new_notes]
+    _store_reviews(conversation_id, conversation, reviews)
     note_changes = _apply_note_changes(updates, forgets, notes_at_start, conversation_id)
     costs = [e.cost for e in ends if e.cost is not None]
     cost = sum(costs) if costs else None
@@ -340,6 +343,21 @@ def _store_reply(conversation_id, family, characters, notes_at_start, steps, end
         conversation_id, len(proposed), len(created), len(note_changes), len(steps), cost,
     )
     return conversations.append_message(conversation_id, message, title=title)
+
+
+def _store_reviews(conversation_id: str, conversation: dict, reviews: list[tuple[int, str, str]]) -> None:
+    """The bot's verdict on each image, by the numbers it sees, kept with the image (and so
+    with its run's recipe, for the catalog's per-file stats)."""
+    if not reviews:
+        return
+    by_number = {n: image_id for image_id, n in chat.image_numbers(conversation["messages"]).items()}
+    stored = 0
+    for number, verdict, note in reviews:
+        if number in by_number and conversations.set_review(conversation_id, by_number[number], verdict, note):
+            stored += 1
+    if stored:
+        catalog.invalidate_stats()
+        logger.info("conversation reviews stored conversation_id=%s reviews=%d", conversation_id, stored)
 
 
 def _character_params(characters: list[dict]) -> dict:
