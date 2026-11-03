@@ -8,7 +8,7 @@ rem Relanzado minimizado: aquí corre el servidor (ver más abajo).
 if "%~1"=="servidor" goto :servidor
 
 rem Si ya está en marcha, solo se abre en el navegador.
-netstat -ano -p tcp | findstr /c:"127.0.0.1:8090 " | findstr LISTENING >nul
+netstat -ano -p tcp | findstr /c:":8090 " | findstr LISTENING >nul
 if not errorlevel 1 (
     start "" %URL%/conversar
     popd
@@ -43,7 +43,7 @@ echo prompt-enhancer en %URL%
 echo Para pararlo: Stop.bat, o cerrar esta ventana.
 echo.
 del "%STOP_MARK%" 2>nul
-.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8090 --no-access-log --log-level warning
+.venv\Scripts\python -m uvicorn app.main:app --host 0.0.0.0 --port 8090 --no-access-log --log-level warning
 rem Parado con Stop.bat: la ventana se cierra sola. Si no, se queda abierta para ver por qué se paró.
 if exist "%STOP_MARK%" (
     del "%STOP_MARK%"
