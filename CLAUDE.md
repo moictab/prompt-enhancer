@@ -11,7 +11,10 @@ pytest tests/test_prompts.py     # run a single test file
 pytest tests/test_prompts.py::test_parse_response_splits_positive_and_negative  # run a single test
 uvicorn app.main:app --reload    # run the dev server at http://localhost:8000
 docker compose up --build        # build and run the containerized app (reads .env, mounts ./data)
+Start.bat / Stop.bat             # Windows: the way the app actually runs (see below)
 ```
+
+**Where it runs.** On the owner's Windows PC (LENOVO LEGION), next to ComfyUI and comfy-gateway, straight from this checkout: `Start.bat` keeps a `.venv` here (reinstalled from `requirements.txt` whenever it differs from the copy saved as `.venv\requirements.installed`), runs `uvicorn` on `127.0.0.1:8090` in a minimized window titled "prompt-enhancer (servidor)", and opens the browser once it answers; `Stop.bat` kills whatever listens on 8090 and leaves a mark in `%TEMP%` so that window closes itself (an unexpected stop leaves it open, paused, to read why). The running instance's `data/` and `.env` are this checkout's (both gitignored), so restarting picks up whatever code is checked out here, and `tests/conftest.py` overrides the real `OPENROUTER_API_KEY`/`ADMIN_PASSWORD` for every test. Until 2026-11-03 it ran in Docker on the home server cubi-n (the stopped container and a copy of its data remain there).
 
 Copy `.env.example` to `.env` before running anything — `OPENROUTER_API_KEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` (plus optional `DEFAULT_LLM_MODEL`/`DEFAULT_VISION_MODEL`, the models prefilled in the UI, and `COMFY_GATEWAY_URL`/`COMFY_DIRECT_URL`, which let Conversar's bot run ComfyUI workflows; unset, that whole part is off). `tests/conftest.py` unsets the ComfyUI variables for every test; tests that need ComfyUI use the `fake_comfy` fixture (a `FakeComfy` standing in for `comfy.Comfy`), and `png_bytes(**texts)` makes real PNGs with text chunks. The app refuses to start (raises in `lifespan`) if `ADMIN_PASSWORD` is unset, so tests set all three via `monkeypatch.setenv` in `tests/conftest.py`'s `api_client` fixture rather than relying on a `.env` file.
 

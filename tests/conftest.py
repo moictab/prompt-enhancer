@@ -19,6 +19,9 @@ def isolated_data_dir(tmp_path, monkeypatch):
     monkeypatch.delenv("COMFY_GATEWAY_URL", raising=False)
     monkeypatch.delenv("COMFY_DIRECT_URL", raising=False)
     monkeypatch.delenv("CIVITAI_API_KEY", raising=False)
+    # The app runs from this checkout, so its .env holds the real key: no test may spend it.
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("ADMIN_PASSWORD", "test-password")
     runs.tracker._pending.clear()
     catalog.invalidate_stats()
     yield

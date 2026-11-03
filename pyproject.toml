@@ -16,3 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0", "httpx>=0.27.0"]
+
+# The app is the app/ package; data/ (the running instance's data, gitignored) is not one.
+[tool.setuptools.packages.find]
+include = ["app*"]

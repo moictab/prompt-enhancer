@@ -35,6 +35,8 @@ A small, self-hosted web app that uses an LLM (via OpenRouter) to craft image-ge
 2. `docker compose up --build`
 3. Open `http://localhost:8000` and log in with the credentials above.
 
+**On Windows, without Docker** (how it runs next to ComfyUI, using the least memory): double-click `Start.bat`. The first time it prepares a Python environment in `.venv` (and again whenever `requirements.txt` changes); then it starts the server in a minimized window and opens `http://127.0.0.1:8090/conversar`. `Stop.bat` stops it (so does closing that window). It listens only on this machine, and keeps its data in `data/` next to it.
+
 On first run, the app seeds `data/families.json` with SDXL and Z-Image-Turbo. Add more families (Krea 2, Pony, Flux, ...) from Ajustes. System prompts are seeded per mode, so upgrading adds the prompts for new modes without touching the ones you have edited.
 
 ## Development
