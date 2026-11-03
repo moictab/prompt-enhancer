@@ -58,7 +58,7 @@ def test_create_get_list_and_delete_a_conversation(api_client, auth_headers, tmp
     assert created["family_id"] == family["id"]
     assert created["llm_model"] == "vendor/model"
     assert api_client.get(f"/api/conversations/{created['id']}", auth=auth_headers).json() == {
-        **created, "commenting": False,
+        **created, "replying": False, "commenting": False,
     }
     assert [c["id"] for c in api_client.get("/api/conversations", auth=auth_headers).json()] == [created["id"]]
 

@@ -5,10 +5,10 @@ import {
   copyButton,
   el,
   formatCost,
+  frameBody,
   loadReferences,
   mergeReferences,
   readStored,
-  renderFrame,
   request,
   requestLink,
   setBusy,
@@ -24,11 +24,17 @@ const SETTINGS_KEY = "conversation-settings";
 const MAX_IMAGES = 4;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
-// Above the server's worst case (OpenRouter's 180 s between chunks), like request().
-const STREAM_TIMEOUT_MS = 380000;
+// A reply's stream with nothing at all for this long is taken for dead (while the model
+// thinks, the server sends a blank line every 15 s).
+const STREAM_IDLE_MS = 60000;
 const MAX_INPUT_HEIGHT = 240;
 // While a run is pending or the bot is commenting on results, the chat checks back this often.
 const POLL_MS = 2500;
+// And the list, while another conversation has something under way.
+const LIST_POLL_MS = 5000;
+// The last reply seen in each conversation, so the list can mark what arrived unseen.
+const SEEN_KEY = "conversation-seen";
+const MAX_TITLE_LENGTH = 120;
 
 const $ = (id) => document.getElementById(id);
 
@@ -73,7 +79,16 @@ const state = {
   noteIds: null, // ids of the notes still in memory, to show forgotten ones as such
   noteTexts: null, // their texts: a forgotten note brought back has a new id but the same text
   attachments: [], // [{ file, url }]
-  busy: false,
+  // Several conversations can be replying at once: each reply being written, by conversation id
+  // (see follow()). The server writes and stores it whatever the chat does meanwhile.
+  live: new Map(),
+  failures: new Map(), // conversation id -> { detail, requestId }: why its last reply didn't come
+  drafts: new Map(), // conversation id ("" for a new one) -> { text, attachments } left in the composer
+  seen: readStored(localStorage, SEEN_KEY, {}), // conversation id -> its last reply the user saw
+  openProposals: new Set(), // "<conversation id>:<n>": proposals the user unfolded (they start folded)
+  creating: false,
+  renaming: null, // the id of the conversation whose title is being edited in the list
+  listTimer: 0,
   deleteButton: null,
 };
 
@@ -133,9 +148,40 @@ function resizeInput() {
   ui.input.style.height = `${Math.min(ui.input.scrollHeight + 2, MAX_INPUT_HEIGHT)}px`;
 }
 
-function setBusyState(busy) {
-  state.busy = busy;
-  setBusy(ui.send, busy, "Respondiendo…");
+// The bot is busy in that conversation: answering, or commenting on results. One turn at a
+// time per conversation; other conversations are free meanwhile.
+function isBusy(conversation) {
+  return !!conversation && (state.live.has(conversation.id) || conversation.replying || conversation.commenting);
+}
+
+function renderComposerState() {
+  const conversation = state.conversation;
+  setBusy(ui.send, false);
+  if (state.creating || isBusy(conversation)) {
+    const commenting = state.live.get(conversation?.id)?.automatic ?? conversation?.commenting;
+    setBusy(ui.send, true, commenting ? "Comentando…" : "Respondiendo…");
+  }
+}
+
+// ---------- what the user has seen ----------
+
+function lastReplyAt(conversation) {
+  return conversation.messages.findLast((m) => m.role === "assistant" || m.role === "results")?.timestamp || null;
+}
+
+// "0" for a conversation with no reply yet: seen, so its first reply counts as new.
+function markSeen(conversation) {
+  if (!conversation) return;
+  const at = lastReplyAt(conversation) || "0";
+  if (state.seen[conversation.id] === at) return;
+  state.seen[conversation.id] = at;
+  writeStored(localStorage, SEEN_KEY, state.seen);
+}
+
+// Something arrived there since the user last looked (only for conversations seen in this browser).
+function isUnread(summary) {
+  const seen = state.seen[summary.id];
+  return summary.id !== state.conversation?.id && !!seen && !!summary.last_reply_at && summary.last_reply_at > seen;
 }
 
 // ---------- the bot's text ----------
@@ -759,11 +805,7 @@ function fillBotMessage(
       });
     }
     number += 1;
-    return el(
-      "ol",
-      { class: "frames msg-frames" },
-      renderFrame(entry, part, live ? {} : frameHandlers, { number, label: `Propuesta ${number}` })
-    );
+    return el("ol", { class: "frames msg-frames" }, proposal(entry, part, number, live));
   });
   const ids = requestIds || (requestId ? [requestId] : []);
   const links =
@@ -793,6 +835,38 @@ function fillBotMessage(
           links
         ),
     ].filter(Boolean)
+  );
+}
+
+// A proposed prompt, folded to its number and first line (prompts are long, and a
+// conversation piles them up), with Copiar at hand; unfolded, the whole prompt and its actions.
+function proposal(entry, part, number, live) {
+  const key = `${state.conversation?.id}:${number}`;
+  const details = el(
+    "details",
+    {
+      class: "proposal",
+      open: state.openProposals.has(key),
+      ontoggle: () => (details.open ? state.openProposals.add(key) : state.openProposals.delete(key)),
+    },
+    el(
+      "summary",
+      {},
+      el("span", { class: "proposal-no", text: String(number) }),
+      // Folded, the start of the prompt; unfolded (the prompt is below), what it is.
+      el("span", { class: "proposal-preview", text: part.positive_prompt || "(vacío)" }),
+      el("span", {
+        class: "proposal-label",
+        text: `Propuesta ${number}${part.negative_prompt ? ", con negativo" : ""}`,
+      })
+    ),
+    frameBody(entry, part, live ? {} : frameHandlers)
+  );
+  return el(
+    "li",
+    { class: "proposal-item", "aria-label": `Propuesta ${number}` },
+    details,
+    copyButton("Copiar", () => part.positive_prompt, "btn-quiet btn-copy proposal-copy")
   );
 }
 
@@ -928,10 +1002,22 @@ function hasPendingRuns() {
   return (state.conversation?.runs || []).some((run) => run.status === "pending");
 }
 
+function pendingReply(commenting) {
+  return el(
+    "article",
+    { class: "msg msg-bot is-pending", "aria-busy": "true" },
+    commenting && el("p", { class: "msg-meta", text: "Mirando los resultados…" }),
+    developing()
+  );
+}
+
 function renderLog() {
-  const messages = state.conversation?.messages || [];
+  const conversation = state.conversation;
+  const messages = conversation?.messages || [];
+  const live = conversation && state.live.get(conversation.id);
   renderReactionHint();
-  if (!messages.length) {
+  if (conversation) markSeen(conversation);
+  if (!messages.length && !live) {
     ui.log.replaceChildren(emptyState());
     return;
   }
@@ -946,19 +1032,14 @@ function renderLog() {
     })
   );
   const last = messages.at(-1);
-  if (state.conversation.commenting) {
-    ui.log.append(
-      el(
-        "article",
-        { class: "msg msg-bot is-pending", "aria-busy": "true" },
-        el("p", { class: "msg-meta", text: "Mirando los resultados…" }),
-        developing()
-      )
-    );
-  } else if (state.busy) {
-    // the live reply is appended by streamReply
+  if (live) {
+    renderLive(live);
+    ui.log.append(live.node);
+  } else if (conversation.commenting || conversation.replying) {
+    ui.log.append(pendingReply(conversation.commenting)); // until the chat picks the reply up
   } else if (last.role === "user") {
-    ui.log.append(failedReply(null));
+    const failure = state.failures.get(conversation.id);
+    ui.log.append(failedReply(failure?.detail || null, failure?.requestId || null));
   } else if (last.role === "results" && !hasPendingRuns() && runByNumber(last.run)?.status !== "cancelled") {
     ui.log.append(uncommentedResults());
   }
@@ -968,7 +1049,7 @@ function renderLog() {
 // the bot's comment on them. Keeps the reader's place unless they were at the bottom.
 async function refreshFromServer() {
   const current = state.conversation;
-  if (!current) return;
+  if (!current || state.live.has(current.id)) return;
   let fresh;
   try {
     fresh = await request(`/api/conversations/${current.id}`);
@@ -977,30 +1058,34 @@ async function refreshFromServer() {
   }
   // Mid-typing a comment on an image, or another conversation opened meanwhile: try later.
   const typing = ui.log.contains(document.activeElement) && document.activeElement.matches("input, textarea");
-  if (state.conversation !== current || state.busy || typing) return;
+  if (state.conversation !== current || state.live.has(current.id) || typing) return;
   const changed =
     fresh.updated_at !== current.updated_at ||
     fresh.commenting !== current.commenting ||
+    fresh.replying !== current.replying ||
     JSON.stringify(fresh.runs || []) !== JSON.stringify(current.runs || []);
   state.conversation = fresh;
+  attachIfReplying(fresh);
   if (!changed) return;
   const stick = nearBottom();
   const top = ui.scroll.scrollTop;
   renderLog();
   renderHead();
+  renderComposerState();
   if (stick) scrollToBottom();
   else ui.scroll.scrollTop = top;
-  if (fresh.messages.length !== current.messages.length) loadSummaries();
+  if (fresh.messages.length !== current.messages.length || fresh.replying !== current.replying) loadSummaries();
 }
 
 function schedulePoll() {
   clearTimeout(state.pollTimer);
   state.pollTimer = 0;
   const conversation = state.conversation;
-  if (!conversation || !(conversation.commenting || hasPendingRuns())) return;
+  if (!conversation || state.live.has(conversation.id)) return;
+  if (!(conversation.commenting || conversation.replying || hasPendingRuns())) return;
   state.pollTimer = setTimeout(async () => {
     state.pollTimer = 0;
-    if (document.visibilityState === "visible" && !state.busy) await refreshFromServer();
+    if (document.visibilityState === "visible") await refreshFromServer();
     schedulePoll();
   }, POLL_MS);
 }
@@ -1101,41 +1186,142 @@ function renderChips() {
   );
 }
 
+// What's going on in a conversation, for the list: the bot at work there, or news unseen.
+function threadStatus(summary) {
+  const live = state.live.get(summary.id);
+  if (live || summary.replying || summary.commenting) {
+    return { kind: "busy", text: live?.automatic || (!live && summary.commenting) ? "Comentando…" : "Respondiendo…" };
+  }
+  if (summary.running) return { kind: "busy", text: "Generando imágenes…" };
+  if (isUnread(summary)) return { kind: "fresh", text: "Respuesta nueva" };
+  return null;
+}
+
+function svgIcon(d) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("class", "icon");
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", d);
+  svg.append(path);
+  return svg;
+}
+
+const PENCIL = "M4 20h4L19 9l-4-4L4 16v4Zm11-15 4 4";
+const BIN = "M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10 11v6M14 11v6";
+
+function threadItem(summary) {
+  const title = summary.title || "Conversación sin título";
+  const status = threadStatus(summary);
+  const when = [formatWhen(summary.updated_at), formatCost(summary.cost)].filter(Boolean).join(", ");
+  const link = el(
+    "a",
+    {
+      class: "thread",
+      href: `/conversar?id=${encodeURIComponent(summary.id)}`,
+      "aria-current": summary.id === state.conversation?.id ? "page" : null,
+      onclick: (event) => {
+        if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return;
+        event.preventDefault();
+        openConversation(summary.id, { push: true });
+      },
+    },
+    el("span", { class: "thread-title", text: title }),
+    el(
+      "span",
+      { class: "thread-meta" },
+      status && el("span", { class: `thread-status is-${status.kind}`, text: status.text }),
+      el("span", { text: when })
+    )
+  );
+  const rename = el(
+    "button",
+    {
+      type: "button",
+      class: "btn-icon thread-action",
+      title: "Renombrar",
+      "aria-label": `Renombrar «${title}»`,
+      onclick: () => startRename(item, summary),
+    },
+    svgIcon(PENCIL)
+  );
+  const remove = confirmButton(svgIcon(BIN), () => deleteConversation(summary.id), {
+    confirmLabel: "¿Eliminar?",
+    className: "btn-icon thread-action thread-delete",
+    title: "Eliminar",
+  });
+  remove.setAttribute("aria-label", `Eliminar «${title}»`);
+  const item = el(
+    "li",
+    { class: status?.kind === "fresh" ? "thread-item is-fresh" : "thread-item" },
+    link,
+    el("div", { class: "thread-actions" }, rename, remove)
+  );
+  return item;
+}
+
 function renderThreads() {
+  if (state.renaming) return; // redrawn when the title is done
+  scheduleListPoll();
   if (!state.summaries.length) {
     ui.threadList.replaceChildren(el("li", { class: "thread-empty", text: "Aún no hay conversaciones." }));
     return;
   }
-  ui.threadList.replaceChildren(
-    ...state.summaries.map((summary) =>
-      el(
-        "li",
-        {},
-        el(
-          "a",
-          {
-            class: "thread",
-            href: `/conversar?id=${encodeURIComponent(summary.id)}`,
-            "aria-current": summary.id === state.conversation?.id ? "page" : null,
-            onclick: (event) => {
-              if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return;
-              event.preventDefault();
-              openConversation(summary.id, { push: true });
-            },
-          },
-          el("span", { class: "thread-title", text: summary.title || "Conversación sin título" }),
-          el("span", {
-            class: "thread-meta",
-            text: [formatWhen(summary.updated_at), formatCost(summary.cost)].filter(Boolean).join(", "),
-          })
-        )
-      )
-    )
-  );
+  ui.threadList.replaceChildren(...state.summaries.map(threadItem));
 }
 
+// The title becomes a text field; Intro or leaving it saves, Escape drops the change.
+function startRename(item, summary) {
+  const input = el("input", {
+    type: "text",
+    class: "thread-rename",
+    value: summary.title || "",
+    maxlength: String(MAX_TITLE_LENGTH),
+    "aria-label": "Título de la conversación",
+  });
+  let finished = false;
+  const finish = async (save) => {
+    if (finished) return;
+    finished = true;
+    const title = input.value.replace(/\s+/g, " ").trim();
+    if (save && title && title !== summary.title) {
+      input.disabled = true;
+      try {
+        const updated = await request(`/api/conversations/${summary.id}`, { method: "PATCH", json: { title } });
+        summary.title = updated.title;
+        if (state.conversation?.id === summary.id) state.conversation.title = updated.title;
+      } catch (err) {
+        toast(err.message, { error: true });
+      }
+    }
+    state.renaming = null;
+    renderThreads();
+    renderHead();
+  };
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      finish(true);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      finish(false);
+    }
+  });
+  input.addEventListener("blur", () => finish(true));
+  state.renaming = summary.id;
+  item.classList.add("is-renaming");
+  item.replaceChildren(input);
+  input.focus();
+  input.select();
+}
+
+// A reply just stored: its conversation goes first, no longer busy.
 function updateSummary(summary) {
-  state.summaries = [summary, ...state.summaries.filter((s) => s.id !== summary.id)];
+  state.summaries = [
+    { replying: false, commenting: false, ...summary },
+    ...state.summaries.filter((s) => s.id !== summary.id),
+  ];
   renderThreads();
 }
 
@@ -1156,11 +1342,32 @@ function defaultSettings() {
   };
 }
 
+// What the user left in the composer stays with its conversation when they move to another.
+function stashDraft() {
+  const key = state.conversation?.id || "";
+  const text = ui.input.value;
+  if (text.trim() || state.attachments.length) state.drafts.set(key, { text, attachments: state.attachments });
+  else state.drafts.delete(key);
+  state.attachments = [];
+}
+
+function restoreDraft(key, prefill = "") {
+  const draft = state.drafts.get(key);
+  state.drafts.delete(key);
+  ui.input.value = prefill || draft?.text || "";
+  state.attachments = draft?.attachments || [];
+  renderAttachments();
+  resizeInput();
+  hidePicker();
+}
+
+function dropDraft(key) {
+  state.drafts.get(key)?.attachments.forEach((a) => URL.revokeObjectURL(a.url));
+  state.drafts.delete(key);
+}
+
 function startNew({ push = false, overrides = {}, prefill = "" } = {}) {
-  if (state.busy) {
-    toast("Espera a que termine la respuesta.");
-    return;
-  }
+  stashDraft();
   state.conversation = null;
   state.draft = { ...defaultSettings(), ...overrides };
   if (![...ui.family.options].some((o) => o.value === state.draft.family_id)) {
@@ -1171,21 +1378,17 @@ function startNew({ push = false, overrides = {}, prefill = "" } = {}) {
   renderHead();
   renderThreads();
   renderLog();
+  renderComposerState();
   schedulePoll();
   setSettingsOpen(true);
   setThreadsOpen(false);
   clearError();
-  ui.input.value = prefill;
-  resizeInput();
+  restoreDraft("", prefill);
   ui.input.focus();
-  ui.input.setSelectionRange(prefill.length, prefill.length);
+  ui.input.setSelectionRange(ui.input.value.length, ui.input.value.length);
 }
 
 async function openConversation(id, { push = false } = {}) {
-  if (state.busy) {
-    toast("Espera a que termine la respuesta.");
-    return;
-  }
   let conversation;
   try {
     conversation = await request(`/api/conversations/${encodeURIComponent(id)}`);
@@ -1194,47 +1397,82 @@ async function openConversation(id, { push = false } = {}) {
     startNew({ push: true });
     return;
   }
+  stashDraft();
   state.conversation = conversation;
   if (push) history.pushState({ id }, "", `/conversar?id=${encodeURIComponent(id)}`);
+  attachIfReplying(conversation);
   applySettingsToForm(conversation);
   renderHead();
   renderThreads();
   renderLog();
+  renderComposerState();
   schedulePoll();
   setSettingsOpen(false);
   setThreadsOpen(false);
   clearError();
+  restoreDraft(id);
   scrollToBottom();
   ui.input.focus();
 }
 
-async function deleteConversation() {
-  const conversation = state.conversation;
-  if (!conversation || state.busy) return;
+async function deleteConversation(id) {
   try {
-    await request(`/api/conversations/${conversation.id}`, { method: "DELETE" });
+    await request(`/api/conversations/${id}`, { method: "DELETE" });
   } catch (err) {
     toast(err.message, { error: true });
     return;
   }
-  state.summaries = state.summaries.filter((s) => s.id !== conversation.id);
-  startNew({ push: true });
+  // A reply being written there goes nowhere now.
+  const live = state.live.get(id);
+  if (live) {
+    live.dropped = true;
+    state.live.delete(id);
+    live.controller.abort();
+  }
+  state.failures.delete(id);
+  dropDraft(id);
+  delete state.seen[id];
+  writeStored(localStorage, SEEN_KEY, state.seen);
+  state.summaries = state.summaries.filter((s) => s.id !== id);
+  if (state.conversation?.id === id) {
+    // Nothing of it to keep in the composer.
+    state.attachments.forEach((a) => URL.revokeObjectURL(a.url));
+    state.attachments = [];
+    ui.input.value = "";
+    startNew({ push: true });
+  } else {
+    renderThreads();
+  }
   toast("Conversación eliminada.");
 }
 
 // ---------- sending and streaming ----------
 
-// POSTs and calls onEvent for each NDJSON event of the streamed reply.
-async function streamEvents(url, body, onEvent) {
+// Fetches a reply's stream and calls onEvent for each of its NDJSON events. A 204 (nothing
+// being written) is an empty stream; a refusal before anything was stored throws Rejected.
+async function streamEvents(url, { method = "POST", body = null, signal, onOpen, onEvent }) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);
+  let timedOut = false;
+  let timer = 0;
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, STREAM_IDLE_MS);
+  };
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort);
+  arm();
   try {
     let response;
     try {
-      response = await fetch(url, { method: "POST", body, signal: controller.signal });
+      response = await fetch(url, { method, body, signal: controller.signal });
     } catch (err) {
+      if (signal?.aborted) throw err;
       throw new Rejected("No se ha podido conectar con el servidor. Comprueba la conexión.");
     }
+    if (response.status === 204) return;
     if (!response.ok) {
       let detail = null;
       try {
@@ -1244,6 +1482,7 @@ async function streamEvents(url, body, onEvent) {
       }
       throw new Rejected(typeof detail === "string" ? detail : `El servidor respondió con un error ${response.status}.`);
     }
+    onOpen?.();
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -1255,110 +1494,173 @@ async function streamEvents(url, body, onEvent) {
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
+      arm();
       buffer += decoder.decode(value, { stream: true });
       flush(false);
     }
     flush(true);
   } catch (err) {
     if (err instanceof Rejected) throw err;
-    throw new Error(err.name === "AbortError" ? "La respuesta ha tardado demasiado." : "Se ha cortado la conexión.");
+    throw new Error(timedOut ? "La respuesta ha tardado demasiado." : "Se ha cortado la conexión.");
   } finally {
-    clearTimeout(timeoutId);
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
   }
 }
 
-async function syncConversation() {
-  try {
-    state.conversation = await request(`/api/conversations/${state.conversation.id}`);
-  } catch (err) {
-    // the page already shows the reply; the next action will resync
-  }
-}
-
-async function streamReply(url, body, { onRejected } = {}) {
-  setBusyState(true);
-  const firstNumber = proposalCount(state.conversation.messages);
-  const node = el("article", { class: "msg msg-bot is-pending", "aria-busy": "true" }, developing());
-  ui.log.append(node);
-  scrollToBottom();
-
-  // The reply as it arrives: text segments, split wherever the bot called a tool.
-  const segments = [{ raw: "" }];
-  let frame = 0;
-  const renderLive = () => {
-    frame = 0;
-    const stick = nearBottom();
-    const parts = segments.flatMap((segment) => (segment.part ? [segment.part] : liveParts(segment.raw)));
-    fillBotMessage(node, parts, firstNumber, { live: true });
-    if (stick) scrollToBottom();
+// A reply being written in a conversation, kept as it arrives and shown while that
+// conversation is open. url is the POST that asks for it, or GET …/live to pick up one
+// already under way (after a reload, in another tab, the bot's comment on results).
+function follow(conversationId, url, { body = null, method = "POST", automatic = false, onRejected = null } = {}) {
+  const live = {
+    conversationId,
+    automatic,
+    segments: [{ raw: "" }], // text segments, split wherever the bot called a tool
+    node: el("article", { class: "msg msg-bot is-pending", "aria-busy": "true" }),
+    frame: 0,
+    controller: new AbortController(),
+    dropped: false,
   };
+  state.live.set(conversationId, live);
+  renderThreads();
+  if (state.conversation?.id === conversationId) renderComposerState();
 
-  let finished = null;
-  let failure = null;
-  let failedRequestId = null;
-  try {
-    await streamEvents(url, body, (event) => {
-      if (event.type === "delta") {
-        if (segments.at(-1).part) segments.push({ raw: "" });
-        segments.at(-1).raw += event.text;
-        if (!frame) frame = requestAnimationFrame(renderLive);
-      } else if (event.type === "tool") {
-        segments.push({ part: event.part });
-        if (!frame) frame = requestAnimationFrame(renderLive);
-      } else if (event.type === "done") {
-        finished = event;
-      } else if (event.type === "error") {
-        failure = event.detail;
-        failedRequestId = event.request_id || null;
-      }
+  const redraw = () => {
+    if (live.frame || state.conversation?.id !== conversationId) return;
+    live.frame = requestAnimationFrame(() => {
+      live.frame = 0;
+      if (state.conversation?.id !== conversationId) return;
+      const stick = nearBottom();
+      renderLive(live);
+      if (stick) scrollToBottom();
     });
-    if (!finished && !failure) failure = "La respuesta se cortó antes de terminar.";
-  } catch (err) {
-    if (frame) cancelAnimationFrame(frame);
-    if (err instanceof Rejected) {
-      node.remove();
-      onRejected?.();
-      showError(err.message);
-      setBusyState(false);
-      return;
-    }
-    failure = err.message;
-  }
-  if (frame) cancelAnimationFrame(frame);
+  };
+  const outcome = { finished: null, failure: null, requestId: null, rejected: null };
+  streamEvents(url, {
+    method,
+    body,
+    signal: live.controller.signal,
+    // The message is stored by now: a new conversation belongs in the list.
+    onOpen: () => {
+      if (!state.summaries.some((s) => s.id === conversationId)) loadSummaries();
+    },
+    onEvent: (event) => {
+      if (event.type === "delta") {
+        if (live.segments.at(-1).part) live.segments.push({ raw: "" });
+        live.segments.at(-1).raw += event.text;
+        redraw();
+      } else if (event.type === "tool") {
+        live.segments.push({ part: event.part });
+        redraw();
+      } else if (event.type === "done") {
+        outcome.finished = event;
+      } else if (event.type === "error") {
+        outcome.failure = event.detail;
+        outcome.requestId = event.request_id || null;
+      }
+    },
+  })
+    .catch((err) => {
+      if (err instanceof Rejected) outcome.rejected = err.message;
+      // The connection went, not necessarily the reply: the server goes on with it.
+      else outcome.failure = err.message;
+    })
+    .then(() => settle(live, outcome, { picked: method === "GET", onRejected }));
+  return live;
+}
 
-  const stick = nearBottom();
+function renderLive(live) {
+  const parts = live.segments.flatMap((segment) => (segment.part ? [segment.part] : liveParts(segment.raw)));
+  if (!parts.length) {
+    live.node.replaceChildren(
+      ...[live.automatic && el("p", { class: "msg-meta", text: "Mirando los resultados…" }), developing()].filter(Boolean)
+    );
+    return;
+  }
+  fillBotMessage(live.node, parts, proposalCount(state.conversation.messages), { live: true });
+}
+
+// The reply being written there, if the chat isn't following it yet.
+function attachIfReplying(conversation) {
+  if (!(conversation.replying || conversation.commenting) || state.live.has(conversation.id)) return;
+  follow(conversation.id, `/api/conversations/${conversation.id}/live`, {
+    method: "GET",
+    automatic: !conversation.replying,
+  });
+}
+
+// A reply's stream ended: stored, failed, refused, or cut off (and maybe still going on the server).
+async function settle(live, outcome, { picked, onRejected }) {
+  if (live.frame) cancelAnimationFrame(live.frame);
+  if (live.dropped) return; // its conversation was deleted
+  const id = live.conversationId;
+  const visible = () => state.conversation?.id === id;
+  const { finished, failure, requestId, rejected } = outcome;
+
   if (finished) {
     (finished.message.notes || []).forEach((note) => state.noteIds?.add(note.id));
     for (const change of finished.message.note_changes || []) {
       if (change.action === "forget") state.noteIds?.delete(change.id);
     }
-    node.classList.remove("is-pending");
-    node.removeAttribute("aria-busy");
-    fillBotMessage(node, finished.message.parts, firstNumber, finished.message);
-    if (stick) scrollToBottom();
-    spawnFloatingCost(finished.message.cost, ui.send);
-    updateSummary(finished.conversation);
-  } else {
-    node.replaceWith(failedReply(failure, failedRequestId));
-    await loadSummaries(); // the message itself was stored, so the conversation belongs in the list
+    state.failures.delete(id);
+    if (visible()) {
+      live.node.classList.remove("is-pending");
+      live.node.removeAttribute("aria-busy");
+      fillBotMessage(live.node, finished.message.parts, proposalCount(state.conversation.messages), finished.message);
+      spawnFloatingCost(finished.message.cost, ui.send);
+    }
+  } else if (failure) {
+    state.failures.set(id, { detail: failure, requestId });
   }
-  await syncConversation();
-  setBusyState(false);
-  // The bot may have switched the conversation's family by running another family's model.
-  if (state.conversation) applySettingsToForm(state.conversation);
-  if (finished) {
-    // Now with the runs it launched, and the reactions it carried marked as sent.
+
+  if (rejected && !picked) {
+    // Refused before anything was stored: the message goes back to the composer, to fix and resend.
+    state.live.delete(id);
+    if (visible()) {
+      onRejected?.(true);
+      renderLog();
+      showError(rejected);
+    } else {
+      onRejected?.(false);
+      const title = state.summaries.find((s) => s.id === id)?.title;
+      toast(`No se ha enviado tu mensaje${title ? ` en «${title}»` : ""}: ${rejected}`, { error: true });
+    }
+    renderThreads();
+    if (visible()) renderComposerState();
+    return;
+  }
+
+  // Now with the runs it launched, the reactions it carried marked as sent, and the
+  // family it may have switched to by running another family's model.
+  let fresh = null;
+  try {
+    fresh = await request(`/api/conversations/${id}`);
+  } catch (err) {
+    // the page already shows the reply; the next action will resync
+  }
+  if (state.live.get(id) === live) state.live.delete(id);
+  if (finished) updateSummary(finished.conversation);
+  else loadSummaries();
+  if (visible()) {
+    const stick = nearBottom();
+    if (fresh) state.conversation = fresh;
+    applySettingsToForm(state.conversation);
     renderLog();
+    renderHead();
+    renderComposerState();
     if (stick) scrollToBottom();
+    schedulePoll(); // a reply still under way on the server is picked up again from there
   }
-  renderHead();
-  schedulePoll();
 }
 
 async function retryReply(event) {
-  if (state.busy || !state.conversation) return;
+  const conversation = state.conversation;
+  if (!conversation || isBusy(conversation)) return;
   event.currentTarget.closest(".msg-failed").remove();
-  await streamReply(`/api/conversations/${state.conversation.id}/reply`, null);
+  state.failures.delete(conversation.id);
+  follow(conversation.id, `/api/conversations/${conversation.id}/reply`);
+  renderLog();
+  scrollToBottom();
 }
 
 async function createConversation() {
@@ -1366,12 +1668,13 @@ async function createConversation() {
   rememberSettings();
   state.conversation = created;
   state.draft = null;
+  markSeen(created);
   history.pushState({ id: created.id }, "", `/conversar?id=${encodeURIComponent(created.id)}`);
 }
 
 async function submitMessage(event) {
   event.preventDefault();
-  if (state.busy) return;
+  if (state.creating || isBusy(state.conversation)) return;
   const content = ui.input.value.trim();
   const attachments = state.attachments;
   // Reactions to images go with the message; on their own they are a message too.
@@ -1401,19 +1704,22 @@ async function submitMessage(event) {
   clearError();
 
   if (!state.conversation) {
-    setBusyState(true);
+    state.creating = true;
+    renderComposerState();
     try {
       await createConversation();
     } catch (err) {
-      setBusyState(false);
       showError(err.message);
       return;
+    } finally {
+      state.creating = false;
+      renderComposerState();
     }
-    setBusyState(false);
     ui.log.replaceChildren();
     renderHead();
   }
 
+  const conversation = state.conversation;
   hidePicker();
   const userNode = userMessage({ content, reactions }, attachments.map((a) => a.url));
   ui.reactionHint.hidden = true;
@@ -1425,22 +1731,29 @@ async function submitMessage(event) {
   state.attachments = [];
   renderAttachments();
   setSettingsOpen(false);
+  state.failures.delete(conversation.id);
 
   const form = new FormData();
   form.append("content", content);
   attachments.forEach((a) => form.append("images", a.file));
-  await streamReply(`/api/conversations/${state.conversation.id}/messages`, form, {
-    // Refused before anything was stored: put the message back to fix and resend.
-    onRejected: () => {
-      userNode.remove();
-      if (!ui.input.value) ui.input.value = content;
-      resizeInput();
-      state.attachments = attachments;
-      renderAttachments();
-      renderReactionHint();
-      if (!state.conversation.messages.length) ui.log.replaceChildren(emptyState());
+  const live = follow(conversation.id, `/api/conversations/${conversation.id}/messages`, {
+    body: form,
+    // Refused before anything was stored: the message goes back, to fix and resend -- into the
+    // composer if the conversation is open, or into its draft for when it is opened again.
+    onRejected: (visible) => {
+      if (visible) {
+        if (!ui.input.value) ui.input.value = content;
+        resizeInput();
+        state.attachments = attachments;
+        renderAttachments();
+      } else if (!state.drafts.has(conversation.id)) {
+        state.drafts.set(conversation.id, { text: content, attachments });
+      }
     },
   });
+  ui.log.append(live.node);
+  renderLive(live);
+  scrollToBottom();
   ui.input.focus();
 }
 
@@ -1616,7 +1929,9 @@ function setupSettings() {
   ui.temperature.addEventListener("input", () => (ui.temperatureValue.textContent = ui.temperature.value));
   ui.temperature.addEventListener("change", () => changeSettings({ temperature: Number(ui.temperature.value) }));
 
-  state.deleteButton = confirmButton("Eliminar", deleteConversation, { confirmLabel: "Pulsa otra vez para eliminarla" });
+  state.deleteButton = confirmButton("Eliminar", () => state.conversation && deleteConversation(state.conversation.id), {
+    confirmLabel: "Pulsa otra vez para eliminarla",
+  });
   ui.deleteSlot.append(state.deleteButton);
 }
 
@@ -1637,14 +1952,43 @@ function setupThreads() {
 }
 
 // A conversation whose first message was refused is left empty: not worth listing.
-async function loadSummaries() {
+async function loadSummaries({ quiet = false } = {}) {
   try {
     const summaries = await request("/api/conversations");
     state.summaries = summaries.filter((s) => s.message_count > 0);
     renderThreads();
+    forgetSeenOfDeleted();
   } catch (err) {
-    toast(`No se han podido cargar las conversaciones: ${err.message}`, { error: true });
+    if (!quiet) toast(`No se han podido cargar las conversaciones: ${err.message}`, { error: true });
   }
+  scheduleListPoll();
+}
+
+function forgetSeenOfDeleted() {
+  const ids = new Set(state.summaries.map((s) => s.id));
+  const gone = Object.keys(state.seen).filter((id) => !ids.has(id) && id !== state.conversation?.id);
+  if (!gone.length) return;
+  gone.forEach((id) => delete state.seen[id]);
+  writeStored(localStorage, SEEN_KEY, state.seen);
+}
+
+// While something is under way in another conversation that this chat isn't following
+// (runs, or a reply asked for elsewhere), the list checks back for when it's done.
+function scheduleListPoll() {
+  const waiting = state.summaries.some(
+    (s) => s.id !== state.conversation?.id && !state.live.has(s.id) && (s.replying || s.commenting || s.running)
+  );
+  if (!waiting) {
+    clearTimeout(state.listTimer);
+    state.listTimer = 0;
+    return;
+  }
+  if (state.listTimer) return;
+  state.listTimer = setTimeout(() => {
+    state.listTimer = 0;
+    if (document.visibilityState === "visible") loadSummaries({ quiet: true });
+    else scheduleListPoll();
+  }, LIST_POLL_MS);
 }
 
 async function loadSideData() {
@@ -1677,9 +2021,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadSideData();
   // Back on the tab: catch up at once on whatever finished meanwhile.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && !state.busy && state.conversation) {
-      refreshFromServer().then(schedulePoll);
-    }
+    if (document.visibilityState !== "visible") return;
+    if (state.conversation && !state.live.has(state.conversation.id)) refreshFromServer().then(schedulePoll);
+    loadSummaries({ quiet: true });
   });
 
   // "Iterar" on a prompt elsewhere: a new conversation that starts from it.

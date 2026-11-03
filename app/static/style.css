@@ -864,11 +864,70 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
   color: var(--paper-dim);
   text-decoration: none;
 }
-.thread:hover { background: var(--panel); color: var(--paper); }
-.thread[aria-current="page"] { background: var(--panel); border-left-color: var(--safelight); color: var(--paper); }
+.thread-item { position: relative; }
+.thread-item:hover > .thread, .thread-item:focus-within > .thread { background: var(--panel); color: var(--paper); }
+.thread[aria-current="page"] { padding-right: 4.2rem; background: var(--panel); border-left-color: var(--safelight); color: var(--paper); }
 .thread-title { overflow: hidden; font-size: var(--step--1); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.thread-meta { color: var(--paper-faint); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+.thread-meta { display: flex; flex-wrap: wrap; gap: 0 0.5rem; color: var(--paper-faint); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
 .thread-empty { padding: 0.5rem 0.65rem; color: var(--paper-faint); font-size: var(--step--1); }
+
+/* The bot at work there (a reply, a comment, images being made), or a reply not seen yet. */
+.thread-status { color: var(--safelight); font-weight: 600; }
+.thread-status.is-busy::before {
+  content: "";
+  display: inline-block;
+  width: 0.4rem;
+  height: 0.4rem;
+  margin-right: 0.35rem;
+  vertical-align: 0.08em;
+  border-radius: 999px;
+  background: var(--safelight);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.thread-item.is-fresh > .thread { color: var(--paper); }
+.thread-item.is-fresh .thread-title::before {
+  content: "";
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.4rem;
+  vertical-align: 0.1em;
+  border-radius: 999px;
+  background: var(--safelight);
+}
+
+/* Rename and delete: over the end of the row, while it's pointed at, focused or open. */
+.thread-actions {
+  position: absolute;
+  top: 50%;
+  right: 0.25rem;
+  display: flex;
+  gap: 1px;
+  padding-left: 1.4rem;
+  background: linear-gradient(to right, transparent, var(--panel) 1.2rem);
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+}
+.thread-item:hover .thread-actions,
+.thread-item:focus-within .thread-actions,
+.thread-item:has(.thread[aria-current="page"]) .thread-actions { opacity: 1; pointer-events: auto; }
+.thread-action { width: 1.75rem; height: 1.75rem; }
+.thread-action .icon { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.thread-delete:hover:not(.is-armed) { color: var(--stop); }
+.thread-delete.is-armed { width: auto; padding: 0 0.55rem; color: var(--stop); background: var(--stop-soft); font-size: 0.75rem; font-weight: 650; }
+.thread-rename {
+  width: 100%;
+  padding: 0.55rem 0.6rem;
+  background: var(--raised);
+  border: 1px solid var(--safelight);
+  border-radius: var(--radius-sm);
+  color: var(--paper);
+  font: inherit;
+  font-size: var(--step--1);
+  font-weight: 600;
+}
+.thread-rename:focus { outline: none; box-shadow: 0 0 0 3px var(--safelight-soft); }
 
 .chat { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .chat.is-dragover::after {
@@ -1100,7 +1159,47 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .msg-bot .msg-text ul, .msg-bot .msg-text ol { display: flex; flex-direction: column; gap: 0.25rem; margin: 0; padding-left: 1.3rem; }
 .msg-bot code { padding: 0.05rem 0.3rem; background: var(--raised); border-radius: var(--radius-sm); font-size: 0.875em; }
 .msg-frames { margin: 0; }
-.msg-frames .frame { padding: 0.85rem 1rem 0.35rem 0.6rem; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+
+/* A proposal folds to its number and first line, with Copiar at hand; unfolded, the whole prompt. */
+.proposal-item { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.proposal > summary {
+  display: grid;
+  grid-template-columns: 0.4rem 1.3rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem 5.5rem 0.5rem 0.85rem;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  list-style: none;
+}
+.proposal > summary::-webkit-details-marker { display: none; }
+.proposal > summary::before {
+  content: "";
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 2px solid var(--paper-faint);
+  border-bottom: 2px solid var(--paper-faint);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.proposal[open] > summary::before { transform: rotate(45deg); }
+.proposal > summary:hover .proposal-preview { color: var(--paper); }
+.proposal-no {
+  color: var(--safelight);
+  font-stretch: 62%;
+  font-weight: 800;
+  font-size: var(--step-2);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.proposal-preview { overflow: hidden; color: var(--paper-dim); text-overflow: ellipsis; white-space: nowrap; }
+.proposal-label { display: none; color: var(--paper-faint); font-size: var(--step--1); font-weight: 600; }
+.proposal[open] .proposal-preview { display: none; }
+.proposal[open] .proposal-label { display: block; }
+/* The prompt starts where its first line did, folded: past the chevron and the number. */
+.proposal .frame-body { padding: 0 1rem 0.35rem 3.85rem; }
+.proposal-copy { position: absolute; top: 0.45rem; right: 0.5rem; padding-block: 0.2rem; }
+.proposal[open] + .proposal-copy { display: none; } /* unfolded, its own actions are there */
 .msg-bot.is-pending .developing { width: min(28rem, 100%); padding: 0.4rem 0; }
 .msg-meta { color: var(--paper-faint); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
 .msg-failed { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }

@@ -14,6 +14,13 @@ comment on it, without tools that launch anything.
 run_turn yields events: {"type": "delta", "text"} as the reply arrives, {"type": "tool",
 "part"} for each tool call, and finally {"type": "done", "message", "conversation"} or
 {"type": "error", "detail", "request_id"}.
+
+A turn the user asks for runs apart from the request that asked (start_turn): in a thread
+of its own, publishing its events to a LiveTurn that any chat can follow from the start.
+So the reply goes on, and is stored, when the chat that asked moves to another
+conversation, reloads or closes -- several conversations can be replying at once -- and a
+chat that opens the conversation meanwhile picks it up where it is. The bot's automatic
+comment on results is a LiveTurn too.
 """
 import base64
 import json
@@ -32,6 +39,9 @@ logger = logging.getLogger("app.conversations")
 
 MAX_STEPS = 6
 LOCK_WAIT_SECONDS = 600
+# A follower with nothing new for this long gets None (the route sends a blank line), so a
+# connection waiting on a slow model isn't taken for a dead one.
+KEEPALIVE_SECONDS = 15
 
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -40,6 +50,110 @@ _automatic: set[str] = set()  # conversations whose bot is commenting on results
 
 class Busy(RuntimeError):
     pass
+
+
+class LiveTurn:
+    """A turn being written: its events so far, for whoever follows it."""
+
+    def __init__(self, conversation_id: str, automatic: bool = False):
+        self.conversation_id = conversation_id
+        self.automatic = automatic
+        self.events: list[dict] = []
+        self.finished = False
+        self._condition = threading.Condition()
+
+    def publish(self, event: dict) -> None:
+        with self._condition:
+            self.events.append(event)
+            self._condition.notify_all()
+
+    def finish(self) -> None:
+        with self._condition:
+            self.finished = True
+            self._condition.notify_all()
+
+    def follow(self, keepalive: float = KEEPALIVE_SECONDS):
+        """Every event from the first, then each as it comes, until the turn ends; None
+        after `keepalive` seconds with nothing new."""
+        index = 0
+        while True:
+            with self._condition:
+                if index == len(self.events) and not self.finished:
+                    self._condition.wait(timeout=keepalive)
+                pending = self.events[index:]
+                finished = self.finished
+            index += len(pending)
+            if pending:
+                yield from pending
+            elif finished:
+                return
+            else:
+                yield None
+
+
+_live: dict[str, LiveTurn] = {}
+_live_guard = threading.Lock()
+
+
+def live_turn(conversation_id: str) -> LiveTurn | None:
+    return _live.get(conversation_id)
+
+
+def is_replying(conversation_id: str) -> bool:
+    """The bot is answering the user there right now (not commenting on results)."""
+    live = _live.get(conversation_id)
+    return live is not None and not live.automatic
+
+
+def is_busy(conversation_id: str) -> bool:
+    """A turn is under way there, or the bot is about to comment on results: a new message
+    would land before its reply."""
+    return conversation_id in _live or conversation_id in _automatic
+
+
+def _register(live: LiveTurn) -> None:
+    with _live_guard:
+        _live[live.conversation_id] = live
+
+
+def _unregister(live: LiveTurn) -> None:
+    with _live_guard:
+        if _live.get(live.conversation_id) is live:
+            del _live[live.conversation_id]
+        if live.automatic:
+            _automatic.discard(live.conversation_id)
+
+
+def _publish_all(live: LiveTurn, events) -> None:
+    """Publish a turn's events as they come. The turn stops being live just before its last
+    event goes out, so whoever reads that one finds the conversation free."""
+    try:
+        for event in events:
+            if event["type"] in ("done", "error"):
+                _unregister(live)
+            live.publish(event)
+    except Exception:
+        logger.exception("conversation turn failed conversation_id=%s", live.conversation_id)
+        _unregister(live)
+        live.publish({"type": "error", "detail": "The reply failed unexpectedly. Try again."})
+    finally:
+        _unregister(live)
+        live.finish()
+
+
+def start_turn(conversation_id: str) -> LiveTurn:
+    """Answer the conversation's last message in a thread of its own; returns the turn to
+    follow. Raises Busy if a turn is already under way there."""
+    with _live_guard:
+        if conversation_id in _live or conversation_id in _automatic:
+            raise Busy("The bot is still replying in this conversation. Wait for it to finish.")
+        live = LiveTurn(conversation_id)
+        _live[conversation_id] = live
+    threading.Thread(
+        target=_publish_all, args=(live, run_turn(conversation_id)),
+        name=f"turn-{conversation_id[:8]}", daemon=True,
+    ).start()
+    return live
 
 
 @contextmanager
@@ -372,22 +486,33 @@ def on_run_finished(conversation_id: str, run: dict) -> None:
     if conversations.set_results_images(conversation_id, run["n"], run["images"]):
         return
     will_comment = run["status"] != "cancelled" and not runs.tracker.pending_in(conversation_id)
+    live = LiveTurn(conversation_id, automatic=True) if will_comment else None
     if will_comment:
         _automatic.add(conversation_id)
     try:
         # Long: a user's turn may be running, and the results must not be lost.
         with turn_lock(conversation_id, timeout=3 * LOCK_WAIT_SECONDS):
+            if live:
+                _register(live)  # before the images appear: a chat seeing them can follow the comment
             stored = conversations.append_message(
                 conversation_id, {"role": "results", "run": run["n"], "content": "", "images": run["images"]}
             )
             if stored is None or not will_comment:
                 return
-            for event in _turn(conversation_id, automatic=True):
-                if event["type"] == "error":
-                    logger.warning("automatic comment failed conversation_id=%s detail=%s",
-                                   conversation_id, event["detail"])
+            _publish_all(live, _logged(_turn(conversation_id, automatic=True), conversation_id))
     finally:
         _automatic.discard(conversation_id)
+        if live:
+            _unregister(live)
+            live.finish()
+
+
+def _logged(events, conversation_id: str):
+    for event in events:
+        if event["type"] == "error":
+            logger.warning("automatic comment failed conversation_id=%s detail=%s",
+                           conversation_id, event["detail"])
+        yield event
 
 
 runs.tracker.on_finished = on_run_finished

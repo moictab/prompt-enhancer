@@ -142,15 +142,20 @@ export function setBusy(button, busy, label) {
 }
 
 // Two-step destructive button: the first click arms it, a second click within a
-// few seconds confirms. Avoids blocking window.confirm() dialogs.
-export function confirmButton(label, onConfirm, { confirmLabel = "Pulsa otra vez para eliminar" } = {}) {
-  const button = el("button", { type: "button", class: "btn-quiet btn-danger", text: label });
+// few seconds confirms. Avoids blocking window.confirm() dialogs. The label may be
+// text or a node (an icon).
+export function confirmButton(
+  label,
+  onConfirm,
+  { confirmLabel = "Pulsa otra vez para eliminar", className = "btn-quiet btn-danger", title = null } = {}
+) {
+  const button = el("button", { type: "button", class: className, title }, label);
   let armedTimeout = null;
   const disarm = () => {
     clearTimeout(armedTimeout);
     armedTimeout = null;
     button.classList.remove("is-armed");
-    button.textContent = label;
+    button.replaceChildren(label);
   };
   button.addEventListener("click", async () => {
     if (!armedTimeout) {
@@ -325,6 +330,16 @@ function formatWhen(timestamp, withDate) {
 // are given. With a number it gets the amber frame number (and label for screen
 // readers); without, it is a lone prompt.
 export function renderFrame(entry, prompt, handlers = {}, { number = null, label = null } = {}) {
+  return el(
+    "li",
+    { class: number ? "frame" : "frame is-single", "aria-label": label },
+    number && el("span", { class: "frame-no", "aria-hidden": "true", text: String(number) }),
+    frameBody(entry, prompt, handlers)
+  );
+}
+
+// A prompt's text, its negative and its actions: the frame without its number.
+export function frameBody(entry, prompt, handlers = {}) {
   const actions = el(
     "div",
     { class: "frame-actions" },
@@ -349,22 +364,17 @@ export function renderFrame(entry, prompt, handlers = {}, { number = null, label
   );
 
   return el(
-    "li",
-    { class: number ? "frame" : "frame is-single", "aria-label": label },
-    number && el("span", { class: "frame-no", "aria-hidden": "true", text: String(number) }),
-    el(
-      "div",
-      { class: "frame-body" },
-      el("p", { class: "prompt-text", text: prompt.positive_prompt || "(vacío)" }),
-      prompt.negative_prompt &&
-        el(
-          "div",
-          { class: "prompt-negative" },
-          el("span", { class: "prompt-negative-label", text: "Negativo" }),
-          el("p", { class: "prompt-text", text: prompt.negative_prompt })
-        ),
-      actions
-    )
+    "div",
+    { class: "frame-body" },
+    el("p", { class: "prompt-text", text: prompt.positive_prompt || "(vacío)" }),
+    prompt.negative_prompt &&
+      el(
+        "div",
+        { class: "prompt-negative" },
+        el("span", { class: "prompt-negative-label", text: "Negativo" }),
+        el("p", { class: "prompt-text", text: prompt.negative_prompt })
+      ),
+    actions
   );
 }
 

@@ -3,7 +3,7 @@ from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import catalog, civitai, conversation_turn, conversations, runs
@@ -12,6 +12,7 @@ from .api import _require_family, read_image
 router = APIRouter(prefix="/api/conversations")
 
 MAX_IMAGES_PER_MESSAGE = 4
+MAX_TITLE_LENGTH = 120
 
 
 def _require_conversation(conversation_id: str) -> dict:
@@ -39,11 +40,24 @@ class ConversationSettingsUpdate(BaseModel):
     llm_model: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     character_ids: list[str] | None = None
+    title: str | None = Field(default=None, max_length=MAX_TITLE_LENGTH)
+
+
+def _require_idle(conversation_id: str) -> None:
+    # One turn at a time per conversation: a message sent meanwhile would land before its reply.
+    if conversation_turn.is_busy(conversation_id):
+        raise HTTPException(status_code=409, detail="The bot is still replying in this conversation. Wait for it to finish.")
+
+
+def _with_activity(item: dict) -> dict:
+    """Plus what the bot is doing there right now: answering the user, or commenting on results."""
+    return {**item, "replying": conversation_turn.is_replying(item["id"]),
+            "commenting": conversation_turn.is_commenting(item["id"])}
 
 
 @router.get("")
 def list_conversations():
-    return conversations.list_summaries()
+    return [_with_activity(s) for s in conversations.list_summaries()]
 
 
 @router.post("")
@@ -56,15 +70,18 @@ def create_conversation(req: ConversationSettings):
 
 @router.get("/{conversation_id}")
 def get_conversation(conversation_id: str):
-    """The conversation, plus whether the bot is commenting on results right now
-    (the chat polls while that or a run is pending)."""
-    conversation = _require_conversation(conversation_id)
-    return {**conversation, "commenting": conversation_turn.is_commenting(conversation_id)}
+    """The conversation, plus whether the bot is replying or commenting on results right
+    now (the chat then follows the reply, GET …/live)."""
+    return _with_activity(_require_conversation(conversation_id))
 
 
 @router.patch("/{conversation_id}")
 def update_conversation(conversation_id: str, req: ConversationSettingsUpdate):
     changes = req.model_dump(exclude_none=True)
+    if "title" in changes:
+        changes["title"] = " ".join(changes["title"].split())
+        if not changes["title"]:
+            raise HTTPException(status_code=400, detail="A title can't be empty")
     if "family_id" in changes:
         _require_family(changes["family_id"])
     if "llm_model" in changes:
@@ -121,6 +138,7 @@ async def send_message(
     images: list[UploadFile] | None = File(None),
 ):
     conversation = _require_conversation(conversation_id)
+    _require_idle(conversation_id)
     images = images or []
     if not content.strip() and not images and not conversations.unsent_reactions(conversation):
         raise HTTPException(status_code=400, detail="Write a message or attach an image")
@@ -162,8 +180,21 @@ def retry_reply(conversation_id: str):
     conversation = _require_conversation(conversation_id)
     if not conversation["messages"] or conversation["messages"][-1]["role"] not in ("user", "results"):
         raise HTTPException(status_code=409, detail="The last message already has a reply")
+    _require_idle(conversation_id)
     _require_family(conversation["family_id"])
     return _reply(conversation_id)
+
+
+@router.get("/{conversation_id}/live")
+def follow_reply(conversation_id: str):
+    """The reply being written there right now, from its start, as the same NDJSON events:
+    for a chat that didn't ask for it (another tab, a reload, the bot's comment on results).
+    204 when there is none."""
+    _require_conversation(conversation_id)
+    live = conversation_turn.live_turn(conversation_id)
+    if live is None:
+        return Response(status_code=204)
+    return _follow(live)
 
 
 @router.post("/{conversation_id}/runs/{n}/cancel")
@@ -208,10 +239,19 @@ def _event(payload: dict) -> str:
 
 
 def _reply(conversation_id: str) -> StreamingResponse:
-    """Stream the bot's turn as NDJSON events (see conversation_turn): the HTTP status
-    is already 200 by the time anything can fail, so failures travel as events."""
+    """Start the bot's turn and stream it as NDJSON events (see conversation_turn): the HTTP
+    status is already 200 by the time anything can fail, so failures travel as events. The
+    turn doesn't depend on this response: if the chat goes away, it goes on and is stored."""
+    try:
+        live = conversation_turn.start_turn(conversation_id)
+    except conversation_turn.Busy as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _follow(live)
+
+
+def _follow(live: conversation_turn.LiveTurn) -> StreamingResponse:
     def events():
-        for event in conversation_turn.run_turn(conversation_id):
-            yield _event(event)
+        for event in live.follow():
+            yield "\n" if event is None else _event(event)  # a blank line keeps a quiet connection open
 
     return StreamingResponse(events(), media_type="application/x-ndjson")

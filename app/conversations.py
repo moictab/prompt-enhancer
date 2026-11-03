@@ -88,6 +88,7 @@ def display_title(conversation: dict) -> str:
 
 
 def summary(conversation: dict) -> dict:
+    replies = [m for m in conversation["messages"] if m["role"] in ("assistant", "results")]
     return {
         "id": conversation["id"],
         "title": display_title(conversation),
@@ -97,6 +98,9 @@ def summary(conversation: dict) -> dict:
         "cost": conversation["cost"],
         "family_id": conversation["family_id"],
         "llm_model": conversation["llm_model"],
+        # When the bot (or a run) last added something: the chat marks what arrived unseen.
+        "last_reply_at": replies[-1].get("timestamp") if replies else None,
+        "running": any(r["status"] == "pending" for r in conversation.get("runs") or []),
     }
 
 
@@ -114,7 +118,9 @@ def list_summaries(root: str | None = None) -> list[dict]:
 
 
 def update_settings(conversation_id: str, changes: dict, root: str | None = None) -> dict | None:
-    allowed = {"family_id", "llm_model", "temperature", "character_ids"}
+    """Change settings, or the title (the user's: the bot only titles an untitled
+    conversation). Neither counts as activity: updated_at, the list's order, stays."""
+    allowed = {"family_id", "llm_model", "temperature", "character_ids", "title"}
     with _lock:
         conversation = get(conversation_id, root)
         if conversation is None:
