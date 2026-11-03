@@ -54,6 +54,7 @@ NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 
 COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workflow launches a workflow -- one from the library above, "image:N" for the one embedded in image N, or "run:N" for an earlier run's -- with changes such as the prompt, seed, LoRAs, sampler settings, size or any node input. inspect_workflow shows a workflow's nodes and settings; list_comfy_models lists the installed models and LoRAs (use their exact file names); save_workflow keeps a modified workflow in the library, only when the user wants it kept.
 - When the user wants to see a prompt rendered or asks for images, run it straight away, without asking first. Show the prompt you run in a <prompt> block in the same reply, unless it already is one of your blocks. Inspect a workflow before structural edits (adding, removing or rewiring nodes).
+- Choose the image's proportions yourself, for what it shows, without waiting to be told: 2:3 or 3:4 for a portrait or a figure, 9:16 for a full-length figure or anything tall, 1:1 for a face, an object or an icon, 3:2 or 4:3 for a scene, a room or two people side by side, 16:9 for a landscape or a wide scene, 21:9 for a panorama. Set them with the aspect change, which keeps the workflow's pixel count (what its model is made for); change megapixels or give an exact width and height only when the user asks. A workflow's proportions in the library are its default, not a choice made for this image. Decide them at an image's first run and keep them while you refine it (run:N keeps them; a library workflow starts again from its default, so pass aspect again): change them only when the composition changes or the user asks, and say so when you do. The images of one set or story share them, unless a shot calls for others.
 - Each model belongs to the family its folder is named after (krea-2\\… is Krea 2; the library shows each workflow's family in brackets). A prompt follows the rules of the family of the model it runs on: running a model of another family switches the conversation to that family, and the app hands you its rules to rewrite the prompt by before it runs.
 - The family rules above are the current family's. To write for another family -- the user asks for one, or you'll work with a model of another family -- call use_family first: its rules come back and the conversation keeps that family. If the user asks you to stay with a family, don't run models of other families unless they ask.
 - Before telling the user a model or LoRA isn't installed, check with list_comfy_models, searching its file name or the words of its name: files are often renamed, and models are installed all the time. A Civitai image's resources say which installed file each matches, when one does.
@@ -138,6 +139,7 @@ def build_system_prompt(
     if workflows is not None:
         lines = "\n".join(
             f"- {w['name']}" + (f" [{w['family']}]" if w.get("family") else "")
+            + (f" ({w['size']} by default)" if w.get("size") else "")
             + (f": {w['description']}" if w.get("description") else "")
             for w in workflows
         )
@@ -206,7 +208,7 @@ def results_text(run: dict | None, numbers: dict[str, int], automatic: bool) -> 
     if run is None:
         return f"[A run finished.]{note}"
     calibration = run.get("kind") == "calibration"
-    label = f"Run {run['n']} ({run['workflow']})"
+    label = f"Run {run['n']} ({run['workflow']}{', ' + run['size'] if run.get('size') else ''})"
     if calibration:
         seed = next((j.get("seed") for j in run["jobs"]), None)
         label = f"Run {run['n']} (calibration of {run.get('lora')} on {run['workflow']}, seed {seed})"

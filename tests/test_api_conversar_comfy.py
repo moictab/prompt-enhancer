@@ -66,7 +66,7 @@ def test_a_turn_runs_a_workflow_and_keeps_its_steps(api_client, auth_headers, tm
     assert events[1]["part"] == {"type": "run", "run": 1, "workflow": "krea-2/txt2img", "count": 2}
     first, second = script.calls
     assert first["tools"] is conversation_turn.chat_tools.TOOLS and first["tool_choice"] is None
-    assert "## Workflow Library\n- krea-2/txt2img:" in first["messages"][0]["content"]
+    assert "## Workflow Library\n- krea-2/txt2img (2:3 portrait, 1 MP by default):" in first["messages"][0]["content"]
     assert second["context"]["step"] == 2
     # The second request carries the call and its result.
     assert second["messages"][-2]["tool_calls"][0]["function"]["name"] == "run_workflow"
@@ -110,7 +110,7 @@ def test_finished_runs_bring_their_images_and_an_automatic_comment(api_client, a
     [request] = comment.calls
     assert request["tool_choice"] == "none" and request["context"]["automatic"] is True
     last = request["messages"][-1]["content"]
-    assert last[0]["text"].startswith("[Run 1 (krea-2/txt2img) finished: image 1 (seed")
+    assert last[0]["text"].startswith("[Run 1 (krea-2/txt2img, 2:3 portrait, 1 MP) finished: image 1 (seed")
     assert last[0]["text"].endswith(conversation_turn.chat.AUTOMATIC_NOTE)
     assert sum(1 for p in last if p["type"] == "image_url") == 2
 

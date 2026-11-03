@@ -14,7 +14,7 @@ import re
 import requests
 
 from . import catalog, chat, comfy, comfy_policy, conversations, families, runs, workflows
-from .comfy_graph import SAMPLER_SETTINGS, Graph, GraphError, is_api_workflow
+from .comfy_graph import ASPECTS, SAMPLER_SETTINGS, Graph, GraphError, is_api_workflow, normalize_aspect
 
 logger = logging.getLogger("app.chat_tools")
 
@@ -50,11 +50,17 @@ CHANGES_PARAM = {
         "sampler_name": {"type": "string"},
         "scheduler": {"type": "string"},
         "denoise": {"type": "number"},
-        "width": {"type": "integer", "description": "With height: an exact size."},
+        "aspect": {
+            "type": "string",
+            "enum": list(ASPECTS),
+            "description": "The image's proportions, at the workflow's own pixel count (what its model is made "
+                           "for), in any workflow that makes an image from scratch.",
+        },
+        "width": {"type": "integer", "description": "With height: an exact size, only when the user asks for one."},
         "height": {"type": "integer"},
-        "aspect_ratio": {"type": "string",
-                         "description": 'For workflows with a ResolutionSelector, e.g. "2:3 (Portrait Photo)".'},
-        "megapixels": {"type": "number", "description": "For workflows with a ResolutionSelector."},
+        "megapixels": {"type": "number",
+                       "description": "Only when the user asks for bigger or smaller images (workflows with a "
+                                      "ResolutionSelector)."},
         "loras": {
             "type": "array",
             "description": "The whole LoRA stack, replacing the current one (an empty list removes them all). "
@@ -372,12 +378,15 @@ class ToolBox:
                     sampler[key] = _number(sampler[key])
             graph.set_sampler(**sampler)
             done.append(", ".join(f"{k} {v}" for k, v in sampler.items()))
-        if any(changes.get(k) is not None for k in ("width", "height", "aspect_ratio", "megapixels")):
+        aspect = changes.get("aspect") or changes.get("aspect_ratio")  # aspect_ratio: the older name
+        if aspect is not None:
+            graph.set_aspect(str(aspect))
+            done.append(f"aspect {normalize_aspect(aspect)}")
+        if any(changes.get(k) is not None for k in ("width", "height", "megapixels")):
             width, height = changes.get("width"), changes.get("height")
             graph.set_size(
                 width=_number(width, int) if width is not None else None,
                 height=_number(height, int) if height is not None else None,
-                aspect_ratio=changes.get("aspect_ratio"),
                 megapixels=_number(changes["megapixels"]) if changes.get("megapixels") is not None else None,
             )
             done.append("size")
@@ -454,9 +463,12 @@ class ToolBox:
                 job_graph.set_seed(seed)
             job_graph.set_output_prefix(comfy.output_prefix(folder, number, seed))
             variants.append((job_graph, seed, {}))
-        run = self._submit_run(label, changes, base, folder, variants)
+        size = graph.shape()
+        run = self._submit_run(label, changes, base, folder, variants, run_fields={"size": size} if size else None)
         result = {"run": run["n"], "status": "queued", "images": run["count"], "seeds": seeds[:run["count"]],
                   "applied": done}
+        if size:
+            result["size"] = size
         return result, {"type": "run", "run": run["n"], "workflow": label, "count": run["count"]}
 
     def _submit_run(self, label: str, changes: dict, base: str, folder: str, variants: list,
@@ -594,6 +606,7 @@ class ToolBox:
             **({"family": family["name"]} if family else {}),
             **({"description": entry["description"]} if entry and entry.get("description") else {}),
             "does": graph.generation_info(),
+            **({"size": graph.shape()} if graph.shape() else {}),
             "prompt_inputs": {role: [f"{n}.{i}" for n, i in slots[role]] for role in ("positive", "negative")},
             "image_inputs": graph.image_inputs() + [n for n, v in graph.nodes.items()
                                                     if "base64_data" in v["inputs"]],
