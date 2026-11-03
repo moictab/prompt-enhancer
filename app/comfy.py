@@ -211,14 +211,14 @@ class Comfy:
             return None
         return data if isinstance(data, dict) else None
 
-    def models(self, folder: str) -> list[str]:
+    def models(self, folder: str, max_age: float = MODELS_CACHE_SECONDS, read_timeout: float = 60) -> list[str]:
         if folder not in MODEL_FOLDERS:
             raise ValueError(f"not a model folder: {folder}")
         cached = self._models.get(folder)
-        if cached and time.monotonic() - cached[1] < MODELS_CACHE_SECONDS:
+        if cached and time.monotonic() - cached[1] < max_age:
             return cached[0]
         base = self.pick_base()
-        names = self._request("GET", f"{base}/models/{folder}", timeout=(CONNECT_TIMEOUT, 60)).json()
+        names = self._request("GET", f"{base}/models/{folder}", timeout=(CONNECT_TIMEOUT, read_timeout)).json()
         names = [n for n in names if isinstance(n, str)] if isinstance(names, list) else []
         self._models[folder] = (names, time.monotonic())
         return names

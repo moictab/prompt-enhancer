@@ -230,7 +230,7 @@ def _short(text: str, limit: int = 300) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
-def _resource_text(resource: dict) -> str:
+def _resource_text(resource: dict, installed: dict | None = None) -> str:
     name = resource.get("name") or resource.get("file") or "?"
     text = f"{resource.get('type') or 'resource'} \"{name}\""
     if resource.get("version"):
@@ -244,10 +244,15 @@ def _resource_text(resource: dict) -> str:
         details.append(f"trigger words: {', '.join(resource['trigger_words'])}")
     if resource.get("file") and resource.get("file") != name:
         details.append(f"file {resource['file']}")
+    if installed is not None:
+        from .catalog import match_installed
+        local = match_installed(resource, installed)
+        details.append(f"installed here as {local}" if local else "no installed file matches its name")
     return f"{text} ({'; '.join(details)})" if details else text
 
 
-def describe(metadata: dict, number: int) -> str:
+def describe(metadata: dict, number: int, installed: dict | None = None) -> str:
+    """installed: the catalog's entries, to say which of a Civitai image's resources the user has."""
     """The metadata as text for the LLM (English, like everything it reads)."""
     head = f"Image {number} metadata ({metadata.get('format', 'image')}, {metadata.get('width')}x{metadata.get('height')}"
     if metadata.get("generator"):
@@ -277,7 +282,7 @@ def describe(metadata: dict, number: int) -> str:
         lines.append(f"- LoRAs: {', '.join(loras)}")
     if metadata.get("resources"):
         lines.append(f"- {metadata.get('generator', 'Source')} resources: "
-                     + "; ".join(_resource_text(r) for r in metadata["resources"]))
+                     + "; ".join(_resource_text(r, installed) for r in metadata["resources"]))
     settings = {**(metadata.get("parameters") or {}), **(metadata.get("settings") or {})}
     if settings:
         values = [f"{k}: {_short(_format_value(v))}" for k, v in settings.items()]

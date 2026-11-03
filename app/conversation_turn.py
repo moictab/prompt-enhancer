@@ -151,10 +151,12 @@ def _turn(conversation_id: str, automatic: bool):
     notes = memory.list_notes()
     toolbox = toolbox_for(conversation)
     library = [_library_entry(w) for w in workflows.list_workflows()]
-    models_section = None
+    models_section = installed = None
     if toolbox:
-        catalog.refresh_in_background(toolbox.client)  # once a day, or the first time
+        catalog.refresh_in_background(toolbox.client)  # metadata: once a day, or the first time
+        catalog.ensure_fresh(toolbox.client)  # file names: before every turn, if a couple of minutes old
         models_section = catalog.prompt_section()
+        installed = catalog.load()["entries"] or None
     system = chat.build_system_prompt(
         family, characters, notes, needs_title=not conversation["title"],
         workflows=library if toolbox else None, models=models_section,
@@ -170,7 +172,8 @@ def _turn(conversation_id: str, automatic: bool):
     steps: list[dict] = []  # {"text", "tool_calls", "results", "parts"}
     ends: list[StreamEnd] = []
     failure = None
-    history_length = 1 + len(chat.build_llm_messages(conversation, load_image, tools=bool(toolbox)))
+    history_length = 1 + len(chat.build_llm_messages(conversation, load_image, tools=bool(toolbox),
+                                                      installed=installed))
     for index in range(MAX_STEPS):
         messages = [
             {"role": "system", "content": system},
@@ -178,6 +181,7 @@ def _turn(conversation_id: str, automatic: bool):
                 conversation, load_image, tools=bool(toolbox),
                 current_steps=[{"content": s["text"], "tool_calls": s["tool_calls"], "results": s["results"]}
                                for s in steps],
+                installed=installed,
             ),
         ]
         messages = with_cache_breakpoints(model, messages, history_length)

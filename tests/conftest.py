@@ -91,7 +91,7 @@ class FakeComfy:
     def cancel(self, base, prompt_id):
         self.cancelled.append(prompt_id)
 
-    def models(self, folder):
+    def models(self, folder, max_age=None, read_timeout=None):
         return self.model_files.get(folder, [])
 
     def metadata(self, folder, filename):

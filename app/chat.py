@@ -48,6 +48,7 @@ NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workflow launches a workflow -- one from the library above, "image:N" for the one embedded in image N, or "run:N" for an earlier run's -- with changes such as the prompt, seed, LoRAs, sampler settings, size or any node input. inspect_workflow shows a workflow's nodes and settings; list_comfy_models lists the installed models and LoRAs (use their exact file names); save_workflow keeps a modified workflow in the library, only when the user wants it kept.
 - When the user wants to see a prompt rendered or asks for images, run it straight away, without asking first. Show the prompt you run in a <prompt> block in the same reply, unless it already is one of your blocks. Inspect a workflow before structural edits (adding, removing or rewiring nodes).
 - Each model belongs to the family its folder is named after (krea-2\\… is Krea 2; the library shows each workflow's family in brackets). A prompt follows the rules of the family of the model it runs on: running a model of another family switches the conversation to that family, and the app hands you its rules to rewrite the prompt by before it runs.
+- Before telling the user a model or LoRA isn't installed, check with list_comfy_models, searching its file name or the words of its name: files are often renamed, and models are installed all the time. A Civitai image's resources say which installed file each matches, when one does.
 - You work in isolation: the only images you can feed a workflow are this conversation's (with input_images), and only node types from the library, from workflows the user shared here, and common core nodes are available; anything that reads ComfyUI's folders, files or URLs is refused. If a node you need isn't available, say so: the user can add a workflow that has it to the library.
 - Runs take a while; their images arrive later, in a message of their own. A message that only reports finished runs is automatic: the user hasn't written. Look at the images, say briefly what worked and what didn't against what was intended, and suggest the next step; don't launch anything on that turn.
 - The user can react to the images runs make -- liked, disliked, a comment -- and the reactions come with their next message. Take them as the most direct feedback there is: keep what was liked, fix what wasn't.
@@ -193,7 +194,8 @@ def reactions_text(reactions: list[dict], numbers: dict[str, int]) -> str:
 
 
 def _images_content(
-    message: dict, numbers: dict[str, int], recent: set[str], load_image, with_metadata: bool
+    message: dict, numbers: dict[str, int], recent: set[str], load_image, with_metadata: bool,
+    installed: dict | None = None,
 ) -> tuple[list[dict], bool]:
     """Text and image parts for a message's images; whether any image is attached."""
     content, attached_any = [], False
@@ -202,7 +204,7 @@ def _images_content(
         uri = load_image(image) if image["id"] in recent else None
         label = f"Image {number}" if uri else f"Image {number} (shared earlier, no longer attached)"
         metadata = image.get("metadata") if with_metadata else None
-        text = image_metadata.describe(metadata, number) if metadata else ""
+        text = image_metadata.describe(metadata, number, installed) if metadata else ""
         content.append({"type": "text", "text": f"{label}:\n{text}" if text else f"{label}:"})
         if uri:
             content.append({"type": "image_url", "image_url": {"url": uri}})
@@ -258,6 +260,7 @@ def build_llm_messages(
     load_image: Callable[[dict], str | None],
     tools: bool = False,
     current_steps: list[dict] | None = None,
+    installed: dict | None = None,
 ) -> list[dict]:
     """The conversation as chat messages, without the system prompt.
 
@@ -301,7 +304,8 @@ def build_llm_messages(
         if message.get("reactions"):
             line = reactions_text(message["reactions"], numbers)
             text = f"{text}\n\n{line}" if text else line
-        images, attached = _images_content(message, numbers, recent, load_image, with_metadata=True)
+        images, attached = _images_content(message, numbers, recent, load_image, with_metadata=True,
+                                           installed=installed)
         parts = ([{"type": "text", "text": text}] if text else []) + images
         if not text and not attached and not images:
             parts = [{"type": "text", "text": "(empty message)"}]

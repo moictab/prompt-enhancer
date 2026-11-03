@@ -30,6 +30,15 @@ FOLDERS = {"checkpoints": "Checkpoints", "diffusion_models": "Diffusion models",
 # 3D and video models live in the same folders; they don't make images.
 NOT_IMAGE = re.compile(r"hunyuan_3d|trellis|pixal3d|wan_2|sam3d|tripo", re.IGNORECASE)
 REFRESH_AFTER_SECONDS = 24 * 3600
+# The file list is re-read before a turn when older than this (names only: quick), so a model
+# installed minutes ago is known; a stalled ComfyUI gets LISTING_READ_TIMEOUT, then the old list.
+LISTING_MAX_AGE_SECONDS = 120
+LISTING_READ_TIMEOUT = 8
+# Words too common in model names to say which file a name means.
+GENERIC_WORDS = {"lora", "loras", "lycoris", "locon", "model", "models", "checkpoint", "style", "version",
+                 "the", "and", "for", "with", "merge"}
+TYPE_FOLDERS = {"lora": ("loras",), "locon": ("loras",), "lycoris": ("loras",), "dora": ("loras",),
+                "checkpoint": ("checkpoints", "diffusion_models"), "model": ("checkpoints", "diffusion_models")}
 STATS_CACHE_SECONDS = 30
 MAX_TRIGGERS = 6
 MAX_DESCRIPTION = 200
@@ -48,7 +57,8 @@ def _now() -> str:
 
 def load(path: str | None = None) -> dict:
     data = storage.read_json(path or _default_path(), default=None) or {}
-    return {"refreshed_at": data.get("refreshed_at"), "entries": data.get("entries") or {},
+    return {"refreshed_at": data.get("refreshed_at"), "listed_at": data.get("listed_at"),
+            "entries": data.get("entries") or {},
             "descriptions": data.get("descriptions") or {}, "history": data.get("history") or {},
             "history_source": data.get("history_source")}
 
@@ -125,10 +135,101 @@ def refresh(client, path: str | None = None) -> dict:
                         entries[file]["checked"] = True
                 else:
                     entries[file] = entry_from_metadata(file, folder, None)
-        data.update(entries=entries, refreshed_at=_now())
+        data.update(entries=entries, refreshed_at=_now(), listed_at=_now())
         _save(data, path)
         logger.info("catalog refreshed files=%d", len(entries))
         return data
+
+
+def refresh_files(client, path: str | None = None) -> dict | None:
+    """Re-list the installed files now -- names only, quick. Files new since the last full
+    refresh come in without metadata (LoRAs marked unchecked, for refresh() to read).
+    None if a full refresh is running (it re-lists too)."""
+    if not _refreshing.acquire(blocking=False):
+        return None
+    try:
+        data = load(path)
+        old = data["entries"]
+        entries = {}
+        for folder in FOLDERS:
+            for file in client.models(folder, max_age=0, read_timeout=LISTING_READ_TIMEOUT):
+                if NOT_IMAGE.search(file):
+                    continue
+                previous = old.get(file)
+                entries[file] = previous if previous and previous.get("folder") == folder else \
+                    entry_from_metadata(file, folder, None)
+        added = len(set(entries) - set(old))
+        data.update(entries=entries, listed_at=_now())
+        _save(data, path)
+        if added:
+            logger.info("catalog listing found new files=%d", added)
+        return data
+    finally:
+        _refreshing.release()
+
+
+def ensure_fresh(client) -> None:
+    """Before a turn: re-list the files if the list is a couple of minutes old, and read the
+    metadata of new LoRAs in the background. A ComfyUI that doesn't answer leaves the old list."""
+    data = load()
+    listed_at = data["listed_at"] or data["refreshed_at"]
+    if listed_at:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(listed_at)).total_seconds()
+        if age < LISTING_MAX_AGE_SECONDS:
+            return
+    try:
+        data = refresh_files(client)
+    except Exception as e:
+        logger.info("catalog listing unavailable error=%r", e)
+        return
+    if data and any(e.get("folder") == "loras" and "checked" not in e for e in data["entries"].values()):
+        refresh_in_background(client, force=True)
+
+
+def _basename(file: str) -> str:
+    return re.split(r"[\\/]", file)[-1]
+
+
+def _normalized(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", short_name(text or "").lower())
+
+
+def _words(text: str) -> list[str]:
+    return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if len(w) >= 3 and not w.isdigit() and w not in GENERIC_WORDS]
+
+
+def match_installed(resource: dict, entries: dict) -> str | None:
+    """The installed file a resource named elsewhere (a Civitai image) most likely is: the
+    same file name once case, separators and folder are ignored, or else the one file whose
+    name holds most of the resource's name (preferring its base model's folder). None when
+    nothing matches clearly -- files are often renamed, so that isn't proof it's missing."""
+    folders = TYPE_FOLDERS.get(str(resource.get("type") or "").lower())
+    candidates = [f for f, e in entries.items() if folders is None or e.get("folder") in folders]
+    named_file = resource.get("file") or (resource.get("name") if re.search(r"\.(safetensors|ckpt|pt)$",
+                                                                            resource.get("name") or "") else None)
+    if named_file:
+        stem = _normalized(_basename(named_file))
+        exact = [f for f in candidates if stem and _normalized(_basename(f)) == stem]
+        if len(exact) == 1:
+            return exact[0]
+    words = _words(resource.get("name") if not named_file or resource.get("file") else _basename(named_file))
+    if len(words) < 2:
+        return None
+    scored = []
+    for f in candidates:
+        name = _normalized(_basename(f))
+        hits = sum(1 for w in words if w in name)
+        if hits >= 2 and hits >= 0.6 * len(words):
+            scored.append((hits, f))
+    if not scored:
+        return None
+    best = max(hits for hits, _ in scored)
+    top = [f for hits, f in scored if hits == best]
+    base = _normalized(resource.get("base_model") or "")
+    if len(top) > 1 and base:
+        top = [f for f in top if _normalized(family_of(f)) == base] or top
+    return top[0] if len(top) == 1 else None
 
 
 def refresh_in_background(client, force: bool = False) -> bool:
