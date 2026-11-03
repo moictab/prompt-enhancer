@@ -1,3 +1,4 @@
+import requests
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
@@ -209,8 +210,10 @@ def refresh_catalog():
         raise HTTPException(status_code=400, detail="ComfyUI isn't configured (COMFY_GATEWAY_URL)")
     try:
         catalog.refresh(client)
-    except comfy.Unreachable as e:
+    except (comfy.Unreachable, comfy.ComfyError) as e:
         raise HTTPException(status_code=502, detail=str(e))
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"ComfyUI didn't answer in time: {e.__class__.__name__}")
     return _catalog_view()
 
 

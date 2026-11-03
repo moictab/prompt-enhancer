@@ -116,9 +116,16 @@ class Comfy:
         if self._base and time.monotonic() - self._base[1] < BASE_CACHE_SECONDS:
             return self._base[0]
         for base in self._bases():
+            # Only the connection matters here: a busy ComfyUI can take half a minute to answer
+            # /system_stats, but if it accepted the connection, it is there.
             try:
-                self._request("GET", f"{base}/system_stats", timeout=(CONNECT_TIMEOUT, 10))
-            except CONNECT_ERRORS:
+                self._request("GET", f"{base}/models", timeout=(CONNECT_TIMEOUT, 1.5))
+            except requests.exceptions.ConnectTimeout:
+                logger.warning("comfy not answering base=%s", base)
+                continue
+            except requests.exceptions.ReadTimeout:
+                pass
+            except requests.exceptions.ConnectionError:
                 logger.warning("comfy not answering base=%s", base)
                 continue
             except (ComfyError, requests.exceptions.RequestException):
@@ -173,7 +180,7 @@ class Comfy:
         """A model file's own metadata (the .safetensors header), or None if it has none."""
         base = self.pick_base()
         response = self._request("GET", f"{base}/view_metadata/{folder}",
-                                 params={"filename": filename.replace("\\", "/")}, timeout=(CONNECT_TIMEOUT, 20))
+                                 params={"filename": filename.replace("\\", "/")}, timeout=(CONNECT_TIMEOUT, 60))
         try:
             data = response.json()
         except ValueError:
@@ -185,7 +192,7 @@ class Comfy:
         if cached and time.monotonic() - cached[1] < MODELS_CACHE_SECONDS:
             return cached[0]
         base = self.pick_base()
-        names = self._request("GET", f"{base}/models/{folder}", timeout=(CONNECT_TIMEOUT, 20)).json()
+        names = self._request("GET", f"{base}/models/{folder}", timeout=(CONNECT_TIMEOUT, 60)).json()
         names = [n for n in names if isinstance(n, str)] if isinstance(names, list) else []
         self._models[folder] = (names, time.monotonic())
         return names

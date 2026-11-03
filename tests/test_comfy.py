@@ -33,7 +33,7 @@ def test_pick_base_falls_back_to_comfyui_only_when_the_gateway_doesnt_answer(moc
     mock_request.side_effect = [requests.exceptions.ConnectionError(), _response(body={})]
 
     assert client.pick_base() == "http://comfy"
-    assert [c.args[1] for c in mock_request.call_args_list] == ["http://gw/system_stats", "http://comfy/system_stats"]
+    assert [c.args[1] for c in mock_request.call_args_list] == ["http://gw/models", "http://comfy/models"]
 
     # A 500 from the gateway is an answer: it stays.
     client = comfy.Comfy("http://gw", "http://comfy")
