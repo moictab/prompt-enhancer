@@ -1,0 +1,288 @@
+{
+  "29": {
+    "inputs": {
+      "filename_prefix": "image-generation/base",
+      "images": [
+        "138",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Guardar imagen",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "49": {
+    "inputs": {
+      "aspect_ratio": "2:3 (Portrait Photo)",
+      "megapixels": 1.0,
+      "multiple": 16
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "Selector de resolución",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "51": {
+    "inputs": {
+      "text": [
+        "63",
+        0
+      ],
+      "clip": [
+        "147",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Codificar texto CLIP (Prompt)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "52": {
+    "inputs": {
+      "width": [
+        "49",
+        0
+      ],
+      "height": [
+        "49",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Imagen latente vacía",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "53": {
+    "inputs": {
+      "seed": 0,
+      "steps": 8,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": [
+        "147",
+        0
+      ],
+      "positive": [
+        "51",
+        0
+      ],
+      "negative": [
+        "58",
+        0
+      ],
+      "latent_image": [
+        "52",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "55": {
+    "inputs": {
+      "unet_name": "krea-2\\krea-2-turbo-official-comfy-int8-convrot_v1.0.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "model",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "56": {
+    "inputs": {
+      "clip_name": "qwen_3_vl_4b_fp8_scaled.safetensors",
+      "type": "krea2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Cargar CLIP",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "58": {
+    "inputs": {
+      "conditioning": [
+        "51",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "Acondicionamiento (Poner a cero)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "63": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Text String (User Prompt)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "138": {
+    "inputs": {
+      "samples": [
+        "53",
+        0
+      ],
+      "vae": [
+        "139",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "Decodificación VAE"
+    }
+  },
+  "139": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Cargar VAE"
+    }
+  },
+  "141": {
+    "inputs": {
+      "lora_name": "krea-2\\base-realism-engine_v3.0.safetensors",
+      "strength_model": 0.5,
+      "strength_clip": 0.5,
+      "model": [
+        "55",
+        0
+      ],
+      "clip": [
+        "56",
+        0
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA"
+    }
+  },
+  "142": {
+    "inputs": {
+      "lora_name": "krea-2\\concept-mystic-xxx_v3.0.safetensors",
+      "strength_model": 0.5,
+      "strength_clip": 0.5,
+      "model": [
+        "141",
+        0
+      ],
+      "clip": [
+        "141",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA (modelo y CLIP)"
+    }
+  },
+  "143": {
+    "inputs": {
+      "lora_name": "krea-2\\style-ta86-inkrot_v1.0.safetensors",
+      "strength_model": 0.15,
+      "strength_clip": 0.15,
+      "model": [
+        "142",
+        0
+      ],
+      "clip": [
+        "142",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA"
+    }
+  },
+  "146": {
+    "inputs": {
+      "lora_name": "krea-2\\style-minimalistic-digital-illustration_v1.0.safetensors",
+      "strength_model": 0.1,
+      "strength_clip": 0.1,
+      "model": [
+        "148",
+        0
+      ],
+      "clip": [
+        "148",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA"
+    }
+  },
+  "147": {
+    "inputs": {
+      "lora_name": "krea-2\\style-aesthetic-quality-modifiers_v5.1.safetensors",
+      "strength_model": 1.5,
+      "strength_clip": 1.5,
+      "model": [
+        "146",
+        0
+      ],
+      "clip": [
+        "146",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA"
+    }
+  },
+  "148": {
+    "inputs": {
+      "lora_name": "krea-2\\style-lenovo-ultra-real_v1.0.safetensors",
+      "strength_model": 1.0,
+      "strength_clip": 1.0,
+      "model": [
+        "143",
+        0
+      ],
+      "clip": [
+        "143",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA"
+    }
+  }
+}

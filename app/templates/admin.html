@@ -9,6 +9,8 @@
     <a href="#memory">Memoria del bot</a>
     <a href="#families">Familias de modelo</a>
     <a href="#characters">Personajes</a>
+    <a href="#workflows">Workflows de ComfyUI</a>
+    <a href="#models">Modelos y LoRAs</a>
     <a href="#requests">Peticiones</a>
   </nav>
 </header>
@@ -96,6 +98,52 @@
       </div>
     </form>
   </div>
+</section>
+
+<section class="settings-section" id="workflows" aria-labelledby="workflows-title">
+  <h2 id="workflows-title">Workflows de ComfyUI</h2>
+  <p class="section-intro">Los workflows que el bot de Conversar puede lanzar en tu ComfyUI, cambiándoles el prompt, la seed, los LoRAs o cualquier nodo. Ve el nombre y la descripción de cada uno, así que describe en inglés qué hace. También puede relanzar el workflow que traiga una imagen que le pases, y guardar aquí las versiones que modifique.</p>
+  <div class="crud">
+    <div class="crud-list">
+      <ul class="item-list" id="workflows-list"></ul>
+      <button type="button" class="btn-secondary" id="workflow-new">Nuevo workflow</button>
+    </div>
+    <form class="editor-panel" id="workflow-form" aria-labelledby="workflow-form-title">
+      <h3 id="workflow-form-title">Nuevo workflow</h3>
+      <div class="field">
+        <label for="workflow-name">Nombre</label>
+        <input type="text" id="workflow-name" required autocomplete="off" placeholder="krea-2/txt2img-ink">
+      </div>
+      <div class="field">
+        <label for="workflow-description">Qué hace</label>
+        <input type="text" id="workflow-description" autocomplete="off" placeholder="Krea-2 text to image with the ink LoRA stack.">
+      </div>
+      <div class="field">
+        <label for="workflow-json">Workflow en formato API</label>
+        <textarea id="workflow-json" rows="14" required spellcheck="false"></textarea>
+        <p class="field-help">En ComfyUI: Workflow &gt; Export (API). O impórtalo de un archivo .json, o de una imagen generada por ComfyUI, que lo lleva dentro.</p>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary" id="workflow-save">Crear workflow</button>
+        <label class="btn-quiet file-button">
+          <input type="file" id="workflow-import" accept=".json,application/json,image/png,image/jpeg,image/webp">
+          Importar de un archivo
+        </label>
+      </div>
+    </form>
+  </div>
+</section>
+
+<section class="settings-section" id="models" aria-labelledby="models-title">
+  <h2 id="models-title">Modelos y LoRAs</h2>
+  <p class="section-intro">Lo que tienes instalado en ComfyUI, tal como lo ve el bot: de cada LoRA, sus palabras clave y su modelo base (sacados del propio archivo), y cuántas imágenes ha hecho con él y cuántas te han gustado. Escribe en inglés qué hace cada uno y el bot lo tendrá en cuenta al elegir.</p>
+  <div class="catalog-bar">
+    <button type="button" class="btn-secondary" id="catalog-refresh">Actualizar desde ComfyUI</button>
+    <span class="catalog-state" id="catalog-state" aria-live="polite"></span>
+    <label class="visually-hidden" for="catalog-filter">Filtrar</label>
+    <input type="search" id="catalog-filter" placeholder="Filtrar por nombre o palabra clave" autocomplete="off">
+  </div>
+  <ul class="item-list catalog-list" id="catalog-list"></ul>
 </section>
 
 <section class="settings-section" id="requests" aria-labelledby="requests-title">

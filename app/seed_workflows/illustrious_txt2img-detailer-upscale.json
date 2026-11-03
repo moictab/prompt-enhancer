@@ -1,0 +1,518 @@
+{
+  "150": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Text String (User Prompt)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "152": {
+    "inputs": {
+      "width": [
+        "156",
+        0
+      ],
+      "height": [
+        "156",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Imagen latente vacía",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "153": {
+    "inputs": {
+      "text": [
+        "150",
+        0
+      ],
+      "clip": [
+        "160",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Codificar texto CLIP (Prompt)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "156": {
+    "inputs": {
+      "aspect_ratio": "3:4 (Portrait Standard)",
+      "megapixels": 1.0,
+      "multiple": 64
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "Selector de resolución",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "158": {
+    "inputs": {
+      "lora_name": "illustrious\\char-elle_v1.0.safetensors",
+      "strength_model": 0.7,
+      "strength_clip": 0.7,
+      "model": [
+        "172",
+        0
+      ],
+      "clip": [
+        "172",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA"
+    }
+  },
+  "159": {
+    "inputs": {
+      "lora_name": "illustrious\\style-peoples-works_v8-2.0.safetensors",
+      "strength_model": 0.75,
+      "strength_clip": 0.75,
+      "model": [
+        "158",
+        0
+      ],
+      "clip": [
+        "158",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA (modelo y CLIP)"
+    }
+  },
+  "160": {
+    "inputs": {
+      "lora_name": "illustrious\\style-96yottea_v1.1.safetensors",
+      "strength_model": 0.2,
+      "strength_clip": 0.2,
+      "model": [
+        "159",
+        0
+      ],
+      "clip": [
+        "159",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA"
+    }
+  },
+  "166": {
+    "inputs": {
+      "seed": 0,
+      "steps": 30,
+      "cfg": 5.0,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "model": [
+        "160",
+        0
+      ],
+      "positive": [
+        "153",
+        0
+      ],
+      "negative": [
+        "174",
+        0
+      ],
+      "latent_image": [
+        "152",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "168": {
+    "inputs": {
+      "upscale_model": "4x_NMKD-Superscale-SP_178000_G.pth",
+      "mode": "rescale",
+      "rescale_factor": 1.25,
+      "resize_width": 1024,
+      "resampling_method": "lanczos",
+      "supersample": "true",
+      "rounding_modulus": 16,
+      "image": [
+        "169",
+        0
+      ]
+    },
+    "class_type": "CR Upscale Image",
+    "_meta": {
+      "title": "🔍 CR Upscale Image"
+    }
+  },
+  "169": {
+    "inputs": {
+      "samples": [
+        "166",
+        0
+      ],
+      "vae": [
+        "172",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "Decodificación VAE"
+    }
+  },
+  "171": {
+    "inputs": {
+      "filename_prefix": "image-generation/base",
+      "images": [
+        "170:133",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Guardar imagen",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "172": {
+    "inputs": {
+      "ckpt_name": "illustrious\\wai-v14.0.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Cargar punto de control"
+    }
+  },
+  "173": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Text String (User Prompt)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "174": {
+    "inputs": {
+      "text": [
+        "173",
+        0
+      ],
+      "clip": [
+        "160",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Codificar texto CLIP (Prompt)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "170:102": {
+    "inputs": {
+      "guide_size": 512.0,
+      "guide_size_for": true,
+      "max_size": 1280.0,
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "res_2s_ode",
+      "scheduler": "beta",
+      "denoise": 0.35,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.7,
+      "bbox_dilation": 10,
+      "bbox_crop_factor": 2.0,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 0,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 10,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": true,
+      "tiled_decode": true,
+      "image": [
+        "168",
+        0
+      ],
+      "model": [
+        "160",
+        0
+      ],
+      "clip": [
+        "160",
+        1
+      ],
+      "vae": [
+        "172",
+        2
+      ],
+      "positive": [
+        "153",
+        0
+      ],
+      "negative": [
+        "174",
+        0
+      ],
+      "bbox_detector": [
+        "170:104",
+        0
+      ],
+      "sam_model_opt": [
+        "170:103",
+        0
+      ],
+      "segm_detector_opt": [
+        "170:104",
+        1
+      ]
+    },
+    "class_type": "FaceDetailer",
+    "_meta": {
+      "title": "FaceDetailer",
+      "cnr_id": "comfyui-impact-pack",
+      "ver": "61bd8397a18e7e7668e6a24e95168967768c2bed"
+    }
+  },
+  "170:132": {
+    "inputs": {
+      "guide_size": 512.0,
+      "guide_size_for": true,
+      "max_size": 1280.0,
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "res_2s_ode",
+      "scheduler": "beta",
+      "denoise": 0.35,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.7,
+      "bbox_dilation": 10,
+      "bbox_crop_factor": 2.0,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 0,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 10,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": true,
+      "tiled_decode": true,
+      "image": [
+        "170:102",
+        0
+      ],
+      "model": [
+        "160",
+        0
+      ],
+      "clip": [
+        "160",
+        1
+      ],
+      "vae": [
+        "172",
+        2
+      ],
+      "positive": [
+        "153",
+        0
+      ],
+      "negative": [
+        "174",
+        0
+      ],
+      "bbox_detector": [
+        "170:134",
+        0
+      ],
+      "sam_model_opt": [
+        "170:103",
+        0
+      ],
+      "segm_detector_opt": [
+        "170:134",
+        1
+      ]
+    },
+    "class_type": "FaceDetailer",
+    "_meta": {
+      "title": "FaceDetailer",
+      "cnr_id": "comfyui-impact-pack",
+      "ver": "61bd8397a18e7e7668e6a24e95168967768c2bed"
+    }
+  },
+  "170:133": {
+    "inputs": {
+      "guide_size": 512.0,
+      "guide_size_for": true,
+      "max_size": 1280.0,
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "res_2s_ode",
+      "scheduler": "beta",
+      "denoise": 0.35,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.7,
+      "bbox_dilation": 10,
+      "bbox_crop_factor": 2.0,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 0,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 10,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": true,
+      "tiled_decode": true,
+      "image": [
+        "170:132",
+        0
+      ],
+      "model": [
+        "160",
+        0
+      ],
+      "clip": [
+        "160",
+        1
+      ],
+      "vae": [
+        "172",
+        2
+      ],
+      "positive": [
+        "174",
+        0
+      ],
+      "negative": [
+        "174",
+        0
+      ],
+      "bbox_detector": [
+        "170:135",
+        0
+      ],
+      "sam_model_opt": [
+        "170:103",
+        0
+      ],
+      "segm_detector_opt": [
+        "170:135",
+        1
+      ]
+    },
+    "class_type": "FaceDetailer",
+    "_meta": {
+      "title": "FaceDetailer",
+      "cnr_id": "comfyui-impact-pack",
+      "ver": "61bd8397a18e7e7668e6a24e95168967768c2bed"
+    }
+  },
+  "170:116": {
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Cargar VAE",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "170:103": {
+    "inputs": {
+      "model_name": "sam_vit_b_01ec64.pth",
+      "device_mode": "AUTO"
+    },
+    "class_type": "SAMLoader",
+    "_meta": {
+      "title": "SAMLoader (Impact)",
+      "cnr_id": "comfyui-impact-pack",
+      "ver": "61bd8397a18e7e7668e6a24e95168967768c2bed"
+    }
+  },
+  "170:104": {
+    "inputs": {
+      "model_name": "bbox/face_yolov8m.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider",
+      "cnr_id": "comfyui-impact-subpack",
+      "ver": "50c7b71a6a224734cc9b21963c6d1926816a97f1"
+    }
+  },
+  "170:134": {
+    "inputs": {
+      "model_name": "bbox/nipples_yolov8s.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider",
+      "cnr_id": "comfyui-impact-subpack",
+      "ver": "50c7b71a6a224734cc9b21963c6d1926816a97f1"
+    }
+  },
+  "170:135": {
+    "inputs": {
+      "model_name": "bbox/vagina-v2.6.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider",
+      "cnr_id": "comfyui-impact-subpack",
+      "ver": "50c7b71a6a224734cc9b21963c6d1926816a97f1"
+    }
+  }
+}

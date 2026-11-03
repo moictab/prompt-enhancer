@@ -1,0 +1,37 @@
+[
+  {
+    "name": "krea-2/txt2img",
+    "file": "krea-2_txt2img.json",
+    "description": "Krea-2 text to image. Positive prompt only (the negative is zeroed out). The base for most Krea-2 images."
+  },
+  {
+    "name": "krea-2/txt2img-upscale",
+    "file": "krea-2_txt2img-upscale.json",
+    "description": "Krea-2 text to image, then an upscale (CR Upscale Image)."
+  },
+  {
+    "name": "krea-2/txt2img-detailer-upscale",
+    "file": "krea-2_txt2img-detailer-upscale.json",
+    "description": "Krea-2 text to image, three FaceDetailer passes (the face and two body regions), then an upscale."
+  },
+  {
+    "name": "krea-2/txt2img-detailer-hires",
+    "file": "krea-2_txt2img-detailer-hires.json",
+    "description": "Krea-2 text to image, an upscale with a model and a tiled VAE re-encode, then three FaceDetailer passes."
+  },
+  {
+    "name": "krea-2/face-detail-image",
+    "file": "krea-2_face-detail-image.json",
+    "description": "Works on an input image (pass it with input_images): removes the background and refines the face with FaceDetailer. Made for character sprites."
+  },
+  {
+    "name": "illustrious/txt2img",
+    "file": "illustrious_txt2img.json",
+    "description": "Illustrious (SDXL) checkpoint text to image, with positive and negative prompts."
+  },
+  {
+    "name": "illustrious/txt2img-detailer-upscale",
+    "file": "illustrious_txt2img-detailer-upscale.json",
+    "description": "Illustrious text to image, three FaceDetailer passes, then an upscale."
+  }
+]

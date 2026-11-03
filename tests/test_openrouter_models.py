@@ -38,8 +38,8 @@ def test_list_models_returns_simplified_id_name_list(mock_get):
     result = openrouter_client.list_models()
 
     assert result == [
-        {"id": "anthropic/claude-sonnet-4", "name": "Anthropic: Claude Sonnet 4", "supports_images": False},
-        {"id": "openai/gpt-4o", "name": "OpenAI: GPT-4o", "supports_images": True},
+        {"id": "anthropic/claude-sonnet-4", "name": "Anthropic: Claude Sonnet 4", "supports_images": False, "supports_tools": False},
+        {"id": "openai/gpt-4o", "name": "OpenAI: GPT-4o", "supports_images": True, "supports_tools": False},
     ]
 
 
@@ -49,7 +49,7 @@ def test_list_models_falls_back_to_id_when_name_missing(mock_get):
 
     result = openrouter_client.list_models()
 
-    assert result == [{"id": "some/model", "name": "some/model", "supports_images": False}]
+    assert result == [{"id": "some/model", "name": "some/model", "supports_images": False, "supports_tools": False}]
 
 
 @patch("app.openrouter_client.requests.get")
@@ -60,7 +60,7 @@ def test_list_models_marks_supports_images_true_when_image_in_input_modalities(m
 
     result = openrouter_client.list_models()
 
-    assert result == [{"id": "vision/model", "name": "Vision Model", "supports_images": True}]
+    assert result == [{"id": "vision/model", "name": "Vision Model", "supports_images": True, "supports_tools": False}]
 
 
 @patch("app.openrouter_client.requests.get")
@@ -69,7 +69,7 @@ def test_list_models_marks_supports_images_false_when_architecture_missing(mock_
 
     result = openrouter_client.list_models()
 
-    assert result == [{"id": "no-arch/model", "name": "No Arch", "supports_images": False}]
+    assert result == [{"id": "no-arch/model", "name": "No Arch", "supports_images": False, "supports_tools": False}]
 
 
 @patch("app.openrouter_client.requests.get")
@@ -102,7 +102,7 @@ def test_list_models_falls_back_to_stale_cache_on_error(mock_get):
 
     result = openrouter_client.list_models()
 
-    assert result == [{"id": "a/b", "name": "A B", "supports_images": False}]
+    assert result == [{"id": "a/b", "name": "A B", "supports_images": False, "supports_tools": False}]
 
 
 @patch("app.openrouter_client.requests.get")
@@ -111,3 +111,15 @@ def test_list_models_raises_when_no_cache_and_request_fails(mock_get):
 
     with pytest.raises(RuntimeError, match="Could not fetch"):
         openrouter_client.list_models()
+
+
+@patch("app.openrouter_client.requests.get")
+def test_list_models_marks_supports_tools_from_supported_parameters(mock_get):
+    mock_get.return_value = _mock_models_response([
+        {"id": "tool/model", "name": "Tools", "supported_parameters": ["temperature", "tools", "tool_choice"]},
+        {"id": "plain/model", "name": "Plain", "supported_parameters": ["temperature"]},
+    ])
+
+    result = openrouter_client.list_models()
+
+    assert [m["supports_tools"] for m in result] == [True, False]

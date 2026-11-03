@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
+from . import comfy, runs
 from .auth import require_auth
 from .config import get_settings
 from .logging_config import configure_logging
@@ -33,7 +34,12 @@ async def lifespan(app: FastAPI):
             "auth boundary — set ADMIN_PASSWORD in your .env before running the app."
         )
     ensure_seed_data(settings.data_dir)
+    # Runs launched from Conversar are followed in the background, including those
+    # still pending from before a restart.
+    if comfy.client() is not None:
+        runs.tracker.start()
     yield
+    runs.tracker.stop()
 
 
 app = FastAPI(title="Prompt Enhancer", dependencies=[Depends(require_auth)], lifespan=lifespan)

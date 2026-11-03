@@ -1,0 +1,221 @@
+{
+  "150": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Text String (User Prompt)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "152": {
+    "inputs": {
+      "width": [
+        "156",
+        0
+      ],
+      "height": [
+        "156",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Imagen latente vacía",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "153": {
+    "inputs": {
+      "text": [
+        "150",
+        0
+      ],
+      "clip": [
+        "160",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Codificar texto CLIP (Prompt)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "156": {
+    "inputs": {
+      "aspect_ratio": "3:4 (Portrait Standard)",
+      "megapixels": 1.0,
+      "multiple": 64
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "Selector de resolución",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "158": {
+    "inputs": {
+      "lora_name": "illustrious\\char-elle_v1.0.safetensors",
+      "strength_model": 0.7,
+      "strength_clip": 0.7,
+      "model": [
+        "172",
+        0
+      ],
+      "clip": [
+        "172",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA"
+    }
+  },
+  "159": {
+    "inputs": {
+      "lora_name": "illustrious\\style-peoples-works_v8-2.0.safetensors",
+      "strength_model": 0.75,
+      "strength_clip": 0.75,
+      "model": [
+        "158",
+        0
+      ],
+      "clip": [
+        "158",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA (modelo y CLIP)"
+    }
+  },
+  "160": {
+    "inputs": {
+      "lora_name": "illustrious\\style-96yottea_v1.1.safetensors",
+      "strength_model": 0.2,
+      "strength_clip": 0.2,
+      "model": [
+        "159",
+        0
+      ],
+      "clip": [
+        "159",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA"
+    }
+  },
+  "166": {
+    "inputs": {
+      "seed": 0,
+      "steps": 30,
+      "cfg": 5.0,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "model": [
+        "160",
+        0
+      ],
+      "positive": [
+        "153",
+        0
+      ],
+      "negative": [
+        "174",
+        0
+      ],
+      "latent_image": [
+        "152",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "169": {
+    "inputs": {
+      "samples": [
+        "166",
+        0
+      ],
+      "vae": [
+        "172",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "Decodificación VAE"
+    }
+  },
+  "171": {
+    "inputs": {
+      "filename_prefix": "image-generation/base",
+      "images": [
+        "169",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Guardar imagen",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "172": {
+    "inputs": {
+      "ckpt_name": "illustrious\\wai-v14.0.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Cargar punto de control"
+    }
+  },
+  "173": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Text String (User Prompt)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "174": {
+    "inputs": {
+      "text": [
+        "173",
+        0
+      ],
+      "clip": [
+        "160",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Codificar texto CLIP (Prompt)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  }
+}

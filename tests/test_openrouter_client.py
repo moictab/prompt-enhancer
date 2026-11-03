@@ -4,7 +4,8 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 import requests
 
-from app.openrouter_client import StreamEnd, call_openrouter, stream_chat
+from app import openrouter_client, request_log
+from app.openrouter_client import call_openrouter, stream_chat
 
 
 def _mock_response(status_code=200, json_data=None, text=""):
@@ -288,3 +289,42 @@ def test_stream_chat_raises_when_the_connection_drops(mock_post):
 
     with pytest.raises(RuntimeError, match="dropped mid-reply"):
         list(stream_chat("key", "m", [], 0.7))
+
+
+@patch("app.openrouter_client.requests.post")
+def test_stream_chat_assembles_tool_calls_and_sends_the_tools(mock_post):
+    tools = [{"type": "function", "function": {"name": "run_workflow", "parameters": {"type": "object"}}}]
+    mock_post.return_value = _stream_response([
+        _data({"choices": [{"delta": {"content": "Voy."}}]}),
+        _data({"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "call_1", "type": "function", "function": {"name": "run_workflow", "arguments": ""}}]}}]}),
+        _data({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": '{"workflow": '}}]}}]}),
+        _data({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": '"w"}'}}]}}]}),
+        _data({"choices": [{"delta": {"tool_calls": [
+            {"index": 1, "id": "call_2", "function": {"name": "inspect_workflow", "arguments": "{}"}}]}}]}),
+        _data({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}),
+        "data: [DONE]",
+    ])
+
+    items = list(openrouter_client.stream_chat("k", "m", [{"role": "user", "content": "x"}],
+                                               tools=tools, tool_choice="none"))
+
+    assert items[0] == "Voy."
+    end = items[-1]
+    assert end.tool_calls == [
+        {"id": "call_1", "name": "run_workflow", "arguments": '{"workflow": "w"}'},
+        {"id": "call_2", "name": "inspect_workflow", "arguments": "{}"},
+    ]
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["tools"] == tools and payload["tool_choice"] == "none"
+    logged = request_log.get(end.request_id)
+    assert logged["response"]["tool_calls"] == end.tool_calls
+
+
+@patch("app.openrouter_client.requests.post")
+def test_stream_chat_sends_no_tools_unless_given(mock_post):
+    mock_post.return_value = _stream_response([_data({"choices": [{"delta": {"content": "hi"}}]}), "data: [DONE]"])
+
+    list(openrouter_client.stream_chat("k", "m", []))
+
+    assert "tools" not in mock_post.call_args.kwargs["json"]

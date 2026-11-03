@@ -21,7 +21,7 @@ REQUEST_ID = "20261103-102219-0123abcd"
 
 
 def _stream(*chunks, cost=0.003, truncated=False):
-    def fake(api_key, model, messages, temperature, context=None):
+    def fake(api_key, model, messages, temperature, context=None, **kwargs):
         yield from chunks
         yield StreamEnd(cost=cost, truncated=truncated, request_id=REQUEST_ID)
     return fake
@@ -57,7 +57,9 @@ def test_create_get_list_and_delete_a_conversation(api_client, auth_headers, tmp
 
     assert created["family_id"] == family["id"]
     assert created["llm_model"] == "vendor/model"
-    assert api_client.get(f"/api/conversations/{created['id']}", auth=auth_headers).json() == created
+    assert api_client.get(f"/api/conversations/{created['id']}", auth=auth_headers).json() == {
+        **created, "commenting": False,
+    }
     assert [c["id"] for c in api_client.get("/api/conversations", auth=auth_headers).json()] == [created["id"]]
 
     assert api_client.delete(f"/api/conversations/{created['id']}", auth=auth_headers).status_code == 200
@@ -98,7 +100,7 @@ def test_update_rejects_unknown_family(api_client, auth_headers, tmp_path):
     assert response.status_code == 404
 
 
-@patch("app.routes.conversations.stream_chat")
+@patch("app.conversation_turn.stream_chat")
 def test_send_message_streams_the_reply_and_stores_it(mock_stream, api_client, auth_headers, tmp_path):
     family = _family(tmp_path)
     conversation = _create(api_client, auth_headers, family).json()
@@ -122,8 +124,10 @@ def test_send_message_streams_the_reply_and_stores_it(mock_stream, api_client, a
     assert message["cost"] == 0.003
     assert message["request_id"] == REQUEST_ID
     assert mock_stream.call_args.kwargs["context"] == {
-        "mode": "conversation", "conversation_id": conversation["id"],
+        "mode": "conversation", "conversation_id": conversation["id"], "step": 1,
     }
+    # No ComfyUI configured: no tools offered.
+    assert mock_stream.call_args.kwargs["tools"] is None
     assert done["conversation"]["title"] == "Lena en la playa"
     assert done["conversation"]["cost"] == 0.003
 
@@ -133,7 +137,7 @@ def test_send_message_streams_the_reply_and_stores_it(mock_stream, api_client, a
     assert stored["title"] == "Lena en la playa"
 
 
-@patch("app.routes.conversations.stream_chat")
+@patch("app.conversation_turn.stream_chat")
 def test_reply_notes_go_to_memory(mock_stream, api_client, auth_headers, tmp_path):
     family = _family(tmp_path)
     conversation = _create(api_client, auth_headers, family).json()
@@ -147,7 +151,7 @@ def test_reply_notes_go_to_memory(mock_stream, api_client, auth_headers, tmp_pat
     assert message["notes"] == [{"id": note["id"], "text": "Likes golden hour"}]
 
 
-@patch("app.routes.conversations.stream_chat")
+@patch("app.conversation_turn.stream_chat")
 def test_reply_with_prompts_is_logged_to_history(mock_stream, api_client, auth_headers, tmp_path):
     family = _family(tmp_path)
     character = characters.create_character("Lena", "auburn hair", path=str(tmp_path / "characters.json"))
@@ -168,7 +172,7 @@ def test_reply_with_prompts_is_logged_to_history(mock_stream, api_client, auth_h
     assert entry["params"]["request_ids"] == [REQUEST_ID]
 
 
-@patch("app.routes.conversations.stream_chat")
+@patch("app.conversation_turn.stream_chat")
 def test_reply_without_prompts_is_not_logged_to_history(mock_stream, api_client, auth_headers, tmp_path):
     family = _family(tmp_path)
     conversation = _create(api_client, auth_headers, family).json()
@@ -180,7 +184,7 @@ def test_reply_without_prompts_is_not_logged_to_history(mock_stream, api_client,
     assert history.list_entries(path=str(tmp_path / "history.jsonl")) == []
 
 
-@patch("app.routes.conversations.stream_chat")
+@patch("app.conversation_turn.stream_chat")
 def test_llm_gets_personality_history_and_numbered_proposals(mock_stream, api_client, auth_headers, tmp_path):
     family = _family(tmp_path)
     system_prompt.write_system_prompt(
@@ -208,7 +212,7 @@ def test_llm_gets_personality_history_and_numbered_proposals(mock_stream, api_cl
     assert messages[3]["content"] == "La 1, pero de noche"
 
 
-@patch("app.routes.conversations.stream_chat")
+@patch("app.conversation_turn.stream_chat")
 def test_images_are_stored_served_and_sent_to_the_llm(mock_stream, api_client, auth_headers, tmp_path):
     family = _family(tmp_path)
     conversation = _create(api_client, auth_headers, family).json()
@@ -231,7 +235,8 @@ def test_images_are_stored_served_and_sent_to_the_llm(mock_stream, api_client, a
 
     user_content = mock_stream.call_args.args[2][1]["content"]
     assert user_content[0] == {"type": "text", "text": "Mira"}
-    assert user_content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert user_content[1] == {"type": "text", "text": "Image 1:"}
+    assert user_content[2]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
 def test_send_rejects_empty_messages_bad_images_and_too_many(api_client, auth_headers, tmp_path):
@@ -258,12 +263,12 @@ def test_send_to_unknown_conversation_is_404(api_client, auth_headers):
     assert response.status_code == 404
 
 
-@patch("app.routes.conversations.stream_chat")
+@patch("app.conversation_turn.stream_chat")
 def test_failed_reply_keeps_the_message_and_can_be_retried(mock_stream, api_client, auth_headers, tmp_path):
     family = _family(tmp_path)
     conversation_id = _create(api_client, auth_headers, family).json()["id"]
 
-    def failing(api_key, model, messages, temperature, context=None):
+    def failing(api_key, model, messages, temperature, context=None, **kwargs):
         yield "Empiezo a"
         raise OpenRouterError("OpenRouter reported an error mid-reply: overloaded", REQUEST_ID)
 
@@ -286,7 +291,7 @@ def test_failed_reply_keeps_the_message_and_can_be_retried(mock_stream, api_clie
     assert [m["role"] for m in stored["messages"]] == ["user", "assistant"]
 
 
-@patch("app.routes.conversations.stream_chat")
+@patch("app.conversation_turn.stream_chat")
 def test_empty_reply_is_an_error_and_not_stored(mock_stream, api_client, auth_headers, tmp_path):
     family = _family(tmp_path)
     conversation_id = _create(api_client, auth_headers, family).json()["id"]
@@ -299,7 +304,7 @@ def test_empty_reply_is_an_error_and_not_stored(mock_stream, api_client, auth_he
     assert [m["role"] for m in stored["messages"]] == ["user"]
 
 
-@patch("app.routes.conversations.stream_chat")
+@patch("app.conversation_turn.stream_chat")
 def test_retry_is_refused_when_the_last_message_has_a_reply(mock_stream, api_client, auth_headers, tmp_path):
     family = _family(tmp_path)
     conversation_id = _create(api_client, auth_headers, family).json()["id"]

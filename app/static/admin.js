@@ -382,9 +382,194 @@ function setupCharacters() {
   });
 }
 
+function isEditorGraph(data) {
+  return data && typeof data === "object" && Array.isArray(data.nodes) && "links" in data;
+}
+
+function setupWorkflows() {
+  const name = $("workflow-name");
+  const description = $("workflow-description");
+  const json = $("workflow-json");
+  const importer = $("workflow-import");
+
+  setupCrud({
+    endpoint: "/api/admin/workflows",
+    list: $("workflows-list"),
+    form: $("workflow-form"),
+    title: $("workflow-form-title"),
+    saveButton: $("workflow-save"),
+    newButton: $("workflow-new"),
+    nouns: {
+      newTitle: "Nuevo workflow",
+      create: "Crear workflow",
+      empty: "No hay workflows: el bot no tiene nada que lanzar salvo los que traigan tus imágenes.",
+      created: "Workflow creado",
+      saved: "Workflow guardado",
+      deleted: "Workflow eliminado",
+    },
+    fields: {
+      fill: (workflow) => {
+        name.value = workflow.name || "";
+        description.value = workflow.description || "";
+        json.value = workflow.workflow ? JSON.stringify(workflow.workflow, null, 2) : "";
+      },
+    },
+    describe: (workflow) => {
+      const nodes = Object.keys(workflow.workflow || {}).length;
+      return [`${nodes} nodos.`, workflow.description].filter(Boolean).join(" ");
+    },
+    toPayload: () => {
+      let workflow;
+      try {
+        workflow = JSON.parse(json.value);
+      } catch (err) {
+        throw new Error(`El workflow no es JSON válido: ${err.message}`);
+      }
+      if (isEditorGraph(workflow)) {
+        throw new Error("Eso es el formato del editor. En ComfyUI usa Workflow > Export (API).");
+      }
+      return { name: name.value.trim(), description: description.value.trim(), workflow };
+    },
+  });
+
+  importer.addEventListener("change", async () => {
+    const file = importer.files[0];
+    importer.value = "";
+    if (!file) return;
+    try {
+      let workflow;
+      if (file.type.startsWith("image/")) {
+        const form = new FormData();
+        form.append("image", file);
+        workflow = (await request("/api/admin/workflows/extract", { method: "POST", form })).workflow;
+      } else {
+        workflow = JSON.parse(await file.text());
+        if (isEditorGraph(workflow)) {
+          throw new Error("Ese archivo es el formato del editor. En ComfyUI usa Workflow > Export (API).");
+        }
+      }
+      json.value = JSON.stringify(workflow, null, 2);
+      if (!name.value.trim()) name.value = file.name.replace(/\.[^.]+$/, "");
+      toast(`Workflow importado de ${file.name}: revisa el nombre y guárdalo.`);
+    } catch (err) {
+      toast(err.message, { error: true });
+    }
+  });
+}
+
+function setupCatalog() {
+  const list = $("catalog-list");
+  const filter = $("catalog-filter");
+  const stateLine = $("catalog-state");
+  const refreshButton = $("catalog-refresh");
+  let catalog = { items: [], configured: false, refreshed_at: null };
+
+  const FOLDERS = { checkpoints: "Checkpoint", diffusion_models: "Modelo de difusión", loras: "LoRA" };
+
+  function describeResults(results) {
+    if (!results) return "";
+    const parts = [`${results.images} ${results.images === 1 ? "imagen" : "imágenes"}`];
+    if (results.liked) parts.push(`${results.liked} te ${results.liked === 1 ? "gustó" : "gustaron"}`);
+    if (results.disliked) parts.push(`${results.disliked} no`);
+    return parts.join(", ");
+  }
+
+  function item(entry) {
+    const facts = [
+      FOLDERS[entry.folder] || entry.folder,
+      entry.base_model && `base ${entry.base_model}`,
+      entry.triggers?.length && `palabras clave: ${entry.triggers.join(", ")}`,
+      describeResults(entry.results_here),
+    ].filter(Boolean);
+    const text = el("input", {
+      type: "text",
+      class: "catalog-description",
+      value: entry.description || "",
+      placeholder: "Qué hace, en inglés",
+      "aria-label": `Qué hace ${entry.file}`,
+    });
+    let saved = entry.description || "";
+    const save = async () => {
+      const value = text.value.trim();
+      if (value === saved) return;
+      try {
+        await request("/api/admin/catalog/description", { method: "PUT", json: { file: entry.file, text: value } });
+        saved = value;
+        entry.description = value;
+        toast(value ? `Descripción guardada: ${entry.file}.` : `Descripción borrada: ${entry.file}.`);
+      } catch (err) {
+        toast(err.message, { error: true });
+      }
+    };
+    text.addEventListener("change", save);
+    text.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        text.blur();
+      }
+    });
+    return el(
+      "li",
+      { class: "item catalog-item" },
+      el("span", { class: "item-title", text: entry.file }),
+      el("span", { class: "item-text", text: facts.join(". ") }),
+      text
+    );
+  }
+
+  function render() {
+    const words = filter.value.toLowerCase().split(/\s+/).filter(Boolean);
+    const items = catalog.items.filter((entry) => {
+      const haystack = [entry.file, ...(entry.triggers || []), entry.description || ""].join(" ").toLowerCase();
+      return words.every((word) => haystack.includes(word));
+    });
+    if (!catalog.configured) {
+      stateLine.textContent = "ComfyUI no está configurado en este servidor (COMFY_GATEWAY_URL).";
+      refreshButton.disabled = true;
+    } else {
+      stateLine.textContent = catalog.refreshed_at
+        ? `${catalog.items.length} archivos. Actualizado el ${new Date(catalog.refreshed_at).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}.`
+        : "Aún no se ha leído: actualízalo para que el bot sepa qué tienes.";
+    }
+    if (!items.length) {
+      list.replaceChildren(
+        el("li", { class: "item-empty", text: catalog.items.length ? "Nada coincide con el filtro." : "El catálogo está vacío." })
+      );
+      return;
+    }
+    list.replaceChildren(...items.map(item));
+  }
+
+  async function load() {
+    try {
+      catalog = await request("/api/admin/catalog");
+    } catch (err) {
+      toast(err.message, { error: true });
+    }
+    render();
+  }
+
+  refreshButton.addEventListener("click", async () => {
+    setBusy(refreshButton, true, "Leyendo ComfyUI…");
+    try {
+      catalog = await request("/api/admin/catalog/refresh", { method: "POST" });
+      toast("Catálogo actualizado.");
+    } catch (err) {
+      toast(err.message, { error: true });
+    } finally {
+      setBusy(refreshButton, false);
+    }
+    render();
+  });
+  filter.addEventListener("input", render);
+  load();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   setupSystemPrompts();
   setupMemory();
   setupFamilies();
   setupCharacters();
+  setupWorkflows();
+  setupCatalog();
 });

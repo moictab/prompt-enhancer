@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from .. import families
+from .. import comfy, families
 from ..config import get_settings
 from ..prompts import VARIATION_AXES
 
@@ -39,6 +39,7 @@ def conversar_page(request: Request):
         {
             "families": families.list_families(),
             "default_llm_model": get_settings().default_llm_model,
+            "comfy_configured": comfy.client() is not None,
         },
     )
 

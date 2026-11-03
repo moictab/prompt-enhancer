@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from . import families, storage
+from . import families, storage, workflows
 
 DEFAULT_GENERATE_SYSTEM_PROMPT = """You are an expert AI image-generation prompt engineer. The user will describe a new image idea in natural language -- however detailed or vague. Transform it into a high-quality prompt for the selected model family, following that family's specific rules exactly. Fill in reasonable creative details where the user was vague, without contradicting anything they specified.
 
@@ -143,6 +143,8 @@ def ensure_seed_data(data_dir: str) -> None:
 
     if not Path(characters_path).exists():
         storage.write_json(characters_path, [])
+
+    workflows.ensure_seeded(f"{data_dir}/workflows.json")
 
     # System prompts are seeded per mode rather than per file: a data dir created
     # before a mode existed would otherwise run that mode with an empty system

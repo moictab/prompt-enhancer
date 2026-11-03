@@ -2,10 +2,14 @@
 the images shared in it, both named by the conversation id.
 
     data/conversations/<id>.json
-    data/conversations/<id>/<image id>.<ext>
+    data/conversations/<id>/<image id>.<ext>            the image as shared or generated
+    data/conversations/<id>/<image id>-small.jpg        a reduced copy, for large images
+    data/conversations/<id>/<image id>.workflow.json    the ComfyUI workflow it embeds
+    data/conversations/<id>/run-<n>.json                the workflows sent for run n
 
 A conversation grows with every message, so it gets its own file rather than
-living in one shared list rewritten wholesale on each message.
+living in one shared list rewritten wholesale on each message. Messages are
+"user", "assistant", or "results" (a finished run's images, added by runs.py).
 """
 import re
 import threading
@@ -13,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import storage
+from . import image_metadata, storage
 from .config import get_settings
 
 IMAGE_EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
@@ -129,6 +133,11 @@ def append_message(
         if conversation is None:
             return None
         now = _now()
+        if message.get("role") == "user":
+            # The user's message carries their reactions since the last one.
+            reactions = _mark_reactions_sent(conversation)
+            if reactions:
+                message = {**message, "reactions": reactions}
         conversation["messages"].append({"id": str(uuid.uuid4()), "timestamp": now, **message})
         if message.get("cost") is not None:
             conversation["cost"] = (conversation["cost"] or 0) + message["cost"]
@@ -148,19 +157,156 @@ def delete(conversation_id: str, root: str | None = None) -> bool:
         return True
 
 
-def save_image(conversation_id: str, data: bytes, content_type: str, root: str | None = None) -> dict:
+def save_image(
+    conversation_id: str,
+    data: bytes,
+    content_type: str,
+    root: str | None = None,
+    workflow: dict | None = None,
+) -> dict:
+    """Store an image, plus a smaller JPEG copy when it is large (what the LLM and the
+    thumbnails get) and the ComfyUI workflow it embeds, if any. A run's output passes the
+    workflow it was made with instead: its metadata is the run itself."""
     image = {"id": uuid.uuid4().hex, "content_type": content_type}
-    extension = IMAGE_EXTENSIONS[content_type]
-    storage.write_bytes(f"{_root(root)}/{conversation_id}/{image['id']}.{extension}", data)
+    folder = f"{_root(root)}/{conversation_id}"
+    storage.write_bytes(f"{folder}/{image['id']}.{IMAGE_EXTENSIONS[content_type]}", data)
+    small = image_metadata.small_copy(data)
+    if small:
+        storage.write_bytes(f"{folder}/{image['id']}-small.jpg", small)
+        image["small"] = True
+    if workflow is None:
+        metadata, workflow = image_metadata.read(data)
+        if metadata:
+            image["metadata"] = metadata
+    if workflow:
+        storage.write_json(f"{folder}/{image['id']}.workflow.json", workflow)
     return image
 
 
-def image_file(conversation_id: str, image_id: str, root: str | None = None) -> tuple[str, str] | None:
-    """The path and content type of an image shared in a conversation, if it exists."""
-    if not is_valid_id(conversation_id) or not re.fullmatch(r"[0-9a-f]{32}", image_id or ""):
+def _valid_image_id(conversation_id: str, image_id: str) -> bool:
+    return is_valid_id(conversation_id) and bool(re.fullmatch(r"[0-9a-f]{32}", image_id or ""))
+
+
+def image_file(
+    conversation_id: str, image_id: str, root: str | None = None, small: bool = False
+) -> tuple[str, str] | None:
+    """The path and content type of an image shared in a conversation, if it exists;
+    with small, its reduced copy when it has one."""
+    if not _valid_image_id(conversation_id, image_id):
         return None
+    if small:
+        path = Path(f"{_root(root)}/{conversation_id}/{image_id}-small.jpg")
+        if path.is_file():
+            return str(path), "image/jpeg"
     for extension, content_type in _CONTENT_TYPES.items():
         path = Path(f"{_root(root)}/{conversation_id}/{image_id}.{extension}")
         if path.is_file():
             return str(path), content_type
     return None
+
+
+def image_workflow(conversation_id: str, image_id: str, root: str | None = None) -> dict | None:
+    """The ComfyUI workflow an image embeds (or a run's output was made with)."""
+    if not _valid_image_id(conversation_id, image_id):
+        return None
+    return storage.read_json(f"{_root(root)}/{conversation_id}/{image_id}.workflow.json", default=None)
+
+
+# --- reactions: the user's verdict on an image, sent with their next message ------------------
+
+MAX_REACTION_COMMENT = 500
+
+
+def set_reaction(
+    conversation_id: str, image_id: str, rating: str | None, comment: str, root: str | None = None
+) -> dict | None:
+    """Set (or, with no rating and no comment, clear) the reaction to an image. It stays
+    unsent until the user's next message carries it to the bot. Returns the image."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return None
+        image = next((img for m in conversation["messages"] for img in m.get("images") or []
+                      if img["id"] == image_id), None)
+        if image is None:
+            return None
+        comment = " ".join((comment or "").split())[:MAX_REACTION_COMMENT]
+        if rating is None and not comment:
+            image.pop("reaction", None)
+        else:
+            image["reaction"] = {"rating": rating, "comment": comment, "at": _now(), "sent": False}
+        storage.write_json(_path(conversation_id, root), conversation)
+        return image
+
+
+def unsent_reactions(conversation: dict) -> list[dict]:
+    return [
+        {"image_id": img["id"], "rating": img["reaction"].get("rating"), "comment": img["reaction"].get("comment", "")}
+        for m in conversation["messages"] for img in m.get("images") or []
+        if img.get("reaction") and not img["reaction"].get("sent")
+    ]
+
+
+def _mark_reactions_sent(conversation: dict) -> list[dict]:
+    taken = unsent_reactions(conversation)
+    for m in conversation["messages"]:
+        for img in m.get("images") or []:
+            if img.get("reaction"):
+                img["reaction"]["sent"] = True
+    return taken
+
+
+# --- runs: workflows launched on ComfyUI from the conversation ---------------------------------
+
+
+def add_run(conversation_id: str, run: dict, workflows: list[dict], root: str | None = None) -> dict | None:
+    """Record a run (numbered from 1 within the conversation) and the exact workflow
+    sent for each of its jobs."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return None
+        runs = conversation.setdefault("runs", [])
+        run = {**run, "n": len(runs) + 1, "created_at": _now()}
+        runs.append(run)
+        storage.write_json(f"{_root(root)}/{conversation_id}/run-{run['n']}.json", workflows)
+        storage.write_json(_path(conversation_id, root), conversation)
+        return run
+
+
+def get_run(conversation_id: str, n: int, root: str | None = None) -> dict | None:
+    conversation = get(conversation_id, root)
+    runs = (conversation or {}).get("runs") or []
+    return runs[n - 1] if 0 < n <= len(runs) else None
+
+
+def update_run(conversation_id: str, n: int, change, root: str | None = None) -> dict | None:
+    """Apply change(run) to the stored run under the lock; returns the run."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        runs = (conversation or {}).get("runs") or []
+        if not 0 < n <= len(runs):
+            return None
+        change(runs[n - 1])
+        storage.write_json(_path(conversation_id, root), conversation)
+        return runs[n - 1]
+
+
+def run_workflows(conversation_id: str, n: int, root: str | None = None) -> list[dict]:
+    if not is_valid_id(conversation_id):
+        return []
+    return storage.read_json(f"{_root(root)}/{conversation_id}/run-{int(n)}.json", default=[])
+
+
+def pending_runs(root: str | None = None) -> list[tuple[str, dict]]:
+    """(conversation id, run) for every run still waiting for ComfyUI, in any conversation."""
+    directory = Path(_root(root))
+    if not directory.is_dir():
+        return []
+    found = []
+    for p in directory.glob("*.json"):
+        if not is_valid_id(p.stem):
+            continue
+        conversation = storage.read_json(str(p), default=None) or {}
+        found += [(p.stem, run) for run in conversation.get("runs") or [] if run.get("status") == "pending"]
+    return found

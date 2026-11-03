@@ -1,0 +1,666 @@
+{
+  "29": {
+    "inputs": {
+      "filename_prefix": "image-generation/base",
+      "images": [
+        "117:133",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Guardar imagen",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "148": {
+    "inputs": {
+      "samples": [
+        "150",
+        0
+      ],
+      "vae": [
+        "149",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "Decodificación VAE"
+    }
+  },
+  "149": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Cargar VAE",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "150": {
+    "inputs": {
+      "seed": 0,
+      "steps": 8,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": [
+        "156",
+        0
+      ],
+      "positive": [
+        "153",
+        0
+      ],
+      "negative": [
+        "152",
+        0
+      ],
+      "latent_image": [
+        "151",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "151": {
+    "inputs": {
+      "width": [
+        "154",
+        0
+      ],
+      "height": [
+        "154",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Imagen latente vacía",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "152": {
+    "inputs": {
+      "conditioning": [
+        "153",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "Acondicionamiento (Poner a cero)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "153": {
+    "inputs": {
+      "text": [
+        "161",
+        0
+      ],
+      "clip": [
+        "156",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Codificar texto CLIP (Prompt)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "154": {
+    "inputs": {
+      "aspect_ratio": "1:1 (Square)",
+      "megapixels": 1.0,
+      "multiple": 16
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "Selector de resolución",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "155": {
+    "inputs": {
+      "lora_name": "krea-2\\style-lenovo-ultra-real_v1.0.safetensors",
+      "strength_model": 0.5,
+      "strength_clip": 0.5,
+      "model": [
+        "160",
+        0
+      ],
+      "clip": [
+        "160",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA (modelo y CLIP)"
+    }
+  },
+  "156": {
+    "inputs": {
+      "lora_name": "krea-2\\style-aesthetic-quality-modifiers_v5.1.safetensors",
+      "strength_model": 0.5,
+      "strength_clip": 0.5,
+      "model": [
+        "158",
+        0
+      ],
+      "clip": [
+        "158",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA (modelo y CLIP)"
+    }
+  },
+  "158": {
+    "inputs": {
+      "lora_name": "krea-2\\style-purple-grainy_v1.0.safetensors",
+      "strength_model": 0.5,
+      "strength_clip": 0.5,
+      "model": [
+        "164",
+        0
+      ],
+      "clip": [
+        "164",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA (modelo y CLIP)"
+    }
+  },
+  "160": {
+    "inputs": {
+      "lora_name": "krea-2\\concept-mystic-xxx_v3.0.safetensors",
+      "strength_model": 1.0,
+      "strength_clip": 1.0,
+      "model": [
+        "163",
+        0
+      ],
+      "clip": [
+        "163",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA (modelo y CLIP)"
+    }
+  },
+  "161": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Text String (User Prompt)",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "163": {
+    "inputs": {
+      "lora_name": "krea-2\\base-realism-engine_v3.0.safetensors",
+      "strength_model": 0.5,
+      "strength_clip": 0.5,
+      "model": [
+        "167",
+        0
+      ],
+      "clip": [
+        "165",
+        0
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA (modelo y CLIP)"
+    }
+  },
+  "164": {
+    "inputs": {
+      "lora_name": "krea-2\\style-photo-real-better-nudes-nsfw.safetensors",
+      "strength_model": 0.5,
+      "strength_clip": 0.5,
+      "model": [
+        "155",
+        0
+      ],
+      "clip": [
+        "155",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Cargar LoRA (modelo y CLIP)"
+    }
+  },
+  "165": {
+    "inputs": {
+      "clip_name": "qwen_3_vl_4b_fp8_scaled.safetensors",
+      "type": "krea2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Cargar CLIP",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "167": {
+    "inputs": {
+      "unet_name": "krea-2\\krea-2-turbo-official-comfy-int8-convrot_v1.0.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "model",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "146:91": {
+    "inputs": {
+      "upscale_model": [
+        "146:90",
+        0
+      ],
+      "image": [
+        "148",
+        0
+      ]
+    },
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": {
+      "title": "Ampliar imagen (usando modelo)",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.76"
+    }
+  },
+  "146:90": {
+    "inputs": {
+      "model_name": "4x-ClearRealityV1.pth"
+    },
+    "class_type": "UpscaleModelLoader",
+    "_meta": {
+      "title": "Cargar modelo de escala superior",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.76"
+    }
+  },
+  "146:108": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "width": 1560,
+      "height": 1560,
+      "crop": "disabled",
+      "image": [
+        "146:91",
+        0
+      ]
+    },
+    "class_type": "ImageScale",
+    "_meta": {
+      "title": "Ampliar imagen"
+    }
+  },
+  "146:101": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Cargar VAE",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "146:106": {
+    "inputs": {
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 64,
+      "temporal_overlap": 8,
+      "pixels": [
+        "146:108",
+        0
+      ],
+      "vae": [
+        "146:101",
+        0
+      ]
+    },
+    "class_type": "VAEEncodeTiled",
+    "_meta": {
+      "title": "Codificación VAE (Mosaico)",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.76"
+    }
+  },
+  "117:115": {
+    "inputs": {
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 64,
+      "temporal_overlap": 8,
+      "samples": [
+        "146:106",
+        0
+      ],
+      "vae": [
+        "117:116",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeTiled",
+    "_meta": {
+      "title": "Decodificación VAE (Mosaico)"
+    }
+  },
+  "117:102": {
+    "inputs": {
+      "guide_size": 512.0,
+      "guide_size_for": true,
+      "max_size": 1280.0,
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 0.35,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.7,
+      "bbox_dilation": 10,
+      "bbox_crop_factor": 2.0,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 0,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 10,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": true,
+      "tiled_decode": true,
+      "image": [
+        "117:115",
+        0
+      ],
+      "model": [
+        "156",
+        0
+      ],
+      "clip": [
+        "156",
+        1
+      ],
+      "vae": [
+        "117:116",
+        0
+      ],
+      "positive": [
+        "153",
+        0
+      ],
+      "negative": [
+        "152",
+        0
+      ],
+      "bbox_detector": [
+        "117:104",
+        0
+      ],
+      "sam_model_opt": [
+        "117:103",
+        0
+      ],
+      "segm_detector_opt": [
+        "117:104",
+        1
+      ]
+    },
+    "class_type": "FaceDetailer",
+    "_meta": {
+      "title": "FaceDetailer",
+      "cnr_id": "comfyui-impact-pack",
+      "ver": "61bd8397a18e7e7668e6a24e95168967768c2bed"
+    }
+  },
+  "117:132": {
+    "inputs": {
+      "guide_size": 512.0,
+      "guide_size_for": true,
+      "max_size": 1280.0,
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 0.35,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.7,
+      "bbox_dilation": 10,
+      "bbox_crop_factor": 2.0,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 0,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 10,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": true,
+      "tiled_decode": true,
+      "image": [
+        "117:102",
+        0
+      ],
+      "model": [
+        "156",
+        0
+      ],
+      "clip": [
+        "156",
+        1
+      ],
+      "vae": [
+        "117:116",
+        0
+      ],
+      "positive": [
+        "153",
+        0
+      ],
+      "negative": [
+        "152",
+        0
+      ],
+      "bbox_detector": [
+        "117:134",
+        0
+      ],
+      "sam_model_opt": [
+        "117:103",
+        0
+      ],
+      "segm_detector_opt": [
+        "117:134",
+        1
+      ]
+    },
+    "class_type": "FaceDetailer",
+    "_meta": {
+      "title": "FaceDetailer",
+      "cnr_id": "comfyui-impact-pack",
+      "ver": "61bd8397a18e7e7668e6a24e95168967768c2bed"
+    }
+  },
+  "117:133": {
+    "inputs": {
+      "guide_size": 512.0,
+      "guide_size_for": true,
+      "max_size": 1280.0,
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 0.35,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.7,
+      "bbox_dilation": 10,
+      "bbox_crop_factor": 2.0,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 0,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 10,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": true,
+      "tiled_decode": true,
+      "image": [
+        "117:132",
+        0
+      ],
+      "model": [
+        "156",
+        0
+      ],
+      "clip": [
+        "156",
+        1
+      ],
+      "vae": [
+        "117:116",
+        0
+      ],
+      "positive": [
+        "152",
+        0
+      ],
+      "negative": [
+        "152",
+        0
+      ],
+      "bbox_detector": [
+        "117:135",
+        0
+      ],
+      "sam_model_opt": [
+        "117:103",
+        0
+      ],
+      "segm_detector_opt": [
+        "117:135",
+        1
+      ]
+    },
+    "class_type": "FaceDetailer",
+    "_meta": {
+      "title": "FaceDetailer",
+      "cnr_id": "comfyui-impact-pack",
+      "ver": "61bd8397a18e7e7668e6a24e95168967768c2bed"
+    }
+  },
+  "117:116": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Cargar VAE",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "117:103": {
+    "inputs": {
+      "model_name": "sam_vit_b_01ec64.pth",
+      "device_mode": "AUTO"
+    },
+    "class_type": "SAMLoader",
+    "_meta": {
+      "title": "SAMLoader (Impact)",
+      "cnr_id": "comfyui-impact-pack",
+      "ver": "61bd8397a18e7e7668e6a24e95168967768c2bed"
+    }
+  },
+  "117:104": {
+    "inputs": {
+      "model_name": "bbox/face_yolov8m.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider",
+      "cnr_id": "comfyui-impact-subpack",
+      "ver": "50c7b71a6a224734cc9b21963c6d1926816a97f1"
+    }
+  },
+  "117:134": {
+    "inputs": {
+      "model_name": "bbox/nipples_yolov8s.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider",
+      "cnr_id": "comfyui-impact-subpack",
+      "ver": "50c7b71a6a224734cc9b21963c6d1926816a97f1"
+    }
+  },
+  "117:135": {
+    "inputs": {
+      "model_name": "bbox/vagina-v2.6.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider",
+      "cnr_id": "comfyui-impact-subpack",
+      "ver": "50c7b71a6a224734cc9b21963c6d1926816a97f1"
+    }
+  }
+}

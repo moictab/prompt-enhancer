@@ -1,7 +1,7 @@
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterator
 
 import requests
@@ -36,6 +36,8 @@ class StreamEnd:
     cost: float | None
     truncated: bool = False
     request_id: str | None = None
+    # [{"id", "name", "arguments" (the JSON text as sent)}] when the model called tools
+    tool_calls: list[dict] = field(default_factory=list)
 
 
 class OpenRouterError(RuntimeError):
@@ -177,6 +179,8 @@ def stream_chat(
     messages: list[dict],
     temperature: float = 0.7,
     context: dict | None = None,
+    tools: list[dict] | None = None,
+    tool_choice: str | None = None,
 ) -> Iterator[str | StreamEnd]:
     """Stream a chat completion: yields each text delta as it arrives, then one StreamEnd.
 
@@ -185,6 +189,10 @@ def stream_chat(
     no retry: part of the reply may already have been shown. However it ends --
     finished, failed, or abandoned by the caller -- the request and whatever text
     arrived go to the request log, with context ({"mode": ...}) attached.
+
+    With tools (OpenAI-style function definitions), the model may call them instead
+    of, or after, writing text: the calls arrive in pieces and come back assembled
+    in StreamEnd.tool_calls, for the caller to run and answer in a new request.
     """
     payload = {
         "model": model,
@@ -194,9 +202,14 @@ def stream_chat(
         "usage": {"include": True},
         "stream": True,
     }
+    if tools:
+        payload["tools"] = tools
+        if tool_choice:
+            payload["tool_choice"] = tool_choice
     record = RequestRecord(payload, context=context)
     start = time.monotonic()
     chunks: list[str] = []
+    calls: list[dict] = []
     reply: dict = {"finish_reason": None, "usage": None}
     status = None
     body = None
@@ -236,6 +249,7 @@ def stream_chat(
                         if isinstance(delta, str) and delta:
                             chunks.append(delta)
                             yield delta
+                        _add_tool_call_pieces(calls, (choice.get("delta") or {}).get("tool_calls"))
                         if choice.get("finish_reason"):
                             reply["finish_reason"] = choice["finish_reason"]
                     if isinstance(chunk.get("usage"), dict):
@@ -253,18 +267,46 @@ def stream_chat(
         error = f"Unexpected error while streaming: {e!r}"
         raise
     finally:
-        record.finish(
-            status=status, response={**reply, "content": "".join(chunks)}, error=error, response_body=body
-        )
+        response_log = {**reply, "content": "".join(chunks)}
+        if calls:
+            response_log["tool_calls"] = calls
+        record.finish(status=status, response=response_log, error=error, response_body=body)
 
     usage = reply["usage"] or {}
     cost = usage.get("cost")
     truncated = reply["finish_reason"] == "length"
     logger.info(
-        "openrouter stream finished model=%s duration_ms=%.1f chars=%d cost=%s truncated=%s request_id=%s",
-        model, (time.monotonic() - start) * 1000, sum(map(len, chunks)), cost, truncated, record.id,
+        "openrouter stream finished model=%s duration_ms=%.1f chars=%d tool_calls=%d cost=%s truncated=%s "
+        "request_id=%s",
+        model, (time.monotonic() - start) * 1000, sum(map(len, chunks)), len(calls), cost, truncated, record.id,
     )
-    yield StreamEnd(cost=cost, truncated=truncated, request_id=record.id)
+    yield StreamEnd(
+        cost=cost, truncated=truncated, request_id=record.id,
+        tool_calls=[c for c in calls if c["name"]],
+    )
+
+
+def _add_tool_call_pieces(calls: list[dict], pieces) -> None:
+    """Merge one chunk's tool-call deltas: the first piece of a call brings its id and
+    name, the following ones (same index) more of its arguments' JSON text."""
+    if not isinstance(pieces, list):
+        return
+    for piece in pieces:
+        if not isinstance(piece, dict):
+            continue
+        index = piece.get("index")
+        if not isinstance(index, int):
+            index = len(calls) if piece.get("id") or not calls else len(calls) - 1
+        while len(calls) <= index:
+            calls.append({"id": "", "name": "", "arguments": ""})
+        call = calls[index]
+        function = piece.get("function") or {}
+        if piece.get("id"):
+            call["id"] = piece["id"]
+        if function.get("name"):
+            call["name"] += function["name"] if call["name"] != function["name"] else ""
+        if isinstance(function.get("arguments"), str):
+            call["arguments"] += function["arguments"]
 
 
 def list_models() -> list[dict]:
@@ -289,6 +331,7 @@ def list_models() -> list[dict]:
             "id": m["id"],
             "name": m.get("name", m["id"]),
             "supports_images": "image" in m.get("architecture", {}).get("input_modalities", []),
+            "supports_tools": "tools" in (m.get("supported_parameters") or []),
         }
         for m in raw_models
     ]

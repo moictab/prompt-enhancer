@@ -38,10 +38,36 @@ def test_system_prompt_puts_personality_first_family_rules_next_and_mechanics_la
 
 
 @patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
-def test_system_prompt_tells_the_bot_to_take_notes_without_asking(mock_read):
+def test_system_prompt_tells_the_bot_to_keep_terse_notes_and_change_them_without_asking(mock_read):
     result = chat.build_system_prompt(FAMILY, [], [], needs_title=False)
 
-    assert "<remember>the note</remember>, right away and without asking first" in result
+    assert "Change them in your reply, right away and without asking" in result
+    assert "telegraphic" in result
+    assert '<remember id="n">note</remember> rewrites note n' in result
+    assert '<forget id="n"/> deletes note n' in result
+    # No ComfyUI: nothing about running workflows.
+    assert "run_workflow" not in result
+    assert "## Workflow Library" not in result
+
+
+@patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
+def test_system_prompt_lists_the_workflow_library_and_how_to_run_when_comfy_is_available(mock_read):
+    result = chat.build_system_prompt(
+        FAMILY, [], [], needs_title=True,
+        workflows=[{"name": "krea-2/txt2img", "description": "Text to image."}, {"name": "bare", "description": ""}],
+    )
+
+    assert "## Workflow Library\n- krea-2/txt2img: Text to image.\n- bare\n\n## How This" in result
+    assert chat.COMFY_MECHANICS in result
+    # Still last: the title rule.
+    assert result.endswith(chat.TITLE_RULE)
+
+
+@patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
+def test_system_prompt_shows_an_empty_library(mock_read):
+    result = chat.build_system_prompt(FAMILY, [], [], needs_title=False, workflows=[])
+
+    assert "## Workflow Library\n(empty)" in result
 
 
 @patch("app.chat.system_prompt.read_system_prompt", return_value="")
@@ -69,7 +95,8 @@ def test_system_prompt_lists_characters_and_notes(mock_read):
 
     assert "## Characters\n" in result
     assert "- Lena: auburn hair, freckles" in result
-    notes = "## Your Notes About The User\n" + chat.NOTES_INTRO + "\n- Likes hard light\n- Hates lens flare"
+    # Numbered, so the bot can rewrite or forget one by its number.
+    notes = "## Your Notes About The User\n[1] Likes hard light\n[2] Hates lens flare"
     assert notes in result
     assert result.index("## Characters") < result.index(notes) < result.index("## How This Conversation Works")
 
@@ -102,14 +129,19 @@ def test_llm_messages_attach_only_the_most_recent_images():
     messages = chat.build_llm_messages(conversation, load_image=lambda image: f"data:{image['id']}")
 
     # 6 images, only the last 4 travel: img2 from the first message, img3-5 from the last.
+    # Every image is numbered across the conversation, attached or not.
     first, last = messages[0]["content"], messages[2]["content"]
-    assert first[0] == {
-        "type": "text",
-        "text": "first batch\n\n[2 images shared here earlier, no longer attached]",
-    }
-    assert [part["image_url"]["url"] for part in first[1:]] == ["data:img2"]
-    assert last[0] == {"type": "text", "text": "(image attached)"}
-    assert [part["image_url"]["url"] for part in last[1:]] == ["data:img3", "data:img4", "data:img5"]
+    assert first == [
+        {"type": "text", "text": "first batch"},
+        {"type": "text", "text": "Image 1 (shared earlier, no longer attached):"},
+        {"type": "text", "text": "Image 2 (shared earlier, no longer attached):"},
+        {"type": "text", "text": "Image 3:"},
+        {"type": "image_url", "image_url": {"url": "data:img2"}},
+    ]
+    assert [part.get("text") for part in last if part["type"] == "text"] == ["Image 4:", "Image 5:", "Image 6:"]
+    assert [part["image_url"]["url"] for part in last if part["type"] == "image_url"] == [
+        "data:img3", "data:img4", "data:img5",
+    ]
 
 
 def test_llm_messages_mention_an_image_whose_file_is_gone():
@@ -117,7 +149,117 @@ def test_llm_messages_mention_an_image_whose_file_is_gone():
 
     messages = chat.build_llm_messages(conversation, load_image=lambda image: None)
 
-    assert messages[0]["content"] == "look\n\n[1 image shared here earlier, no longer attached]"
+    assert messages[0]["content"] == "look\n\nImage 1 (shared earlier, no longer attached):"
+
+
+def test_llm_messages_give_each_image_its_metadata():
+    metadata = {"format": "PNG", "width": 832, "height": 1216, "generator": "ComfyUI", "has_workflow": True,
+                "positive": "a witch", "loras": [{"name": "ink.safetensors", "strength": 0.5, "strength_clip": 0.5}],
+                "settings": {"seed": 7, "steps": 8}}
+    conversation = _conversation(_user("mira", [{"id": "a", "content_type": "image/png", "metadata": metadata}]))
+
+    messages = chat.build_llm_messages(conversation, load_image=lambda image: "data:a")
+
+    assert messages[0]["content"][1] == {
+        "type": "text",
+        "text": 'Image 1:\nImage 1 metadata (PNG, 832x1216, made with ComfyUI; its ComfyUI workflow can be used as '
+                '"image:1"):\n- Positive: a witch\n- LoRAs: ink.safetensors (0.5)\n- Settings: seed: 7, steps: 8',
+    }
+
+
+def _run(n=1, jobs=None):
+    return {"n": n, "workflow": "krea-2/txt2img", "status": "done",
+            "jobs": jobs or [{"status": "success", "seed": 11, "images": ["r1"]}]}
+
+
+def test_llm_messages_show_finished_runs_as_automatic_when_nothing_follows():
+    conversation = {
+        **_conversation(
+            _user("hazla"),
+            _assistant("Lanzada."),
+            {"role": "results", "run": 1, "content": "", "images": [{"id": "r1", "content_type": "image/png"}]},
+        ),
+        "runs": [_run()],
+    }
+
+    messages = chat.build_llm_messages(conversation, load_image=lambda image: "data:r1")
+
+    assert [m["role"] for m in messages] == ["user", "assistant", "user"]
+    assert messages[2]["content"][0] == {
+        "type": "text",
+        "text": f"[Run 1 (krea-2/txt2img) finished: image 1 (seed 11).] {chat.AUTOMATIC_NOTE}",
+    }
+    assert messages[2]["content"][2]["image_url"]["url"] == "data:r1"
+
+
+def test_llm_messages_merge_results_with_the_users_next_message():
+    failed = _run(jobs=[{"status": "error", "error": "CUDA out of memory", "images": []}])
+    conversation = {
+        **_conversation(
+            _user("hazla"),
+            _assistant("Lanzada."),
+            {"role": "results", "run": 1, "content": "", "images": []},
+            _user("¿qué ha pasado?"),
+        ),
+        "runs": [failed],
+    }
+
+    messages = chat.build_llm_messages(conversation, load_image=lambda image: None)
+
+    # One user turn, and no "automatic" claim now that the user has written.
+    assert [m["role"] for m in messages] == ["user", "assistant", "user"]
+    assert messages[2]["content"] == (
+        "[Run 1 (krea-2/txt2img) produced no images. 1 of 1 job failed: CUDA out of memory.]\n\n¿qué ha pasado?"
+    )
+
+
+def _tool_reply():
+    return {
+        "role": "assistant",
+        "content": "Voy.\n\nLanzada.",
+        "steps": [
+            {"content": "Voy.", "tool_calls": [
+                {"id": "c1", "name": "inspect_workflow", "arguments": '{"workflow": "w"}'},
+                {"id": "c2", "name": "run_workflow", "arguments": '{"workflow": "w"}'},
+            ], "results": ['{"nodes": []}', '{"run": 1}']},
+            {"content": "Lanzada.", "tool_calls": [], "results": []},
+        ],
+    }
+
+
+def test_llm_messages_replay_tool_calls_and_omit_old_listings():
+    conversation = _conversation(_user("hazla"), _tool_reply(), _user("otra"))
+
+    messages = chat.build_llm_messages(conversation, load_image=lambda image: None, tools=True)
+
+    assert [m["role"] for m in messages] == ["user", "assistant", "tool", "tool", "assistant", "user"]
+    assert messages[1]["tool_calls"][1] == {
+        "id": "c2", "type": "function", "function": {"name": "run_workflow", "arguments": '{"workflow": "w"}'},
+    }
+    assert messages[2] == {"role": "tool", "tool_call_id": "c1", "content": '{"note": "Result omitted from an '
+                           'earlier turn; call the tool again if you need it."}'}
+    assert messages[3] == {"role": "tool", "tool_call_id": "c2", "content": '{"run": 1}'}
+    assert messages[4] == {"role": "assistant", "content": "Lanzada."}
+
+
+def test_llm_messages_summarize_tool_calls_when_tools_are_off():
+    conversation = _conversation(_user("hazla"), _tool_reply())
+
+    messages = chat.build_llm_messages(conversation, load_image=lambda image: None, tools=False)
+
+    assert [m["role"] for m in messages] == ["user", "assistant", "assistant"]
+    assert messages[1]["content"].startswith("Voy.\n\n[Tools used: inspect_workflow(")
+
+
+def test_llm_messages_append_the_current_turns_steps_in_full():
+    conversation = _conversation(_user("hazla"))
+    steps = [{"content": "", "tool_calls": [{"id": "c1", "name": "inspect_workflow", "arguments": "{}"}],
+              "results": ['{"nodes": [1]}']}]
+
+    messages = chat.build_llm_messages(conversation, load_image=lambda image: None, tools=True, current_steps=steps)
+
+    assert messages[1]["content"] is None
+    assert messages[2] == {"role": "tool", "tool_call_id": "c1", "content": '{"nodes": [1]}'}
 
 
 def test_parse_reply_splits_text_and_prompt_blocks_in_order():
@@ -154,6 +296,19 @@ def test_parse_reply_extracts_title_and_notes_and_keeps_them_out_of_the_content(
     assert reply.content.startswith("Got it.")
     # The prompt block stays in the content, which is what the LLM sees next turn.
     assert "<prompt>" in reply.content
+
+
+def test_parse_reply_reads_rewrites_and_deletions_of_existing_notes():
+    reply = chat.parse_reply(
+        'Anotado. <remember id="2">likes: cool  light, grain</remember> <forget id=3/>'
+        "<forget id=\"4\"></forget><forget id='3'> <remember>krea-2: ink LoRA &lt;0.3</remember>\nSigo.",
+        has_negative_prompt=True,
+    )
+
+    assert reply.notes == ["krea-2: ink LoRA &lt;0.3"]
+    assert reply.note_updates == [(2, "likes: cool light, grain")]
+    assert reply.note_forgets == [3, 4]
+    assert reply.parts == [{"type": "text", "text": "Anotado.\nSigo."}]
 
 
 def test_parse_reply_ends_an_unclosed_title_or_note_at_its_line():

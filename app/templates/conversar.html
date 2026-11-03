@@ -2,7 +2,7 @@
 {% block title %}Conversar{% endblock %}
 {% block body_class %}page-chat{% endblock %}
 {% block content %}
-<div class="chat-layout" id="chat-layout">
+<div class="chat-layout" id="chat-layout" data-comfy="{{ 'on' if comfy_configured else 'off' }}">
   <aside class="threads" aria-labelledby="threads-title">
     <h2 id="threads-title" class="visually-hidden">Conversaciones</h2>
     <button type="button" class="btn-secondary threads-new" id="new-conversation">Nueva conversación</button>
@@ -41,6 +41,7 @@
         <span class="label" id="chat-characters-label">Personajes</span>
         <div class="chips" id="chat-chips" role="group" aria-labelledby="chat-characters-label"></div>
       </div>
+      <p class="chat-comfy" id="chat-comfy" hidden></p>
     </div>
 
     <div class="chat-scroll" id="chat-scroll">
@@ -50,6 +51,7 @@
     <form class="chat-composer" id="chat-composer" novalidate>
       <p class="notice is-error" id="chat-error" role="alert" hidden></p>
       <ul class="attachments" id="attachments" aria-label="Imágenes adjuntas" hidden></ul>
+      <p class="reaction-hint" id="reaction-hint" hidden></p>
       <div class="composer-row">
         <label class="btn-icon attach" title="Adjuntar imágenes">
           <input type="file" id="chat-images" accept="image/jpeg,image/png,image/webp" multiple>
