@@ -123,3 +123,23 @@ def test_admin_catalog_routes(api_client, auth_headers, fake_comfy):
 
 def test_admin_refresh_without_comfy_is_400(api_client, auth_headers):
     assert api_client.post("/api/admin/catalog/refresh", auth=auth_headers).status_code == 400
+
+
+def test_metadata_that_fails_to_load_is_tried_again(fake_comfy):
+    calls = []
+
+    def flaky(folder, filename):
+        calls.append(filename)
+        if len(calls) == 1:
+            raise TimeoutError("ComfyUI busy")
+        return {"ss_base_model_version": "krea2"}
+
+    fake_comfy.metadata = flaky
+    catalog.refresh(fake_comfy)
+    first = calls[0]
+    assert "base_model" not in catalog.load()["entries"][first]
+
+    catalog.refresh(fake_comfy)
+
+    assert calls.count(first) == 2
+    assert catalog.load()["entries"][first]["base_model"] == "krea2"

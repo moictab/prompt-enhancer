@@ -110,11 +110,16 @@ def refresh(client, path: str | None = None) -> dict:
                     if file in old and old[file].get("folder") == folder and "checked" in old[file]:
                         entries[file] = old[file]
                         continue
+                    checked = True
                     try:
                         metadata = client.metadata(folder, file)
                     except Exception as e:
+                        # A busy ComfyUI can stall for a while: try this one again next time.
                         logger.info("catalog metadata unavailable file=%s error=%r", file, e)
-                    entries[file] = {**entry_from_metadata(file, folder, metadata), "checked": True}
+                        checked = False
+                    entries[file] = entry_from_metadata(file, folder, metadata)
+                    if checked:
+                        entries[file]["checked"] = True
                 else:
                     entries[file] = entry_from_metadata(file, folder, None)
         data.update(entries=entries, refreshed_at=_now())
