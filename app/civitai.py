@@ -201,6 +201,8 @@ def fetch_image(image_id: int) -> SharedImage:
     if len(response.content) > MAX_IMAGE_BYTES:
         raise CivitaiError(f"Civitai image {image_id} is larger than {MAX_IMAGE_BYTES // (1024 * 1024)} MB")
     meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+    if isinstance(meta.get("meta"), dict):
+        meta = meta["meta"]  # asked by imageId, the API nests it one level deeper than in its listings
     workflow = _workflow(meta)
     metadata = metadata_from(item, meta, _resources(meta), workflow is not None)
     metadata["format"] = content_type.split("/")[1].upper()

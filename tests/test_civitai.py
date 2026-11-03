@@ -102,6 +102,17 @@ def test_fetch_reads_the_image_its_generation_data_and_resources(monkeypatch):
     assert "Authorization" not in next(c for c in calls if c["url"] == IMAGE_URL)["headers"]
 
 
+def test_fetch_reads_the_meta_nested_as_the_api_returns_it_by_image_id():
+    get, _ = _fake_get(item={**ITEM, "meta": {"id": 123, "meta": ITEM["meta"]}})
+
+    with patch("app.civitai.requests.get", get):
+        shared = civitai.fetch_image(123)
+
+    assert shared.metadata["positive"] == "masterpiece, a witch at dawn"
+    assert len(shared.metadata["resources"]) == 4
+    assert shared.workflow == GRAPH
+
+
 def test_fetch_failures_are_explained():
     for item, image_type, expected in (
         (None, "image/png", "has no image 123"),
