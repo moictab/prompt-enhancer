@@ -205,7 +205,20 @@ def cancel_run(conversation_id: str, n: int):
         raise HTTPException(status_code=404, detail="Unknown run")
     if run["status"] != "pending":
         raise HTTPException(status_code=409, detail="The run has already finished")
+    # Cancelling is stopping: the bot doesn't carry on alone after it.
+    conversations.end_autonomy(conversation_id, "user")
     return runs.cancel(conversation_id, n)
+
+
+@router.post("/{conversation_id}/autonomy/stop")
+def stop_autonomy(conversation_id: str):
+    """The bot stops working on its own: it launches nothing more, and comments on whatever
+    is still running when it arrives, as usual."""
+    _require_conversation(conversation_id)
+    ended = conversations.end_autonomy(conversation_id, "user")
+    if ended is None:
+        raise HTTPException(status_code=409, detail="The bot isn't working on its own here")
+    return ended
 
 
 @router.post("/{conversation_id}/runs/{n}/retry-downloads")

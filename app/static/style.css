@@ -1115,6 +1115,25 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .chat-comfy.is-off { color: var(--stop-text); }
 .reaction-hint { color: var(--safelight); font-size: var(--step--1); }
 
+/* The bot working on its own: its goal, the budget used, and Detener. */
+.autonomy-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.6rem;
+  padding: 0.45rem 0.4rem 0.45rem 0.75rem;
+  background: var(--safelight-soft);
+  border-left: 2px solid var(--safelight);
+  border-radius: var(--radius-sm);
+  font-size: var(--step--1);
+}
+.autonomy-bar.is-ended { background: var(--panel); border-left-color: var(--line-strong); }
+.autonomy-state { color: var(--safelight); font-weight: 650; }
+.autonomy-bar.is-ended .autonomy-state { color: var(--paper-dim); }
+.autonomy-goal { min-width: 0; color: var(--paper); overflow-wrap: anywhere; }
+.autonomy-detail { color: var(--paper-dim); font-variant-numeric: tabular-nums; }
+.autonomy-bar .btn-quiet { margin-left: auto; padding-block: 0.15rem; }
+
 /* "#4" in a message: the image, small, and its number; it opens the viewer. */
 .image-ref {
   display: inline-flex;

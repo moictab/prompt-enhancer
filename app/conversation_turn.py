@@ -293,8 +293,14 @@ def _turn(conversation_id: str, automatic: bool):
         workflows=library if toolbox else None,
         families=[f["name"] for f in families.list_families()] if toolbox else None,
     )
+    # Working on its own: an automatic turn (its look at a run's images) may launch the next run,
+    # while the budget lasts.
+    working = conversations.autonomy(conversation)
+    autonomous = automatic and working is not None and not _budget_spent(working)
     # What changes every turn goes at the end of the latest message, after the cached part.
-    turn_context = chat.turn_context(notes, models_section, needs_title=not conversation["title"])
+    turn_context = chat.turn_context(notes, models_section, needs_title=not conversation["title"],
+                                     autonomy=chat.autonomy_text(working, automatic, _budget_spent(working))
+                                     if working else None)
     load_image = _image_loader(conversation_id)
     model, temperature = conversation["llm_model"], conversation["temperature"]
     api_key = get_settings().openrouter_api_key
@@ -320,7 +326,7 @@ def _turn(conversation_id: str, automatic: bool):
             ),
         ]
         messages = with_cache_breakpoints(model, messages, history_length, history.volatile_tail)
-        no_more_tools = automatic or index == MAX_STEPS - 1
+        no_more_tools = (automatic and not autonomous) or index == MAX_STEPS - 1
         context = {"mode": "conversation", "conversation_id": conversation_id, "step": index + 1}
         if automatic:
             context["automatic"] = True
@@ -361,9 +367,11 @@ def _turn(conversation_id: str, automatic: bool):
 
     used_tools = any(s["tool_calls"] for s in steps)
     if failure and not used_tools:
+        _settle_autonomy(conversation_id)
         yield {"type": "error", **failure}
         return
     if not used_tools and not "".join(s["text"] for s in steps).strip():
+        _settle_autonomy(conversation_id)
         yield {
             "type": "error",
             "detail": "The model returned an empty reply. Try again.",
@@ -377,7 +385,33 @@ def _turn(conversation_id: str, automatic: bool):
     if updated is None:
         yield {"type": "error", "detail": "The conversation was deleted while replying."}
         return
+    if _settle_autonomy(conversation_id):
+        updated = conversations.get(conversation_id) or updated
     yield {"type": "done", "message": updated["messages"][-1], "conversation": conversations.summary(updated)}
+
+
+def _budget_spent(working: dict) -> bool:
+    """No images left, or not enough money left to look at another run's images."""
+    return (working["images"] >= working["max_images"]
+            or working["cost"] + working.get("last_turn_cost", 0) > working["max_cost"])
+
+
+def _settle_autonomy(conversation_id: str) -> bool:
+    """Working on its own ends with a turn that leaves nothing under way: the bot stopped
+    launching (the goal is met, or it is out of ideas) or the budget ran out. Whether it ended."""
+    working = conversations.autonomy(conversations.get(conversation_id) or {})
+    if working is None or runs.tracker.pending_in(conversation_id):
+        return False
+    if working["images"] >= working["max_images"]:
+        reason = "images"
+    elif working["cost"] + working.get("last_turn_cost", 0) > working["max_cost"]:
+        reason = "cost"
+    else:
+        reason = "done"
+    conversations.end_autonomy(conversation_id, reason)
+    logger.info("autonomy ended conversation_id=%s reason=%s images=%s cost=%s",
+                conversation_id, reason, working["images"], working["cost"])
+    return True
 
 
 def _apply_note_changes(reply_updates, reply_forgets, notes_at_start: list[dict], conversation_id: str) -> list[dict]:
@@ -476,7 +510,11 @@ def _store_reply(conversation_id, family, characters, notes_at_start, steps, end
         "conversation reply stored conversation_id=%s prompts=%d notes=%d note_changes=%d steps=%d cost=%s",
         conversation_id, len(proposed), len(created), len(note_changes), len(steps), cost,
     )
-    return conversations.append_message(conversation_id, message, title=title)
+    stored = conversations.append_message(conversation_id, message, title=title)
+    if stored is not None and conversations.autonomy(stored):
+        conversations.add_autonomy_usage(conversation_id, turn_cost=cost or 0.0)
+        stored = conversations.get(conversation_id) or stored
+    return stored
 
 
 def _store_reviews(conversation_id: str, conversation: dict, reviews: list[tuple[int, str, str]]) -> None:

@@ -19,6 +19,11 @@ from .comfy_graph import ASPECTS, SAMPLER_SETTINGS, Graph, GraphError, is_api_wo
 logger = logging.getLogger("app.chat_tools")
 
 MAX_RUN_COUNT = 4
+# Working on its own (keep_going): images it may make and dollars it may spend on its replies.
+AUTONOMY_IMAGES = 8
+AUTONOMY_MAX_IMAGES = 40
+AUTONOMY_COST = 1.0
+AUTONOMY_MAX_COST = 10.0
 MAX_LISTED_MODELS = 80
 MODEL_FOLDERS = list(comfy.MODEL_FOLDERS)
 MAX_SEED = 2 ** 48
@@ -224,6 +229,32 @@ TOOLS = [
             "parameters": {"type": "object", "properties": {"run": {"type": "integer"}}, "required": ["run"]},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "keep_going",
+            "description": (
+                "Work on your own toward a goal the user set ('until it looks right', 'iterate on your own', "
+                "'try a few things and show me the best'): each run's images then come back to you, and you "
+                "review them and launch the next run yourself, without waiting for the user, until the goal "
+                "is met or the budget is spent -- max_images images made, or max_cost dollars spent on your "
+                "replies. Use the user's limits; without any, the defaults, and say so. Call it again to change "
+                "the goal or the limits (what was used so far still counts), or with stop: true when the user "
+                "asks you to stop."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal": {"type": "string", "description": "What counts as done, in a sentence."},
+                    "max_images": {"type": "integer", "description": f"Default {AUTONOMY_IMAGES}, at most "
+                                                                     f"{AUTONOMY_MAX_IMAGES}."},
+                    "max_cost": {"type": "number", "description": f"Dollars; default {AUTONOMY_COST:g}, at most "
+                                                                  f"{AUTONOMY_MAX_COST:g}."},
+                    "stop": {"type": "boolean"},
+                },
+            },
+        },
+    },
 ]
 
 
@@ -236,6 +267,11 @@ def _number(value, kind=float):
         return kind(value)
     except (TypeError, ValueError):
         raise ToolError(f"expected a number, got {value!r}")
+
+
+def _usage(working: dict) -> dict:
+    return {"images": f"{working['images']} of {working['max_images']}",
+            "dollars": f"{working['cost']:.2f} of {working['max_cost']:.2f}"}
 
 
 def _link_or_value(value):
@@ -474,6 +510,7 @@ class ToolBox:
     def _submit_run(self, label: str, changes: dict, base: str, folder: str, variants: list,
                     priority: str = comfy.PRIORITY, run_fields: dict | None = None) -> dict:
         """Send one job per (graph, seed, job fields) and record the run."""
+        self._check_budget(len(variants))
         jobs, sent = [], []
         for job_graph, seed, fields in variants:
             payload = job_graph.to_api()
@@ -496,6 +533,7 @@ class ToolBox:
         )
         if run is None:
             raise ToolError("The conversation is gone.")
+        conversations.add_autonomy_usage(self.conversation_id, images=len(jobs))
         runs.tracker.watch(self.conversation_id, run["n"])
         logger.info("run launched conversation_id=%s run=%s workflow=%s jobs=%d priority=%s base=%s",
                     self.conversation_id, run["n"], label, len(jobs), priority, base)
@@ -656,6 +694,42 @@ class ToolBox:
         return ({"saved": saved["name"], "replaced": bool(existing)},
                 {"type": "tool", "tool": "save_workflow", "workflow": label, "name": saved["name"],
                  "replaced": bool(existing)})
+
+    def _tool_keep_going(self, goal: str = "", max_images=None, max_cost=None, stop: bool = False) -> tuple[dict, dict]:
+        if stop:
+            ended = conversations.end_autonomy(self.conversation_id, "user")
+            return ({"stopped": True, "used": _usage(ended)} if ended else {"note": "You weren't working on your own."},
+                    {"type": "tool", "tool": "keep_going", "stop": True})
+        goal = " ".join(str(goal or "").split())
+        if not goal:
+            raise ToolError("Say the goal: what counts as done.")
+        images = min(AUTONOMY_MAX_IMAGES, max(1, _number(max_images, int))) if max_images is not None \
+            else AUTONOMY_IMAGES
+        cost = min(AUTONOMY_MAX_COST, max(0.05, _number(max_cost))) if max_cost is not None else AUTONOMY_COST
+        started = conversations.start_autonomy(self.conversation_id, goal, images, round(cost, 2))
+        if started is None:
+            raise ToolError("The conversation is gone.")
+        return ({"working_on_your_own": True, "goal": goal, "max_images": images, "max_cost": started["max_cost"],
+                 "used": _usage(started),
+                 "next": "Launch the first run now; each run's images will come back to you."},
+                {"type": "tool", "tool": "keep_going", "goal": goal, "max_images": images,
+                 "max_cost": started["max_cost"]})
+
+    def _check_budget(self, count: int) -> None:
+        """While the bot works on its own, a launch must fit what's left of the budget -- in
+        images, and in money for the look at its results that will follow."""
+        working = conversations.autonomy(self._conversation())
+        if working is None:
+            return
+        left = working["max_images"] - working["images"]
+        if left <= 0:
+            raise ToolError(f"The budget's images are spent ({working['images']} of {working['max_images']}): "
+                            "don't launch more; sum up for the user.")
+        if count > left:
+            raise ToolError(f"Only {left} image{'s' if left > 1 else ''} left in the budget: launch at most that.")
+        if working["cost"] + working.get("last_turn_cost", 0) > working["max_cost"]:
+            raise ToolError(f"The budget's money (${working['cost']:.2f} of ${working['max_cost']:.2f}) wouldn't "
+                            "cover looking at another run's images: don't launch more; sum up for the user.")
 
     def _tool_cancel_run(self, run: int) -> tuple[dict, dict]:
         number = _number(run, int)

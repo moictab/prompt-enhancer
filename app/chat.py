@@ -61,7 +61,8 @@ COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workfl
 - The family rules above are the current family's. To write for another family -- the user asks for one, or you'll work with a model of another family -- call use_family first: its rules come back and the conversation keeps that family. If the user asks you to stay with a family, don't run models of other families unless they ask.
 - Before telling the user a model or LoRA isn't installed, check with list_comfy_models, searching its file name or the words of its name: files are often renamed, and models are installed all the time. A Civitai image's resources say which installed file each matches, when one does.
 - You work in isolation: the only images you can feed a workflow are this conversation's (with input_images), and only node types from the library, from workflows the user shared here, and common core nodes are available; anything that reads ComfyUI's folders, files or URLs is refused. If a node you need isn't available, say so: the user can add a workflow that has it to the library.
-- Runs take a while; their images arrive later, in a message of their own. A message that only reports finished runs is automatic: the user hasn't written. Look at the images, say briefly what worked and what didn't against what was intended, and suggest the next step; don't launch anything on that turn.
+- Runs take a while; their images arrive later, in a message of their own. A message that only reports finished runs is automatic: the user hasn't written. Look at the images, say briefly what worked and what didn't against what was intended, and suggest the next step; don't launch anything on that turn -- unless you're working on your own.
+- Working on your own: when the user wants you to carry on alone toward a result ("until it looks right", "iterate on your own", "try a few things and show me the best"), call keep_going with the goal and the user's limits, then launch the first run. Each run's images then come back to you: review them, and while the goal isn't met and the budget allows, change one or two things -- what most likely failed -- and launch the next run yourself. When the goal is met or the budget won't stretch, stop and sum up: what you tried, the best images (#N), what you'd try next. Your goal and budget come with the app's context each turn.
 - Review every image a run brings, in the reply that first sees it: <review image="N" verdict="ok">…</review> or verdict="flawed", one per image, saying in a few words what's wrong (hands, anatomy, duplicated bodies or faces, garbage text, burnt or washed-out colors, wrong style, not what was asked…) and its likely cause in the recipe (which LoRA or weight, the size, the steps…). Reviews are kept with each image's recipe: the installed models list shows how often each LoRA and weight has failed, and why.
 - calibrate_lora shows what a LoRA does and from which weight it breaks: the same prompt and seed at several weights, run when the GPU is free (idle priority, so it can take a while). Review its images weight by weight and note the conclusion as "<lora>: <effect>; fine up to <weight>, breaks at <weight>".
 - The user can react to the images runs make -- liked, or disliked with the reason -- and the reactions come with their next message. Take them as the most direct feedback there is, above your own reviews: keep what was liked, fix what wasn't.
@@ -155,12 +156,32 @@ def build_system_prompt(
     return "\n\n".join(parts)
 
 
-def turn_context(notes: list[dict], models: str | None = None, needs_title: bool = False) -> str | None:
+def autonomy_text(working: dict, automatic: bool, spent: bool) -> str:
+    """While the bot works on its own (keep_going): its goal, its budget, and what to do now."""
+    head = (f"## Working On Your Own\nGoal: {working['goal']}\nBudget used: {working['images']} of "
+            f"{working['max_images']} images made, ${working['cost']:.2f} of ${working['max_cost']:.2f} spent on "
+            "your replies.")
+    if spent:
+        return (f"{head}\nThe budget is spent: don't launch anything. Sum up for the user: what you tried, the best "
+                "images (#N) and what you'd try next.")
+    if automatic:
+        return (f"{head}\nReview these images against the goal. If it isn't met, change what most likely failed and "
+                "launch the next run in this same reply, without asking. If it is met, or you're out of good ideas, "
+                "don't launch: sum up what you tried, the best images (#N) and what you'd try next.")
+    return (f"{head}\nThe user wrote while you work: do what they say. If they want you to stop, call keep_going "
+            "with stop: true.")
+
+
+def turn_context(notes: list[dict], models: str | None = None, needs_title: bool = False,
+                 autonomy: str | None = None) -> str | None:
     """What changes from turn to turn, sent at the end of the latest message: the title
-    request while the conversation has none, the notes (numbered, so the bot can rewrite
-    or forget one) and the installed models, as catalog.prompt_section() writes them
-    (with how the images made with each went)."""
+    request while the conversation has none, the bot's goal and budget while it works on
+    its own (autonomy_text), the notes (numbered, so the bot can rewrite or forget one) and
+    the installed models, as catalog.prompt_section() writes them (with how the images made
+    with each went)."""
     sections = [TITLE_RULE] if needs_title else []
+    if autonomy:
+        sections.append(autonomy)
     if notes:
         lines = "\n".join(f"[{i}] {n['text']}" for i, n in enumerate(notes, 1))
         sections.append(f"## Your Notes About The User\n{lines}")

@@ -65,6 +65,7 @@ const ui = {
   comfyStatus: $("chat-comfy"),
   reactionHint: $("reaction-hint"),
   picker: $("image-picker"),
+  autonomyBar: $("autonomy-bar"),
 };
 
 const state = {
@@ -340,6 +341,63 @@ function renderReactionHint() {
   ui.reactionHint.textContent = count
     ? `${count === 1 ? "Tu reacción irá" : `Tus ${count} reacciones irán`} con tu próximo mensaje. Puedes enviarlo sin escribir nada.`
     : "";
+}
+
+// ---------- the bot working on its own ----------
+
+function dollars(amount) {
+  return `$${(amount || 0).toFixed(2)}`;
+}
+
+const AUTONOMY_ENDED = {
+  done: "lo ha dejado él: objetivo cumplido, o sin más ideas",
+  images: "se acabaron las imágenes del presupuesto",
+  cost: "se acabó el dinero del presupuesto",
+  user: "lo has detenido tú",
+};
+
+// While the bot works on its own: its goal, what it has used of the budget, and a way to stop
+// it. Once it has stopped, why -- until the user writes again.
+function renderAutonomy() {
+  const conversation = state.conversation;
+  const working = conversation?.autonomy;
+  const lastUser = conversation?.messages.findLast((m) => m.role === "user");
+  const showEnded = working && !working.active && working.ended_at && (!lastUser || working.ended_at > lastUser.timestamp);
+  if (!working || !(working.active || showEnded)) {
+    ui.autonomyBar.hidden = true;
+    ui.autonomyBar.replaceChildren();
+    return;
+  }
+  const used = `${working.images} de ${working.max_images} imágenes, ${dollars(working.cost)} de ${dollars(working.max_cost)}`;
+  if (!working.active) {
+    ui.autonomyBar.className = "autonomy-bar is-ended";
+    ui.autonomyBar.replaceChildren(
+      el("span", { class: "autonomy-state", text: "Ha terminado de trabajar por su cuenta" }),
+      el("span", { class: "autonomy-detail", text: `${AUTONOMY_ENDED[working.end_reason] || ""} (${used}).` })
+    );
+    ui.autonomyBar.hidden = false;
+    return;
+  }
+  const stop = el("button", { type: "button", class: "btn-quiet", text: "Detener" });
+  stop.addEventListener("click", async () => {
+    setBusy(stop, true, "Deteniendo…");
+    try {
+      await request(`/api/conversations/${conversation.id}/autonomy/stop`, { method: "POST" });
+    } catch (err) {
+      toast(err.message, { error: true });
+    }
+    await refreshFromServer();
+    renderAutonomy();
+    loadSummaries({ quiet: true });
+  });
+  ui.autonomyBar.className = "autonomy-bar";
+  ui.autonomyBar.replaceChildren(
+    el("span", { class: "autonomy-state", text: "Trabajando por su cuenta" }),
+    el("span", { class: "autonomy-goal", text: `«${working.goal}»` }),
+    el("span", { class: "autonomy-detail", text: `${used}.` }),
+    stop
+  );
+  ui.autonomyBar.hidden = false;
 }
 
 function numberedImage(image, number, { reactable = false } = {}) {
@@ -752,6 +810,7 @@ const TOOL_FAILED = {
   list_comfy_models: "No ha podido consultar los modelos",
   save_workflow: "No ha podido guardar el workflow",
   cancel_run: "No ha podido cancelar la ejecución",
+  keep_going: "No ha podido ponerse a trabajar por su cuenta",
 };
 
 function toolLine(part) {
@@ -767,6 +826,10 @@ function toolLine(part) {
     text = `${part.replaced ? "Ha reemplazado" : "Ha guardado"} «${part.name}» en la biblioteca de workflows`;
   } else if (part.tool === "cancel_run") {
     text = `Ha cancelado la ejecución ${part.run}`;
+  } else if (part.tool === "keep_going") {
+    text = part.stop
+      ? "Ha dejado de trabajar por su cuenta"
+      : `Sigue por su cuenta hasta conseguirlo: «${part.goal}» (como mucho ${part.max_images} imágenes y ${dollars(part.max_cost)})`;
   } else if (part.tool === "use_family") {
     text = `Ya trabajaba con la familia ${part.family}`;
   } else {
@@ -1016,6 +1079,7 @@ function renderLog() {
   const messages = conversation?.messages || [];
   const live = conversation && state.live.get(conversation.id);
   renderReactionHint();
+  renderAutonomy();
   if (conversation) markSeen(conversation);
   if (!messages.length && !live) {
     ui.log.replaceChildren(emptyState());
@@ -1063,6 +1127,7 @@ async function refreshFromServer() {
     fresh.updated_at !== current.updated_at ||
     fresh.commenting !== current.commenting ||
     fresh.replying !== current.replying ||
+    JSON.stringify(fresh.autonomy || null) !== JSON.stringify(current.autonomy || null) ||
     JSON.stringify(fresh.runs || []) !== JSON.stringify(current.runs || []);
   state.conversation = fresh;
   attachIfReplying(fresh);
@@ -1191,6 +1256,9 @@ function threadStatus(summary) {
   const live = state.live.get(summary.id);
   if (live || summary.replying || summary.commenting) {
     return { kind: "busy", text: live?.automatic || (!live && summary.commenting) ? "Comentando…" : "Respondiendo…" };
+  }
+  if (summary.autonomy) {
+    return { kind: "busy", text: `Por su cuenta: ${summary.autonomy.images} de ${summary.autonomy.max_images} imágenes` };
   }
   if (summary.running) return { kind: "busy", text: "Generando imágenes…" };
   if (isUnread(summary)) return { kind: "fresh", text: "Respuesta nueva" };
@@ -1976,7 +2044,7 @@ function forgetSeenOfDeleted() {
 // (runs, or a reply asked for elsewhere), the list checks back for when it's done.
 function scheduleListPoll() {
   const waiting = state.summaries.some(
-    (s) => s.id !== state.conversation?.id && !state.live.has(s.id) && (s.replying || s.commenting || s.running)
+    (s) => s.id !== state.conversation?.id && !state.live.has(s.id) && (s.replying || s.commenting || s.running || s.autonomy)
   );
   if (!waiting) {
     clearTimeout(state.listTimer);

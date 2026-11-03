@@ -101,6 +101,9 @@ def summary(conversation: dict) -> dict:
         # When the bot (or a run) last added something: the chat marks what arrived unseen.
         "last_reply_at": replies[-1].get("timestamp") if replies else None,
         "running": any(r["status"] == "pending" for r in conversation.get("runs") or []),
+        # While the bot works on its own there: how much of its budget it has used.
+        "autonomy": ({k: working[k] for k in ("images", "max_images", "cost", "max_cost")}
+                     if (working := autonomy(conversation)) else None),
     }
 
 
@@ -376,3 +379,64 @@ def pending_runs(root: str | None = None) -> list[tuple[str, dict]]:
         conversation = storage.read_json(str(p), default=None) or {}
         found += [(p.stem, run) for run in conversation.get("runs") or [] if run.get("status") == "pending"]
     return found
+
+
+# --- autonomy: the bot carrying on alone toward a goal, within a budget --------------------------
+
+def autonomy(conversation: dict) -> dict | None:
+    """The bot's autonomy while it works on its own there, or None."""
+    found = conversation.get("autonomy")
+    return found if found and found.get("active") else None
+
+
+def start_autonomy(conversation_id: str, goal: str, max_images: int, max_cost: float,
+                   root: str | None = None) -> dict | None:
+    """The bot works on its own toward goal: it launches, looks and launches again, until the
+    goal is met or it has made max_images images or spent max_cost dollars on its replies.
+    Starting again (a new goal or new limits) keeps what was used so far."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return None
+        current = autonomy(conversation) or {}
+        conversation["autonomy"] = {
+            "active": True,
+            "goal": goal,
+            "max_images": max_images,
+            "max_cost": max_cost,
+            "images": current.get("images", 0),
+            "cost": current.get("cost", 0.0),
+            "last_turn_cost": current.get("last_turn_cost", 0.0),
+            "started_at": current.get("started_at") or _now(),
+        }
+        storage.write_json(_path(conversation_id, root), conversation)
+        return conversation["autonomy"]
+
+
+def add_autonomy_usage(conversation_id: str, images: int = 0, turn_cost: float | None = None,
+                       root: str | None = None) -> dict | None:
+    """Count images launched, or a reply's cost, against the budget (while the bot works alone)."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        current = autonomy(conversation or {})
+        if current is None:
+            return None
+        current["images"] += images
+        if turn_cost is not None:
+            current["cost"] = round(current["cost"] + turn_cost, 6)
+            current["last_turn_cost"] = turn_cost
+        storage.write_json(_path(conversation_id, root), conversation)
+        return current
+
+
+def end_autonomy(conversation_id: str, reason: str, root: str | None = None) -> dict | None:
+    """reason: "done" (the bot stopped: goal met, or no better idea), "images" or "cost" (the
+    budget ran out), "user" (the user stopped it, or cancelled a run)."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        current = autonomy(conversation or {})
+        if current is None:
+            return None
+        current.update(active=False, ended_at=_now(), end_reason=reason)
+        storage.write_json(_path(conversation_id, root), conversation)
+        return current
