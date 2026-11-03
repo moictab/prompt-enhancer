@@ -11,6 +11,8 @@ import logging
 import random
 import re
 
+import requests
+
 from . import catalog, chat, comfy, comfy_policy, conversations, runs, workflows
 from .comfy_graph import SAMPLER_SETTINGS, Graph, GraphError, is_api_workflow
 
@@ -236,6 +238,9 @@ class ToolBox:
             error = str(e)
         except comfy.Unreachable as e:
             error = str(e)
+        except requests.exceptions.Timeout:
+            error = ("ComfyUI accepted the connection but isn't answering: it may be busy loading a model, "
+                     "or frozen. Try again in a while; if it lasts, ComfyUI needs a restart.")
         except comfy.ComfyError as e:
             result = {"error": f"ComfyUI rejected it: {e}"}
             if e.node_errors:

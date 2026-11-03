@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import requests
 
 from app import chat_tools, comfy, conversations, runs, workflows
 
@@ -214,3 +215,15 @@ def test_cancel_run(setup):
     assert fake.cancelled == ["prompt-1"]
     assert "already finished" in _run(box, _name="cancel_run", run=1)[0]["note"]
     assert "no run 9" in _run(box, _name="cancel_run", run=9)[0]["error"]
+
+
+def test_a_frozen_comfyui_is_explained(setup):
+    box, fake, _ = setup
+
+    def frozen(base, workflow, tag="conversar"):
+        raise requests.exceptions.ReadTimeout("read timed out")
+
+    fake.submit = frozen
+    result, _ = _run(box, workflow="image:1", changes={"remove": ["8"]})
+
+    assert "isn't answering" in result["error"]
