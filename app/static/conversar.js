@@ -675,8 +675,28 @@ function resultsMessage(message) {
         text: `${failed.length === 1 ? "Un trabajo ha fallado" : `${failed.length} trabajos han fallado`}: ${[
           ...new Set(failed.map((job) => job.error).filter(Boolean)),
         ].join(" · ")}`,
-      })
+      }),
+    run && run.status !== "pending" && failed.some((job) => (job.error || "").startsWith("Couldn't download")) &&
+      retryDownloadsButton(run)
   );
+}
+
+// The images were made but didn't come down: they are still in ComfyUI, so fetch them again.
+function retryDownloadsButton(run) {
+  const button = el("button", { type: "button", class: "btn-secondary", text: "Reintentar la descarga" });
+  button.addEventListener("click", async () => {
+    setBusy(button, true, "Descargando…");
+    try {
+      await request(`/api/conversations/${state.conversation.id}/runs/${run.n}/retry-downloads`, { method: "POST" });
+    } catch (err) {
+      setBusy(button, false);
+      toast(err.message, { error: true });
+      return;
+    }
+    await refreshFromServer();
+    schedulePoll();
+  });
+  return button;
 }
 
 function developing() {

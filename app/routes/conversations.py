@@ -162,6 +162,19 @@ def cancel_run(conversation_id: str, n: int):
     return runs.cancel(conversation_id, n)
 
 
+@router.post("/{conversation_id}/runs/{n}/retry-downloads")
+def retry_run_downloads(conversation_id: str, n: int):
+    """Fetch again the images of a run whose download failed (they are still in ComfyUI)."""
+    _require_conversation(conversation_id)
+    run = conversations.get_run(conversation_id, n)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Unknown run")
+    retried = runs.retry_downloads(conversation_id, n)
+    if retried is None:
+        raise HTTPException(status_code=409, detail="The run has no failed downloads to retry")
+    return retried
+
+
 @router.get("/{conversation_id}/runs/{n}/workflow")
 def run_workflow_file(conversation_id: str, n: int, job: int = 1):
     """The exact workflow sent to ComfyUI for a run's job, to load it there."""

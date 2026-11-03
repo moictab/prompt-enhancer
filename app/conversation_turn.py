@@ -335,6 +335,9 @@ def on_run_finished(conversation_id: str, run: dict) -> None:
     """A run is final: put its images in the chat, then let the bot comment on them --
     in one hold of the lock, and flagged as commenting before the images appear, so the
     chat never sees results with no comment coming (and stop checking back)."""
+    # A retried download: its images go into the results message already in the chat.
+    if conversations.set_results_images(conversation_id, run["n"], run["images"]):
+        return
     will_comment = run["status"] != "cancelled" and not runs.tracker.pending_in(conversation_id)
     if will_comment:
         _automatic.add(conversation_id)

@@ -3,7 +3,9 @@ the bot's automatic comment, and the bot's changes to existing notes."""
 import json
 from unittest.mock import patch
 
-from app import conversation_turn, conversations, families, memory, runs, workflows
+import requests
+
+from app import comfy, conversation_turn, conversations, families, memory, runs, workflows
 from app.openrouter_client import StreamEnd
 
 from .conftest import png_bytes
@@ -120,6 +122,75 @@ def test_finished_runs_bring_their_images_and_an_automatic_comment(api_client, a
     download = api_client.get(f"/api/conversations/{conversation_id}/runs/1/workflow?job=2", auth=auth_headers)
     assert download.json() == fake_comfy.submitted[1]
     assert "attachment" in download.headers["content-disposition"]
+
+
+def _launch_two(api_client, auth_headers, tmp_path):
+    workflows.ensure_seeded()
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
+    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]), ("Va.", []))):
+        _send(api_client, auth_headers, conversation_id)
+    return conversation_id
+
+
+def test_a_download_that_fails_is_tried_again(api_client, auth_headers, tmp_path, fake_comfy):
+    conversation_id = _launch_two(api_client, auth_headers, tmp_path)
+    real_view, failures = fake_comfy.view, {"left": 2}
+
+    def stalling(base, filename, subfolder="", type_="output"):
+        if failures["left"]:
+            failures["left"] -= 1
+            raise requests.exceptions.ReadTimeout("ComfyUI stalled")
+        return real_view(base, filename, subfolder, type_)
+
+    fake_comfy.view = stalling
+    with patch("app.conversation_turn.stream_chat", Script(("Bien.", []))):
+        fake_comfy.finish("prompt-1", "out-a")
+        fake_comfy.finish("prompt-2", "out-b")
+        runs.tracker.poll_once()
+        run = conversations.get_run(conversation_id, 1)
+        assert run["status"] == "pending"  # nothing given up, nothing half-stored
+        assert [j["download_attempts"] for j in run["jobs"]] == [1, 1]
+        runs.tracker.poll_once()
+        runs.wait_until_idle()
+
+    assert conversations.get_run(conversation_id, 1)["status"] == "done"
+    assert len(conversations.get(conversation_id)["messages"][2]["images"]) == 2
+
+
+def test_lost_downloads_can_be_fetched_again_into_the_same_message(api_client, auth_headers, tmp_path, fake_comfy):
+    conversation_id = _launch_two(api_client, auth_headers, tmp_path)
+    real_view = fake_comfy.view
+
+    def refused(base, filename, subfolder="", type_="output"):
+        raise comfy.ComfyError(403, "refused")
+
+    fake_comfy.view = refused
+    with patch("app.conversation_turn.stream_chat", Script(("No han llegado.", []))):
+        fake_comfy.finish("prompt-1", "out-a")
+        fake_comfy.finish("prompt-2", "out-b")
+        for _ in range(runs.MAX_DOWNLOAD_ATTEMPTS):
+            runs.tracker.poll_once()
+        runs.wait_until_idle()
+    run = conversations.get_run(conversation_id, 1)
+    assert run["status"] == "error"
+    assert all(j["error"] == "Couldn't download out-a" for j in run["jobs"][:1])
+    assert [m["role"] for m in conversations.get(conversation_id)["messages"]] == [
+        "user", "assistant", "results", "assistant"]
+
+    fake_comfy.view = real_view
+    retry = f"/api/conversations/{conversation_id}/runs/1/retry-downloads"
+    assert api_client.post(retry, auth=auth_headers).json()["status"] == "pending"
+    with patch("app.conversation_turn.stream_chat", Script()) as idle:
+        runs.tracker.poll_once()
+        runs.wait_until_idle()
+
+    conversation = conversations.get(conversation_id)
+    # The images land in the results message already in the chat; no new message, no new comment.
+    assert [m["role"] for m in conversation["messages"]] == ["user", "assistant", "results", "assistant"]
+    assert len(conversation["messages"][2]["images"]) == 2
+    assert conversations.get_run(conversation_id, 1)["status"] == "done"
+    assert idle.calls == []
+    assert api_client.post(retry, auth=auth_headers).status_code == 409
 
 
 def test_a_failed_run_is_reported_and_commented(api_client, auth_headers, tmp_path, fake_comfy):

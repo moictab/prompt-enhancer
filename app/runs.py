@@ -18,6 +18,10 @@ logger = logging.getLogger("app.runs")
 
 POLL_SECONDS = 2.0
 JOB_TIMEOUT_SECONDS = 45 * 60
+# A download that fails is tried again on the next polls (ComfyUI can stall for a while)
+# before the job is given up as failed.
+MAX_DOWNLOAD_ATTEMPTS = 5
+DOWNLOAD_FAILED = "Couldn't download"
 FINAL = ("success", "error", "interrupted", "cancelled")
 CONTENT_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
 
@@ -28,7 +32,7 @@ def _now() -> str:
 
 def _age_seconds(run: dict) -> float:
     try:
-        created = datetime.fromisoformat(run["created_at"])
+        created = datetime.fromisoformat(run.get("retried_at") or run["created_at"])
     except (KeyError, ValueError):
         return 0.0
     return (datetime.now(timezone.utc) - created).total_seconds()
@@ -113,15 +117,24 @@ class RunTracker:
         images, error = [], result.error
         workflows = conversations.run_workflows(conversation_id, run["n"])
         workflow = workflows[index] if index < len(workflows) else None
+        downloaded, failed = [], []
         for output in result.outputs:
             try:
-                data, content_type = client.view(job["base_url"], output["filename"], output["subfolder"],
-                                                 output["type"])
+                downloaded.append((output, *client.view(job["base_url"], output["filename"], output["subfolder"],
+                                                        output["type"])))
             except Exception as e:
                 logger.warning("run output download failed conversation_id=%s run=%s file=%s error=%r",
                                conversation_id, run["n"], output["filename"], e)
-                error = error or f"Couldn't download {output['filename']}"
-                continue
+                failed.append(output["filename"])
+        if failed:
+            attempts = job.get("download_attempts", 0) + 1
+            if attempts < MAX_DOWNLOAD_ATTEMPTS:
+                # Nothing is stored until every image of the job comes down: try again next poll.
+                conversations.update_run(conversation_id, run["n"],
+                                         lambda r: r["jobs"][index].update(download_attempts=attempts))
+                return
+            error = error or f"{DOWNLOAD_FAILED} {', '.join(failed)}"
+        for output, data, content_type in downloaded:
             extension = output["filename"].rsplit(".", 1)[-1].lower()
             content_type = content_type if content_type in CONTENT_TYPES.values() else CONTENT_TYPES.get(extension)
             if content_type is None:
@@ -183,6 +196,33 @@ class RunTracker:
 
 
 tracker = RunTracker()
+
+
+def can_retry_downloads(run: dict) -> bool:
+    return run["status"] != "pending" and any(
+        j["status"] == "error" and (j.get("error") or "").startswith(DOWNLOAD_FAILED) for j in run["jobs"])
+
+
+def retry_downloads(conversation_id: str, n: int) -> dict | None:
+    """Fetch again the images of a run's jobs whose download failed (ComfyUI keeps them):
+    those jobs go back to pending, and when they come down the run's results message gets
+    its images in place, with no new comment from the bot."""
+    def change(run: dict) -> None:
+        for job in run["jobs"]:
+            if job["status"] == "error" and (job.get("error") or "").startswith(DOWNLOAD_FAILED):
+                job.update(status="pending", error=None, download_attempts=0)
+                job.pop("finished_at", None)
+        run["status"] = "pending"
+        run["retried_at"] = _now()
+        run.pop("finished_at", None)
+
+    run = conversations.get_run(conversation_id, n)
+    if run is None or not can_retry_downloads(run):
+        return None
+    updated = conversations.update_run(conversation_id, n, change)
+    tracker.watch(conversation_id, n)
+    logger.info("run downloads retried conversation_id=%s run=%s", conversation_id, n)
+    return updated
 
 
 def cancel(conversation_id: str, n: int) -> dict | None:

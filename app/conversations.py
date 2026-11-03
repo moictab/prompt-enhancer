@@ -327,6 +327,21 @@ def run_workflows(conversation_id: str, n: int, root: str | None = None) -> list
     return storage.read_json(f"{_root(root)}/{conversation_id}/run-{int(n)}.json", default=[])
 
 
+def set_results_images(conversation_id: str, n: int, images: list[dict], root: str | None = None) -> bool:
+    """Add images to run n's results message, if it has one (a retried download):
+    whether there was one."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        message = next((m for m in (conversation or {}).get("messages") or []
+                        if m["role"] == "results" and m.get("run") == n), None)
+        if message is None:
+            return False
+        message["images"] = (message.get("images") or []) + images
+        conversation["updated_at"] = _now()
+        storage.write_json(_path(conversation_id, root), conversation)
+        return True
+
+
 def pending_runs(root: str | None = None) -> list[tuple[str, dict]]:
     """(conversation id, run) for every run still waiting for ComfyUI, in any conversation."""
     directory = Path(_root(root))

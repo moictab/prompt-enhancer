@@ -8,6 +8,7 @@ and an arbiter in front of it; rules in comfyui-manager/docs/integracion.md).
 - Runs are followed by polling /history/{prompt_id}; runs.py does that.
 """
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -176,8 +177,10 @@ class Comfy:
     def view(self, base: str, filename: str, subfolder: str = "", type_: str = "output") -> tuple[bytes, str]:
         """An image one of this app's jobs made: saved under OUTPUT_SUBFOLDER, or a preview
         (temp) listed in its own /history. Nothing from the input folder, nothing else saved."""
-        own_output = type_ == "output" and (subfolder == OUTPUT_SUBFOLDER or subfolder.startswith(f"{OUTPUT_SUBFOLDER}/"))
-        if not (own_output or type_ == "temp"):
+        # ComfyUI on Windows reports subfolders with backslashes.
+        parts = [part for part in re.split(r"[\\/]", subfolder or "") if part]
+        own_output = type_ == "output" and parts[:1] == [OUTPUT_SUBFOLDER] and ".." not in parts
+        if not (own_output or (type_ == "temp" and ".." not in parts)):
             raise ComfyError(403, f"Not an image this app made: {type_}/{subfolder}/{filename}")
         response = self._request("GET", f"{base}/view",
                                  params={"filename": filename, "subfolder": subfolder, "type": type_})

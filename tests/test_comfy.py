@@ -129,6 +129,12 @@ def test_the_client_only_reads_back_what_this_app_made(mock_request):
         "prompt-enhancer/conversation-image")
     assert mock_request.call_args.kwargs["data"]["subfolder"] == "prompt-enhancer"
 
+    # ComfyUI on Windows reports subfolders with backslashes: still its own output.
+    assert client.view("http://gw", "run-01", "prompt-enhancer\\2026-11-03_x_abcd1234", "output")[0] == b"bytes"
+    for subfolder in ("prompt-enhancer\\..\\ramona-kim", "ramona-kim\\prompt-enhancer", "prompt-enhancer/../x"):
+        with pytest.raises(comfy.ComfyError):
+            client.view("http://gw", "anything", subfolder, "output")
+
     # Model listings only for model folders.
     with pytest.raises(ValueError):
         client.models("../output")
