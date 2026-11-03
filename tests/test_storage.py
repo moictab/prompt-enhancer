@@ -81,3 +81,38 @@ def test_remove_deletes_files_and_directories_and_ignores_missing_paths(tmp_path
     storage.remove(str(tmp_path / "missing"))
 
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_replace_windows_denies_for_a_moment_is_tried_again(tmp_path, monkeypatch):
+    # On Windows a file can't be replaced while someone has it open (a reader, an antivirus).
+    monkeypatch.setattr(storage.time, "sleep", lambda seconds: None)
+    real_replace, denials = storage.os.replace, []
+
+    def replace(src, dst):
+        if len(denials) < 2:
+            denials.append(dst)
+            raise PermissionError(5, "Access is denied")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(storage.os, "replace", replace)
+    path = tmp_path / "c.json"
+    storage.write_json(str(path), {"a": 1})
+
+    assert len(denials) == 2 and storage.read_json(str(path), None) == {"a": 1}
+    assert [p.name for p in tmp_path.iterdir()] == ["c.json"]
+
+
+def test_a_replace_denied_for_good_fails_and_leaves_no_temp_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage.time, "sleep", lambda seconds: None)
+
+    def denied(src, dst):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(storage.os, "replace", denied)
+    try:
+        storage.write_json(str(tmp_path / "c.json"), {"a": 1})
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("expected the PermissionError")
+    assert list(tmp_path.iterdir()) == []
