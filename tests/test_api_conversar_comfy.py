@@ -8,7 +8,7 @@ import requests
 from app import comfy, conversation_turn, conversations, families, memory, runs, workflows
 from app.openrouter_client import StreamEnd
 
-from .conftest import png_bytes
+from .conftest import message_text, png_bytes
 
 REQUEST_ID = "20261103-102219-0123abcd"
 
@@ -209,7 +209,7 @@ def test_a_failed_run_is_reported_and_commented(api_client, auth_headers, tmp_pa
     run = conversations.get_run(conversation_id, 1)
     assert run["status"] == "error"
     assert run["jobs"][0]["error"] == "RuntimeError: CUDA out of memory (in KSampler)"
-    assert "1 of 1 job failed: RuntimeError: CUDA out of memory" in comment.calls[0]["messages"][-1]["content"]
+    assert "1 of 1 job failed: RuntimeError: CUDA out of memory" in message_text(comment.calls[0]["messages"][-1])
 
 
 def test_cancelled_runs_get_no_comment(api_client, auth_headers, tmp_path, fake_comfy):
@@ -267,7 +267,9 @@ def test_the_bot_rewrites_and_forgets_existing_notes(api_client, auth_headers, t
     with patch("app.conversation_turn.stream_chat", script):
         message = _events(_send(api_client, auth_headers, conversation_id))[-1]["message"]
 
-    assert "[1] Le gusta mucho la luz fría" in script.calls[0]["messages"][0]["content"]
+    # Numbered, in the context at the end of the latest message (not in the cached system prompt).
+    assert "[1] Le gusta mucho la luz fría" in message_text(script.calls[0]["messages"][-1])
+    assert "Le gusta mucho" not in script.calls[0]["messages"][0]["content"]
     notes = {n["id"]: n["text"] for n in memory.list_notes()}
     assert notes[first["id"]] == "likes: cool dawn light"
     assert notes[second["id"]] == "Usa SDXL"
@@ -328,9 +330,10 @@ def test_reactions_travel_with_the_next_message(api_client, auth_headers, tmp_pa
         {"image_id": images[0]["id"], "rating": "up", "comment": ""},
         {"image_id": images[1]["id"], "rating": "down", "comment": "hands wrong"},
     ]
-    # The results and the user's message are one user turn; the reactions close it.
+    # The results and the user's message are one user turn; the reactions close it (before
+    # the app's context for the turn).
     sent = script.calls[0]["messages"][-1]["content"]
-    assert [p["text"] for p in sent if p["type"] == "text"][-1] == (
+    assert [p["text"] for p in sent if p["type"] == "text"][-2] == (
         '[Reactions: image 1 liked; image 2 disliked: "hands wrong"]')
 
     # Sent once: the next message doesn't carry them again, and nothing is left to send.

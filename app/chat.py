@@ -16,12 +16,14 @@ from typing import Callable
 
 from . import image_metadata, prompts, system_prompt
 
-# Every image is re-sent with each request, so only the most recent ones are;
-# older ones are replaced by a short note in the message they belonged to.
-MAX_CONTEXT_IMAGES = 4
-# Images that arrived since the bot last spoke are all attached (up to this), so it can
-# review every image of the runs it is looking at.
-MAX_NEW_IMAGES = 8
+# Every image is re-sent with each request, so only recent ones are attached; older ones are
+# a short note in the message they belonged to. The window moves in steps, not image by
+# image: between steps, what earlier requests sent stays exactly the same, so the
+# provider's prompt cache keeps serving it (a window moving with every image would change
+# old messages each turn, and the whole conversation would be paid for again). At least
+# CONTEXT_IMAGES_MIN, more than a run brings, so the bot sees every image it has to review.
+CONTEXT_IMAGES_MIN = 8
+CONTEXT_IMAGES_STEP = 8
 # Images the user's latest message mentions as #N are attached to it again (up to this many).
 MAX_REFERENCED_IMAGES = 4
 # "#4": an image's number. Not "#ff0000", "#1a" or a "&#39;" entity.
@@ -46,7 +48,7 @@ NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 - You can't open links. The one exception is done for you: a link to a Civitai image (civitai.com, .green or .red, /images/<number>) arrives as the image itself, already in the message. A link that didn't arrive that way (a Civitai post or model page, another site) can't be opened: say so and ask for the image's own Civitai link or the image.
 - An image the user shares from Civitai comes with what Civitai says about it: prompt, settings and the resources it was made with (checkpoint, LoRAs with weights, base model, trigger words). To reproduce one, match those resources with what the user has installed and say what is missing and what you use instead; to borrow its style, take what defines it (its style words, LoRAs and weights) into the image you are working on, within the family's rules.
 - Write plain conversational text: short paragraphs, "- " lists when useful, **bold** sparingly. No headings, no tables, no code blocks.
-- Notes: you keep notes about the user across conversations; the ones you have are listed above, numbered. Keep each one telegraphic -- a few words, no full sentences (e.g. "likes: cool dawn light, film grain", "krea-2: LoRA strength >0.6 burns faces"). Change them in your reply, right away and without asking: the user sees every change in the chat and can undo it.
+- Notes: you keep notes about the user across conversations; the ones you have come numbered in the app's context at the end of the latest message. Keep each one telegraphic -- a few words, no full sentences (e.g. "likes: cool dawn light, film grain", "krea-2: LoRA strength >0.6 burns faces"). Change them in your reply, right away and without asking: the user sees every change in the chat and can undo it.
   <remember>note</remember> adds one;
   <remember id="n">note</remember> rewrites note n (to correct or update it, or to merge another into it);
   <forget id="n"/> deletes note n (wrong, outdated, or merged into another).
@@ -63,7 +65,7 @@ COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workfl
 - Review every image a run brings, in the reply that first sees it: <review image="N" verdict="ok">…</review> or verdict="flawed", one per image, saying in a few words what's wrong (hands, anatomy, duplicated bodies or faces, garbage text, burnt or washed-out colors, wrong style, not what was asked…) and its likely cause in the recipe (which LoRA or weight, the size, the steps…). Reviews are kept with each image's recipe: the installed models list shows how often each LoRA and weight has failed, and why.
 - calibrate_lora shows what a LoRA does and from which weight it breaks: the same prompt and seed at several weights, run when the GPU is free (idle priority, so it can take a while). Review its images weight by weight and note the conclusion as "<lora>: <effect>; fine up to <weight>, breaks at <weight>".
 - The user can react to the images runs make -- liked, or disliked with the reason -- and the reactions come with their next message. Take them as the most direct feedback there is, above your own reviews: keep what was liked, fix what wasn't.
-- Choose models and LoRAs with what is known about them (installed models above: the user's description, how images made with them went), and note what you learn about how one shapes images, as "<model name>: <effect>"."""
+- Choose models and LoRAs with what is known about them (the installed models, in the app's context at the end of the latest message: the user's description, how images made with them went), and note what you learn about how one shapes images, as "<model name>: <effect>"."""
 
 FAMILY_RULES_INTRO = (
     "These rules say how to write the text inside each <prompt> block. Where they describe "
@@ -83,6 +85,7 @@ CHARACTERS_INSTRUCTION = (
 )
 
 AUTOMATIC_NOTE = "(Automatic message: the user hasn't written.)"
+CONTEXT_HEADING = "[The app's context for this turn, refreshed every turn; not written by the user.]"
 OMITTED_RESULT = {"note": "Result omitted from an earlier turn; call the tool again if you need it."}
 # Tool results worth replaying in later turns; the rest (listings) can be fetched again.
 KEPT_RESULTS = ("run_workflow", "save_workflow", "cancel_run")
@@ -114,15 +117,16 @@ CODE_FENCE_LINE = re.compile(r"^[ \t]*```[\w-]*[ \t]*$\n?", re.MULTILINE)
 def build_system_prompt(
     family: dict,
     characters: list[dict],
-    notes: list[dict],
-    needs_title: bool,
     workflows: list[dict] | None = None,
-    models: str | None = None,
     families: list[str] | None = None,
 ) -> str:
-    """workflows: the library ({name, description}) when the bot can run ComfyUI
+    """What stays the same from turn to turn (so the provider's prompt cache serves it):
+    the personality, the family's rules, the characters, the library and the mechanics.
+    What changes -- the notes, the installed models with their stats, whether a title is
+    still wanted -- goes at the end of the latest message instead (turn_context).
+
+    workflows: the library ({name, description}) when the bot can run ComfyUI
     workflows (None when it can't: no ComfyUI configured, or a model without tools);
-    models: the installed models, as catalog.prompt_section() writes them;
     families: the names of the families it can switch to (with use_family)."""
     parts = []
     personality = system_prompt.read_system_prompt("conversation").strip()
@@ -133,9 +137,6 @@ def build_system_prompt(
     if characters:
         lines = "\n".join(f"- {c['name']}: {c['text']}" for c in characters)
         parts.append(f"## Characters\n{CHARACTERS_INSTRUCTION}\n\n{lines}")
-    if notes:
-        lines = "\n".join(f"[{i}] {n['text']}" for i, n in enumerate(notes, 1))
-        parts.append(f"## Your Notes About The User\n{lines}")
     if workflows is not None:
         lines = "\n".join(
             f"- {w['name']}" + (f" [{w['family']}]" if w.get("family") else "")
@@ -144,18 +145,30 @@ def build_system_prompt(
             for w in workflows
         )
         parts.append(f"## Workflow Library\n{lines or '(empty)'}")
-        if models:
-            parts.append(f"## Installed Models\n{models}")
         others = [name for name in families or [] if name != family.get("name")]
         if others:
             parts.append(f"## Model Families\nThe current one is {family.get('name')}; the others: {', '.join(others)}.")
     mechanics = CONVERSATION_MECHANICS
     if workflows is not None:
         mechanics += f"\n{COMFY_MECHANICS}"
-    if needs_title:
-        mechanics += f"\n{TITLE_RULE}"
     parts.append(f"## How This Conversation Works\n{mechanics}")
     return "\n\n".join(parts)
+
+
+def turn_context(notes: list[dict], models: str | None = None, needs_title: bool = False) -> str | None:
+    """What changes from turn to turn, sent at the end of the latest message: the title
+    request while the conversation has none, the notes (numbered, so the bot can rewrite
+    or forget one) and the installed models, as catalog.prompt_section() writes them
+    (with how the images made with each went)."""
+    sections = [TITLE_RULE] if needs_title else []
+    if notes:
+        lines = "\n".join(f"[{i}] {n['text']}" for i, n in enumerate(notes, 1))
+        sections.append(f"## Your Notes About The User\n{lines}")
+    if models:
+        sections.append(f"## Installed Models\n{models}")
+    if not sections:
+        return None
+    return "\n\n".join([CONTEXT_HEADING, *sections])
 
 
 def image_numbers(messages: list[dict]) -> dict[str, int]:
@@ -195,10 +208,11 @@ def _referenced_images(message: dict, all_messages: list[dict], numbers: dict[st
 
 
 def _recent_image_ids(messages: list[dict]) -> set[str]:
+    """The images attached in full: the latest CONTEXT_IMAGES_MIN to MIN + STEP - 1, the
+    window's start moving CONTEXT_IMAGES_STEP at a time."""
     ids = [img["id"] for m in messages for img in (m.get("images") or [])]
-    last_reply = max((i for i, m in enumerate(messages) if m["role"] == "assistant"), default=-1)
-    new = [img["id"] for m in messages[last_reply + 1:] for img in (m.get("images") or [])]
-    return set(ids[-MAX_CONTEXT_IMAGES:]) | set(new[-MAX_NEW_IMAGES:])
+    start = max(0, (len(ids) - CONTEXT_IMAGES_MIN) // CONTEXT_IMAGES_STEP * CONTEXT_IMAGES_STEP)
+    return set(ids[start:])
 
 
 def results_text(run: dict | None, numbers: dict[str, int], automatic: bool) -> str:
@@ -317,6 +331,7 @@ def build_llm_messages(
     tools: bool = False,
     current_steps: list[dict] | None = None,
     installed: dict | None = None,
+    context: str | None = None,
 ) -> list[dict]:
     """The conversation as chat messages, without the system prompt.
 
@@ -324,13 +339,19 @@ def build_llm_messages(
     tools, earlier tool calls are replayed as tool calls (the request must carry the
     tool definitions); without, they are summarized in the text. current_steps are
     the steps of the reply being made, appended last with their results in full.
+    context (turn_context) goes as the last part of the latest user-side message.
+
+    What an earlier turn sent is replayed exactly the same, so the prompt cache serves it
+    (see conversation_turn.with_cache_breakpoints). Only the end of the latest message
+    changes from turn to turn -- the images it mentions as #N, attached again, and the
+    context -- and the result's volatile_tail says how many parts that is.
     """
-    messages: list[dict] = []
+    messages = ChatMessages()
     all_messages = conversation["messages"]
     recent = _recent_image_ids(all_messages)
     numbers = image_numbers(all_messages)
     runs = {r["n"]: r for r in conversation.get("runs") or []}
-    last_user = next((m for m in reversed(all_messages) if m["role"] == "user"), None)
+    tail: list[dict] = []
     proposal = 0
 
     def number_block(match: re.Match) -> str:
@@ -347,13 +368,16 @@ def build_llm_messages(
         else:
             messages.append({"role": "user", "content": _flatten(content)})
 
-    for message in all_messages:
+    for index, message in enumerate(all_messages):
         if message["role"] == "assistant":
             steps = message.get("steps") or [{"content": message["content"]}]
             messages += _steps_messages(steps, number_block, tools, current=False)
             continue
         if message["role"] == "results":
-            text = results_text(runs.get(message.get("run")), numbers, automatic=message is all_messages[-1])
+            # Automatic: the bot looks (or looked) at it before the user wrote anything.
+            following = all_messages[index + 1] if index + 1 < len(all_messages) else None
+            automatic = following is None or following["role"] == "assistant"
+            text = results_text(runs.get(message.get("run")), numbers, automatic=automatic)
             images, _ = _images_content(message, numbers, recent, load_image, with_metadata=False)
             add_user([{"type": "text", "text": text}, *images])
             continue
@@ -363,15 +387,28 @@ def build_llm_messages(
             text = f"{text}\n\n{line}" if text else line
         images, attached = _images_content(message, numbers, recent, load_image, with_metadata=True,
                                            installed=installed)
-        if message is last_user:
-            images += _referenced_images(message, all_messages, numbers, recent, load_image, installed)
+        if message is all_messages[-1]:  # the message being answered
+            tail += _referenced_images(message, all_messages, numbers, recent, load_image, installed)
         parts = ([{"type": "text", "text": text}] if text else []) + images
         if not text and not attached and not images:
             parts = [{"type": "text", "text": "(empty message)"}]
         add_user(parts)
+    if context:
+        tail.append({"type": "text", "text": context})
+    if tail and messages and messages[-1]["role"] == "user":
+        latest = messages[-1]["content"]
+        latest = latest if isinstance(latest, list) else [{"type": "text", "text": latest}]
+        messages[-1]["content"] = [*latest, *tail]
+        messages.volatile_tail = len(tail)
     if current_steps:
         messages += _steps_messages(current_steps, number_block, tools, current=True)
     return messages
+
+
+class ChatMessages(list):
+    """Chat messages, plus how many parts at the end of the latest user-side message
+    change from turn to turn (volatile_tail): the prompt cache's breakpoint goes before them."""
+    volatile_tail = 0
 
 
 @dataclass

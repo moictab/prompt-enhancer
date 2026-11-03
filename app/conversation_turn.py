@@ -183,19 +183,35 @@ def _image_loader(conversation_id: str):
     return load
 
 
-def with_cache_breakpoints(model: str, messages: list[dict], history_length: int) -> list[dict]:
-    """Mark the system prompt and the end of the stored conversation as cacheable, for
-    Anthropic models (others cache on their own or not at all): every step of a turn, and
-    the next turn within a few minutes, re-send them, and cached input costs a tenth."""
+def with_cache_breakpoints(model: str, messages: list[dict], history_length: int,
+                           volatile_tail: int = 0) -> list[dict]:
+    """Mark where Anthropic models may cache the request (others cache on their own or not
+    at all). Cached input costs a tenth; writing it, a quarter more. A cache entry serves a
+    later request whose start is exactly the same up to that mark, so the marks go where
+    the next request will match:
+    - the system prompt (with the tools before it), the same every turn;
+    - the latest user-side message (the stored conversation's end, history_length - 1),
+      before its volatile tail (the #N images and the context, which change every turn):
+      next turn, this message has no tail, and everything up to here is read from cache;
+    - its volatile tail, which the turn's later steps re-send;
+    - the end of the user-side message before it: what the previous turn cached.
+    Four marks at most, Anthropic's limit."""
     if not model.startswith("anthropic/"):
         return messages
     marked = [dict(m) for m in messages]
-    for index in {0, history_length - 1}:
-        if not 0 <= index < len(marked) or marked[index]["role"] not in ("system", "user"):
-            continue
+    latest = history_length - 1
+    marks = {0: [-1]}
+    if 0 < latest < len(marked) and marked[latest]["role"] == "user":
+        marks[latest] = [-1 - volatile_tail, -1] if volatile_tail else [-1]
+        previous = next((i for i in range(latest - 1, 0, -1) if marked[i]["role"] == "user"), None)
+        if previous is not None:
+            marks[previous] = [-1]
+    for index, positions in marks.items():
         content = marked[index]["content"]
         parts = [{"type": "text", "text": content}] if isinstance(content, str) else [dict(p) for p in content]
-        parts[-1] = {**parts[-1], "cache_control": {"type": "ephemeral"}}
+        for position in positions:
+            if -len(parts) <= position:
+                parts[position] = {**parts[position], "cache_control": {"type": "ephemeral"}}
         marked[index]["content"] = parts
     return marked
 
@@ -273,10 +289,12 @@ def _turn(conversation_id: str, automatic: bool):
         models_section = catalog.prompt_section()
         installed = catalog.load()["entries"] or None
     system = chat.build_system_prompt(
-        family, characters, notes, needs_title=not conversation["title"],
-        workflows=library if toolbox else None, models=models_section,
+        family, characters,
+        workflows=library if toolbox else None,
         families=[f["name"] for f in families.list_families()] if toolbox else None,
     )
+    # What changes every turn goes at the end of the latest message, after the cached part.
+    turn_context = chat.turn_context(notes, models_section, needs_title=not conversation["title"])
     load_image = _image_loader(conversation_id)
     model, temperature = conversation["llm_model"], conversation["temperature"]
     api_key = get_settings().openrouter_api_key
@@ -288,8 +306,9 @@ def _turn(conversation_id: str, automatic: bool):
     steps: list[dict] = []  # {"text", "tool_calls", "results", "parts"}
     ends: list[StreamEnd] = []
     failure = None
-    history_length = 1 + len(chat.build_llm_messages(conversation, load_image, tools=bool(toolbox),
-                                                      installed=installed))
+    history = chat.build_llm_messages(conversation, load_image, tools=bool(toolbox), installed=installed,
+                                      context=turn_context)
+    history_length = 1 + len(history)
     for index in range(MAX_STEPS):
         messages = [
             {"role": "system", "content": system},
@@ -297,10 +316,10 @@ def _turn(conversation_id: str, automatic: bool):
                 conversation, load_image, tools=bool(toolbox),
                 current_steps=[{"content": s["text"], "tool_calls": s["tool_calls"], "results": s["results"]}
                                for s in steps],
-                installed=installed,
+                installed=installed, context=turn_context,
             ),
         ]
-        messages = with_cache_breakpoints(model, messages, history_length)
+        messages = with_cache_breakpoints(model, messages, history_length, history.volatile_tail)
         no_more_tools = automatic or index == MAX_STEPS - 1
         context = {"mode": "conversation", "conversation_id": conversation_id, "step": index + 1}
         if automatic:

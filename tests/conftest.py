@@ -122,3 +122,11 @@ def fake_comfy(monkeypatch):
     monkeypatch.setattr("app.conversation_turn._model_takes_tools", lambda model: True)
     monkeypatch.setattr("app.catalog.refresh_in_background", lambda client, force=False: False)
     return fake
+
+
+def message_text(message: dict) -> str:
+    """A chat message's text, whether its content is a string or a list of parts."""
+    content = message.get("content") or ""
+    if isinstance(content, str):
+        return content
+    return "\n".join(part.get("text", "") for part in content if part.get("type") == "text")

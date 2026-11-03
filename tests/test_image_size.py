@@ -113,8 +113,8 @@ def test_the_library_shows_each_workflows_default_size():
     assert entry["size"] == "2:3 portrait, 1 MP"
 
     family = {"name": "Krea 2", "instructions": "rules", "has_negative_prompt": False}
-    system = chat.build_system_prompt(family, [], [], needs_title=False, workflows=[{**entry, "family": "Krea 2"}],
-                                      models=None, families=[])
+    system = chat.build_system_prompt(family, [], workflows=[{**entry, "family": "Krea 2"}],
+                                      families=[])
 
     assert "- krea-2/txt2img [Krea 2] (2:3 portrait, 1 MP by default)" in system
     assert "Choose the image's proportions yourself" in system

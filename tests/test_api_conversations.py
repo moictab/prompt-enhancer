@@ -4,6 +4,8 @@ from unittest.mock import patch
 from app import characters, families, history, memory, system_prompt
 from app.openrouter_client import OpenRouterError, StreamEnd
 
+from .conftest import message_text
+
 REPLY = (
     "<title>Lena en la playa</title>\nMi propuesta:\n"
     "<prompt>\nPOSITIVE: Lena on a beach at dusk\nNEGATIVE: blurry\n</prompt>\n"
@@ -204,12 +206,16 @@ def test_llm_gets_personality_history_and_numbered_proposals(mock_stream, api_cl
     assert system["role"] == "system"
     assert system["content"].startswith("You are a grumpy art director.")
     assert "family instructions" in system["content"]
-    assert "Likes golden hour" in system["content"]
+    # The notes change every turn: they come with the latest message, after the cached part.
+    assert "Likes golden hour" not in system["content"]
+    assert "[1] Likes golden hour" in message_text(messages[-1])
     # The title is already set, so the bot isn't asked for one again.
     assert "<title>" not in system["content"]
     assert [m["role"] for m in messages[1:]] == ["user", "assistant", "user"]
     assert '<prompt id="1">' in messages[2]["content"]
-    assert messages[3]["content"] == "La 1, pero de noche"
+    assert messages[3]["content"][0] == {"type": "text", "text": "La 1, pero de noche"}
+    # The first message replays as it went, without the context it carried then.
+    assert messages[1]["content"] == "Lena en la playa"
 
 
 @patch("app.conversation_turn.stream_chat")

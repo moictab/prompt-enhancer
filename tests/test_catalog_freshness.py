@@ -6,6 +6,8 @@ from unittest.mock import patch
 from app import catalog, conversations, families, image_metadata
 from app.openrouter_client import StreamEnd
 
+from .conftest import message_text
+
 PEARLY = "anima\\pearly-sapphire_v1.0.safetensors"
 ENTRIES = {
     PEARLY: {"folder": "diffusion_models", "family": "anima"},
@@ -119,4 +121,4 @@ def test_a_turn_tells_the_bot_a_civitai_resource_is_installed(api_client, auth_h
 
     texts = [p["text"] for p in sent[0][1]["content"] if p["type"] == "text"]
     assert any(f"installed here as {PEARLY}" in text for text in texts)
-    assert "pearly-sapphire_v1.0" in sent[0][0]["content"]  # and it is in the installed models list
+    assert "pearly-sapphire_v1.0" in message_text(sent[0][-1])  # and it is in the installed models list

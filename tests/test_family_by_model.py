@@ -88,7 +88,7 @@ def test_swapping_the_base_model_in_the_changes_counts(fake_comfy):
 
 def test_the_library_shows_each_workflows_family():
     result = chat.build_system_prompt(
-        {"instructions": "rules"}, [], [], needs_title=False,
+        {"instructions": "rules"}, [],
         workflows=[{"name": "illustrious/txt2img", "description": "Tags.", "family": "Illustrious"},
                    {"name": "mine/loose", "description": "", "family": None}],
     )

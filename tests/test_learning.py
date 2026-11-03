@@ -36,7 +36,7 @@ def test_the_bot_sees_every_image_that_arrived_since_it_last_spoke():
 
     attached = [p["image_url"]["url"] for m in messages if isinstance(m["content"], list)
                 for p in m["content"] if p["type"] == "image_url"]
-    assert attached == [f"data:i{n}" for n in range(2, 10)]  # all 8 new ones, not just the last 4
+    assert attached[-8:] == [f"data:i{n}" for n in range(2, 10)]  # all 8 new ones
 
 
 def test_calibration_results_are_described_by_weight():
@@ -71,7 +71,7 @@ def test_use_family_switches_by_name_and_hands_over_the_rules(fake_comfy):
 
 
 def test_the_system_prompt_names_the_current_family_and_the_others():
-    result = chat.build_system_prompt({"name": "Krea 2", "instructions": "rules"}, [], [], needs_title=False,
+    result = chat.build_system_prompt({"name": "Krea 2", "instructions": "rules"}, [],
                                       workflows=[], families=["Krea 2", "Illustrious", "Anima"])
 
     assert "## Model Family Rules: Krea 2\n" in result

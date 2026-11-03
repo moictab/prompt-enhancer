@@ -21,7 +21,7 @@ def _assistant(content):
 def test_system_prompt_puts_personality_first_family_rules_next_and_mechanics_last(mock_read):
     mock_read.return_value = "You are a grumpy art director."
 
-    result = chat.build_system_prompt(FAMILY, [], [], needs_title=False)
+    result = chat.build_system_prompt(FAMILY, [])
 
     mock_read.assert_called_once_with("conversation")
     assert result.startswith(
@@ -39,7 +39,7 @@ def test_system_prompt_puts_personality_first_family_rules_next_and_mechanics_la
 
 @patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
 def test_system_prompt_tells_the_bot_to_keep_terse_notes_and_change_them_without_asking(mock_read):
-    result = chat.build_system_prompt(FAMILY, [], [], needs_title=False)
+    result = chat.build_system_prompt(FAMILY, [])
 
     assert "Change them in your reply, right away and without asking" in result
     assert "telegraphic" in result
@@ -53,52 +53,54 @@ def test_system_prompt_tells_the_bot_to_keep_terse_notes_and_change_them_without
 @patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
 def test_system_prompt_lists_the_workflow_library_and_how_to_run_when_comfy_is_available(mock_read):
     result = chat.build_system_prompt(
-        FAMILY, [], [], needs_title=True,
+        FAMILY, [],
         workflows=[{"name": "krea-2/txt2img", "description": "Text to image."}, {"name": "bare", "description": ""}],
     )
 
     assert "## Workflow Library\n- krea-2/txt2img: Text to image.\n- bare\n\n## How This" in result
-    assert chat.COMFY_MECHANICS in result
-    # Still last: the title rule.
-    assert result.endswith(chat.TITLE_RULE)
+    assert result.endswith(chat.COMFY_MECHANICS)
 
 
 @patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
 def test_system_prompt_shows_an_empty_library(mock_read):
-    result = chat.build_system_prompt(FAMILY, [], [], needs_title=False, workflows=[])
+    result = chat.build_system_prompt(FAMILY, [], workflows=[])
 
     assert "## Workflow Library\n(empty)" in result
 
 
 @patch("app.chat.system_prompt.read_system_prompt", return_value="")
 def test_system_prompt_starts_with_the_family_rules_when_the_personality_is_empty(mock_read):
-    result = chat.build_system_prompt(FAMILY, [], [], needs_title=False)
+    result = chat.build_system_prompt(FAMILY, [])
 
     assert result.startswith("## Model Family Rules: SDXL\n")
     assert "## How This Conversation Works\n" in result
 
 
 @patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
-def test_system_prompt_asks_for_a_title_only_when_needed(mock_read):
-    assert "<title>" in chat.build_system_prompt(FAMILY, [], [], needs_title=True)
-    assert "<title>" not in chat.build_system_prompt(FAMILY, [], [], needs_title=False)
+def test_a_title_is_asked_for_only_while_there_is_none_and_not_in_the_system_prompt(mock_read):
+    # Asked in the turn's context: the system prompt stays the same once the title is there.
+    assert "<title>" not in chat.build_system_prompt(FAMILY, [])
+    assert chat.turn_context([], None, needs_title=True) == f"{chat.CONTEXT_HEADING}\n\n{chat.TITLE_RULE}"
+    assert chat.turn_context([], None, needs_title=False) is None
 
 
 @patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
-def test_system_prompt_lists_characters_and_notes(mock_read):
-    result = chat.build_system_prompt(
-        FAMILY,
-        [{"name": "Lena", "text": "auburn hair, freckles"}],
-        [{"text": "Likes hard light"}, {"text": "Hates lens flare"}],
-        needs_title=False,
-    )
+def test_system_prompt_lists_characters_and_the_notes_go_with_the_latest_message(mock_read):
+    result = chat.build_system_prompt(FAMILY, [{"name": "Lena", "text": "auburn hair, freckles"}])
 
     assert "## Characters\n" in result
     assert "- Lena: auburn hair, freckles" in result
+    # The notes and the installed models change every turn: not in the (cached) system prompt.
+    assert "## Your Notes" not in result
+    context = chat.turn_context([{"text": "Likes hard light"}, {"text": "Hates lens flare"}], models="LoRAs:\n- x")
     # Numbered, so the bot can rewrite or forget one by its number.
-    notes = "## Your Notes About The User\n[1] Likes hard light\n[2] Hates lens flare"
-    assert notes in result
-    assert result.index("## Characters") < result.index(notes) < result.index("## How This Conversation Works")
+    assert context == (chat.CONTEXT_HEADING + "\n\n## Your Notes About The User\n[1] Likes hard light\n"
+                       "[2] Hates lens flare\n\n## Installed Models\nLoRAs:\n- x")
+    assert chat.turn_context([], None) is None
+    conversation = _conversation(_user("hola"))
+    messages = chat.build_llm_messages(conversation, load_image=lambda image: None, context=context)
+    assert messages[-1]["content"] == [{"type": "text", "text": "hola"}, {"type": "text", "text": context}]
+    assert messages.volatile_tail == 1
 
 
 def test_llm_messages_number_prompt_blocks_across_the_conversation():
@@ -118,30 +120,30 @@ def test_llm_messages_number_prompt_blocks_across_the_conversation():
     assert messages[0]["content"] == "a witch"
 
 
-def test_llm_messages_attach_only_the_most_recent_images():
-    images = [{"id": f"img{i}", "content_type": "image/png"} for i in range(6)]
-    conversation = _conversation(
-        _user("first batch", images[:3]),
-        _assistant("nice"),
-        _user("", images[3:]),
-    )
+def _attached(messages):
+    return [p["image_url"]["url"] for m in messages if isinstance(m["content"], list)
+            for p in m["content"] if p["type"] == "image_url"]
 
-    messages = chat.build_llm_messages(conversation, load_image=lambda image: f"data:{image['id']}")
 
-    # 6 images, only the last 4 travel: img2 from the first message, img3-5 from the last.
-    # Every image is numbered across the conversation, attached or not.
-    first, last = messages[0]["content"], messages[2]["content"]
-    assert first == [
-        {"type": "text", "text": "first batch"},
-        {"type": "text", "text": "Image 1 (shared earlier, no longer attached):"},
-        {"type": "text", "text": "Image 2 (shared earlier, no longer attached):"},
-        {"type": "text", "text": "Image 3:"},
-        {"type": "image_url", "image_url": {"url": "data:img2"}},
-    ]
-    assert [part.get("text") for part in last if part["type"] == "text"] == ["Image 4:", "Image 5:", "Image 6:"]
-    assert [part["image_url"]["url"] for part in last if part["type"] == "image_url"] == [
-        "data:img3", "data:img4", "data:img5",
-    ]
+def test_llm_messages_attach_recent_images_in_a_window_that_moves_in_steps():
+    images = [{"id": f"img{i}", "content_type": "image/png"} for i in range(1, 25)]
+    load = lambda image: f"data:{image['id']}"  # noqa: E731
+
+    def up_to(count):
+        return _conversation(_user("first batch", images[:3]), _assistant("nice"),
+                             *[m for image in images[3:count] for m in (_user("", [image]), _assistant("ok"))])
+
+    # Up to 15 images, all travel.
+    assert _attached(chat.build_llm_messages(up_to(15), load)) == [f"data:img{i}" for i in range(1, 16)]
+    # At 16 the window steps 8 ahead: images 9 on.
+    sixteen = chat.build_llm_messages(up_to(16), load)
+    assert _attached(sixteen) == [f"data:img{i}" for i in range(9, 17)]
+    assert sixteen[0]["content"].startswith("first batch\n\nImage 1 (shared earlier, no longer attached):")
+    # And stays there while images arrive (what earlier requests sent doesn't change: the
+    # prompt cache keeps serving it), until 24.
+    twenty_three = chat.build_llm_messages(up_to(23), load)
+    assert twenty_three[:len(sixteen)] == list(sixteen)
+    assert _attached(chat.build_llm_messages(up_to(24), load))[0] == "data:img17"
 
 
 def test_llm_messages_mention_an_image_whose_file_is_gone():
