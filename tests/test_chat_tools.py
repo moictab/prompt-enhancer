@@ -46,7 +46,12 @@ def test_run_a_library_workflow_with_changes(setup):
     assert first["63"]["inputs"]["value"] == "a witch at dawn"
     assert first["53"]["inputs"]["steps"] == 10
     assert (first["53"]["inputs"]["seed"], second["53"]["inputs"]["seed"]) == (500, 501)
-    assert first["29"]["inputs"]["filename_prefix"] == chat_tools.OUTPUT_PREFIX
+    # Each conversation saves into its own folder; each image's name says its run and seed.
+    conversation = conversations.get(conversation_id)
+    folder = f"{conversation['created_at'][:10]}_mira_{conversation_id[:8]}"
+    assert conversation["output_folder"] == folder
+    assert first["29"]["inputs"]["filename_prefix"] == f"prompt-enhancer/{folder}/run-01_seed-500"
+    assert second["29"]["inputs"]["filename_prefix"] == f"prompt-enhancer/{folder}/run-01_seed-501"
     assert [n["inputs"]["lora_name"] for n in first.values() if n["class_type"] == "LoraLoader"] == [
         "krea-2\\style-ink_v1.safetensors"]
     # The library entry itself is untouched.
@@ -57,6 +62,28 @@ def test_run_a_library_workflow_with_changes(setup):
     assert [j["prompt_id"] for j in run["jobs"]] == ["prompt-1", "prompt-2"]
     assert conversations.run_workflows(conversation_id, 1) == [first, second]
     assert (conversation_id, 1) in runs.tracker._pending
+    assert run["output_folder"] == f"prompt-enhancer/{folder}"
+
+
+def test_the_output_folder_is_named_once_and_kept(setup):
+    box, fake, conversation_id = setup
+    box.title_hint = "Bruja en el Bosque, ¡al alba!"
+
+    _run(box, workflow="image:1", changes={"remove": ["8"]})
+    box.title_hint = "Otro título"
+    _run(box, workflow="image:1", changes={"remove": ["8"], "seed": "7"})
+
+    prefix = f"prompt-enhancer/{conversations.get(conversation_id)['created_at'][:10]}_bruja-en-el-bosque-al-alba_"
+    first, second = (sent["9"]["inputs"]["filename_prefix"] for sent in fake.submitted)
+    assert first.startswith(prefix) and "/run-01_seed-" in first
+    assert second == f"{prefix}{conversation_id[:8]}/run-02_seed-7"
+
+
+def test_slugify_makes_safe_folder_names():
+    assert conversations.slugify("Bruja en el bosque") == "bruja-en-el-bosque"
+    assert conversations.slugify("¡Ñandú: café/té <de> noche!") == "nandu-cafe-te-de-noche"
+    assert conversations.slugify("x" * 80) == "x" * 40
+    assert conversations.slugify("???") == ""
 
 
 def test_run_the_workflow_embedded_in_an_image_keeping_its_seed_and_feeding_an_image(setup):

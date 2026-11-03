@@ -20,10 +20,10 @@ logger = logging.getLogger("app.comfy")
 
 PROJECT = "prompt-enhancer"
 # Where this app's files live in ComfyUI: uploads in input/<UPLOAD_SUBFOLDER>/, images it makes
-# in output/<OUTPUT_SUBFOLDER>/. It reads nothing else back from ComfyUI (see comfy_policy).
+# in output/<OUTPUT_SUBFOLDER>/<one folder per conversation>/. It reads nothing else back from
+# ComfyUI (see comfy_policy).
 UPLOAD_SUBFOLDER = "prompt-enhancer"
 OUTPUT_SUBFOLDER = "prompt-enhancer"
-OUTPUT_PREFIX = f"{OUTPUT_SUBFOLDER}/conversar"
 MODEL_FOLDERS = ("checkpoints", "diffusion_models", "loras", "vae", "text_encoders", "upscale_models",
                  "controlnet", "embeddings")
 PRIORITY = "high"  # a person is waiting for the result in the chat
@@ -32,6 +32,13 @@ READ_TIMEOUT = 60
 MODELS_CACHE_SECONDS = 300
 BASE_CACHE_SECONDS = 30
 CONNECT_ERRORS = (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout)
+
+
+def output_prefix(folder: str, run: int, seed=None) -> str:
+    """ComfyUI's filename_prefix for one job of a run: its images are saved as
+    output/prompt-enhancer/<folder>/run-03_seed-123_00001_.png."""
+    name = f"run-{run:02d}" + (f"_seed-{seed}" if isinstance(seed, int) else "")
+    return f"{OUTPUT_SUBFOLDER}/{folder}/{name}"
 
 
 class Unreachable(RuntimeError):

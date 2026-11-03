@@ -495,7 +495,8 @@ function runCard(part, live) {
     el("span", { class: "run-label", text: `Ejecución ${part.run}` }),
     el("span", { class: "run-workflow", text: part.count > 1 ? `${part.workflow} ×${part.count}` : part.workflow }),
     el("span", { class: "run-status", text: detail }),
-    errors.length > 0 && status !== "cancelled" && el("span", { class: "run-error", text: errors.join(" · ") })
+    errors.length > 0 && status !== "cancelled" && el("span", { class: "run-error", text: errors.join(" · ") }),
+    run?.output_folder && el("span", { class: "run-folder", text: `En ComfyUI: output/${run.output_folder}/` })
   );
   if (!live && run) {
     const actions = el("span", { class: "run-actions" });

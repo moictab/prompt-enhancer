@@ -20,7 +20,6 @@ logger = logging.getLogger("app.chat_tools")
 
 MAX_RUN_COUNT = 4
 MAX_LISTED_MODELS = 80
-OUTPUT_PREFIX = comfy.OUTPUT_PREFIX
 MODEL_FOLDERS = list(comfy.MODEL_FOLDERS)
 MAX_SEED = 2 ** 48
 
@@ -216,6 +215,9 @@ class ToolBox:
     def __init__(self, conversation_id: str, client: comfy.Comfy):
         self.conversation_id = conversation_id
         self.client = client
+        # The title the bot is giving the conversation in the reply being made, if any:
+        # a first run may come before the title is stored, and names the output folder.
+        self.title_hint = ""
 
     definitions = TOOLS
 
@@ -391,8 +393,11 @@ class ToolBox:
         graph, label = self._resolve(workflow)
         base = self.client.pick_base()
         done = self._apply(graph, changes, base)
-        graph.set_output_prefix(OUTPUT_PREFIX)
-        comfy_policy.check(graph, self._conversation())  # the isolation: before anything reaches ComfyUI
+        conversation = self._conversation()
+        folder = conversations.output_folder(self.conversation_id, self.title_hint)
+        number = len(conversation.get("runs") or []) + 1  # the number add_run will give it
+        graph.set_output_prefix(comfy.output_prefix(folder, number))
+        comfy_policy.check(graph, conversation)  # the isolation: before anything reaches ComfyUI
         seed_mode = str(changes.get("seed", "random")).strip().lower()
         seeds = self._seeds(changes.get("seed"), count, graph)
         jobs, sent = [], []
@@ -400,6 +405,7 @@ class ToolBox:
             job_graph = graph.copy()
             if seed_mode != "keep" and seed is not None:
                 job_graph.set_seed(seed)
+            job_graph.set_output_prefix(comfy.output_prefix(folder, number, seed))
             payload = job_graph.to_api()
             try:
                 prompt_id = self.client.submit(base, payload)
@@ -414,7 +420,8 @@ class ToolBox:
             sent.append(payload)
         run = conversations.add_run(
             self.conversation_id,
-            {"workflow": label, "changes": changes, "count": len(jobs), "status": "pending", "jobs": jobs},
+            {"workflow": label, "changes": changes, "count": len(jobs), "status": "pending", "jobs": jobs,
+             "output_folder": f"{comfy.OUTPUT_SUBFOLDER}/{folder}"},
             sent,
         )
         if run is None:

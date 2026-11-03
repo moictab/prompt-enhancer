@@ -1013,6 +1013,7 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .run-workflow { color: var(--paper); overflow-wrap: anywhere; }
 .run-status { color: var(--paper-dim); }
 .run-error { flex-basis: 100%; color: var(--stop-text); }
+.run-folder { flex-basis: 100%; order: 10; color: var(--paper-faint); font-size: 0.75rem; overflow-wrap: anywhere; }
 .run-actions { display: inline-flex; gap: 0.1rem; margin-left: auto; }
 .run-actions .btn-quiet { padding-block: 0.15rem; font-size: 0.75rem; }
 @keyframes pulse { 50% { opacity: 0.3; } }

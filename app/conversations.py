@@ -13,6 +13,7 @@ living in one shared list rewritten wholesale on each message. Messages are
 """
 import re
 import threading
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -257,6 +258,34 @@ def _mark_reactions_sent(conversation: dict) -> list[dict]:
 
 
 # --- runs: workflows launched on ComfyUI from the conversation ---------------------------------
+
+OUTPUT_SLUG_LENGTH = 40
+
+
+def slugify(text: str, max_length: int = OUTPUT_SLUG_LENGTH) -> str:
+    """Lowercase ASCII words joined by hyphens: safe as a folder name on any system."""
+    text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii").lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    return text[:max_length].rstrip("-")
+
+
+def output_folder(conversation_id: str, title_hint: str = "", root: str | None = None) -> str | None:
+    """The folder, under ComfyUI's output/prompt-enhancer/, that this conversation's images
+    are saved in: its creation day, its title (or the one the bot is giving it right now, or
+    the start of the first message) and the start of its id. Named at the first run and
+    kept, so every run of the conversation lands in the same place."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return None
+        if conversation.get("output_folder"):
+            return conversation["output_folder"]
+        first = next((m["content"] for m in conversation["messages"]
+                      if m["role"] == "user" and m.get("content", "").strip()), "")
+        name = slugify(conversation.get("title") or title_hint or " ".join(first.split()[:6])) or "sin-titulo"
+        conversation["output_folder"] = f"{conversation['created_at'][:10]}_{name}_{conversation['id'][:8]}"
+        storage.write_json(_path(conversation_id, root), conversation)
+        return conversation["output_folder"]
 
 
 def add_run(conversation_id: str, run: dict, workflows: list[dict], root: str | None = None) -> dict | None:

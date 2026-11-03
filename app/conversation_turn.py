@@ -199,6 +199,8 @@ def _turn(conversation_id: str, automatic: bool):
         steps.append(step)
         if not (end.tool_calls and toolbox and not no_more_tools):
             break
+        title = chat.TITLE_PATTERN.search("".join(s["text"] for s in steps))
+        toolbox.title_hint = " ".join(title.group(1).split()) if title else ""
         for call in end.tool_calls:
             call = {"id": call.get("id") or f"call_{uuid.uuid4().hex[:12]}", "name": call["name"],
                     "arguments": call.get("arguments") or "{}"}

@@ -317,3 +317,16 @@ def test_the_comment_follows_the_results_within_one_hold_of_the_lock(api_client,
     assert seen == [True]
     assert not conversation_turn.is_commenting(conversation_id)
     assert [m["role"] for m in conversations.get(conversation_id)["messages"]][-2:] == ["results", "assistant"]
+
+
+def test_a_first_run_names_its_folder_after_the_title_being_written(api_client, auth_headers, tmp_path, fake_comfy):
+    workflows.ensure_seeded()
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
+    script = Script(("<title>Bruja al alba</title>Voy.", [RUN_CALL]), ("Lanzada.", []))
+
+    with patch("app.conversation_turn.stream_chat", script):
+        _send(api_client, auth_headers, conversation_id)
+
+    folder = conversations.get(conversation_id)["output_folder"]
+    assert folder.endswith(f"_bruja-al-alba_{conversation_id[:8]}")
+    assert conversations.get_run(conversation_id, 1)["output_folder"] == f"prompt-enhancer/{folder}"
