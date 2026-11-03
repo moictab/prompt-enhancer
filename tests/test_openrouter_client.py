@@ -328,3 +328,24 @@ def test_stream_chat_sends_no_tools_unless_given(mock_post):
     list(openrouter_client.stream_chat("k", "m", []))
 
     assert "tools" not in mock_post.call_args.kwargs["json"]
+
+
+@patch("app.openrouter_client.requests.post")
+def test_every_request_asks_for_providers_that_keep_nothing(mock_post):
+    mock_post.return_value = _stream_response([_data({"choices": [{"delta": {"content": "hi"}}]}), "data: [DONE]"])
+    list(openrouter_client.stream_chat("k", "m", []))
+    assert mock_post.call_args.kwargs["json"]["provider"] == {"data_collection": "deny"}
+
+    mock_post.return_value = _mock_response(200, {"choices": [{"message": {"content": "POSITIVE: a cat"}}]})
+    call_openrouter("k", "m", "system", "user")
+    assert mock_post.call_args.kwargs["json"]["provider"] == {"data_collection": "deny"}
+
+
+@patch("app.openrouter_client.requests.post")
+def test_no_provider_meeting_the_privacy_requirement_is_explained(mock_post):
+    mock_post.return_value = _stream_response(
+        [], status_code=404,
+        text='{"error":{"message":"No endpoints found matching your data policy (Zero data retention)"}}')
+
+    with pytest.raises(RuntimeError, match="privacy requirement"):
+        list(openrouter_client.stream_chat("k", "m", []))

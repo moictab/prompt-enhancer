@@ -85,7 +85,7 @@ class FakeComfy:
 
     def upload_image(self, base, data, filename, content_type):
         self.uploads.append(filename)
-        return filename
+        return f"{comfy.UPLOAD_SUBFOLDER}/{filename}"
 
     def cancel(self, base, prompt_id):
         self.cancelled.append(prompt_id)

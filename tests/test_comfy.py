@@ -107,3 +107,30 @@ def test_models_are_cached(mock_request):
     assert client.models("loras") == ["a.safetensors", "b.safetensors"]
     assert client.models("loras") == ["a.safetensors", "b.safetensors"]
     assert mock_request.call_count == 2  # system_stats + models, once
+
+
+@patch("app.comfy.requests.request")
+def test_the_client_only_reads_back_what_this_app_made(mock_request):
+    mock_request.return_value = _response(body={"name": "conversation-image", "subfolder": "prompt-enhancer"},
+                                          content=b"bytes", headers={"Content-Type": "image/png"})
+    client = comfy.Comfy("http://gw")
+
+    # Its own saved outputs, and the previews listed in its own jobs' history.
+    assert client.view("http://gw", "conversar_00001_", "prompt-enhancer", "output")[0] == b"bytes"
+    assert client.view("http://gw", "temp_abc", "", "temp")[0] == b"bytes"
+    # Nothing else ComfyUI saved, and nothing from its input folder.
+    for subfolder, type_ in (("", "output"), ("ramona-kim/sprites", "output"), ("prompt-enhancer", "input"),
+                             ("prompt-enhancer-other", "output")):
+        with pytest.raises(comfy.ComfyError):
+            client.view("http://gw", "anything", subfolder, type_)
+
+    # Uploads go into its own subfolder of ComfyUI's input folder.
+    assert client.upload_image("http://gw", b"bytes", "conversation-image", "image/png") == (
+        "prompt-enhancer/conversation-image")
+    assert mock_request.call_args.kwargs["data"]["subfolder"] == "prompt-enhancer"
+
+    # Model listings only for model folders.
+    with pytest.raises(ValueError):
+        client.models("../output")
+    with pytest.raises(ValueError):
+        client.metadata("output", "anything")

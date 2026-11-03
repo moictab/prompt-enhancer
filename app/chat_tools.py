@@ -11,16 +11,15 @@ import logging
 import random
 import re
 
-from . import catalog, chat, comfy, conversations, runs, workflows
+from . import catalog, chat, comfy, comfy_policy, conversations, runs, workflows
 from .comfy_graph import SAMPLER_SETTINGS, Graph, GraphError, is_api_workflow
 
 logger = logging.getLogger("app.chat_tools")
 
 MAX_RUN_COUNT = 4
 MAX_LISTED_MODELS = 80
-OUTPUT_PREFIX = "prompt-enhancer/conversar"
-MODEL_FOLDERS = ["checkpoints", "diffusion_models", "loras", "vae", "text_encoders", "upscale_models",
-                 "controlnet", "embeddings"]
+OUTPUT_PREFIX = comfy.OUTPUT_PREFIX
+MODEL_FOLDERS = list(comfy.MODEL_FOLDERS)
 MAX_SEED = 2 ** 48
 
 WORKFLOW_PARAM = {
@@ -233,7 +232,7 @@ class ToolBox:
             return handler(**{k: v for k, v in args.items() if isinstance(k, str)})
         except TypeError as e:
             error = f"Bad arguments: {e}"
-        except (ToolError, GraphError, workflows.WorkflowError) as e:
+        except (ToolError, GraphError, workflows.WorkflowError, comfy_policy.PolicyError) as e:
             error = str(e)
         except comfy.Unreachable as e:
             error = str(e)
@@ -362,10 +361,9 @@ class ToolBox:
             data = f.read()
         if "base64_data" in node["inputs"]:
             node["inputs"]["base64_data"] = base64.b64encode(data).decode("ascii")
-        elif node["class_type"] == "LoadImage" or "image" in node["inputs"]:
-            extension = path.rsplit(".", 1)[-1]
-            name = self.client.upload_image(base, data, f"prompt-enhancer_{image['id']}.{extension}", content_type)
-            node["inputs"]["image"] = name
+        elif node["class_type"] in ("LoadImage", "LoadImageMask") or "image" in node["inputs"]:
+            filename = comfy_policy.upload_name(self.conversation_id, image["id"], path.rsplit(".", 1)[-1])
+            node["inputs"]["image"] = self.client.upload_image(base, data, filename, content_type)
         else:
             raise ToolError(f"Node {node_id} ({node['class_type']}) takes no image")
         return f"image {number} into {node_id}"
@@ -389,6 +387,7 @@ class ToolBox:
         base = self.client.pick_base()
         done = self._apply(graph, changes, base)
         graph.set_output_prefix(OUTPUT_PREFIX)
+        comfy_policy.check(graph, self._conversation())  # the isolation: before anything reaches ComfyUI
         seed_mode = str(changes.get("seed", "random")).strip().lower()
         seeds = self._seeds(changes.get("seed"), count, graph)
         jobs, sent = [], []
@@ -466,6 +465,8 @@ class ToolBox:
         self._apply(graph, {k: v for k, v in changes.items() if k not in ("input_images", "seed")}, None)
         if str(changes.get("seed", "")).strip().lstrip("-").isdigit():
             graph.set_seed(int(changes["seed"]))
+        # A saved workflow widens the node types allowed: it may only use those allowed already.
+        comfy_policy.check(graph, self._conversation(), files=False)
         existing = workflows.find_by_name(name)
         if existing and replace:
             saved = workflows.update(existing["id"], name, description, graph.to_api())

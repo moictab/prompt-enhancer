@@ -19,6 +19,13 @@ from .config import get_settings
 logger = logging.getLogger("app.comfy")
 
 PROJECT = "prompt-enhancer"
+# Where this app's files live in ComfyUI: uploads in input/<UPLOAD_SUBFOLDER>/, images it makes
+# in output/<OUTPUT_SUBFOLDER>/. It reads nothing else back from ComfyUI (see comfy_policy).
+UPLOAD_SUBFOLDER = "prompt-enhancer"
+OUTPUT_SUBFOLDER = "prompt-enhancer"
+OUTPUT_PREFIX = f"{OUTPUT_SUBFOLDER}/conversar"
+MODEL_FOLDERS = ("checkpoints", "diffusion_models", "loras", "vae", "text_encoders", "upscale_models",
+                 "controlnet", "embeddings")
 PRIORITY = "high"  # a person is waiting for the result in the chat
 CONNECT_TIMEOUT = 4
 READ_TIMEOUT = 60
@@ -160,14 +167,19 @@ class Comfy:
         return (response.json() or {}).get(prompt_id) or {}
 
     def view(self, base: str, filename: str, subfolder: str = "", type_: str = "output") -> tuple[bytes, str]:
+        """An image one of this app's jobs made: saved under OUTPUT_SUBFOLDER, or a preview
+        (temp) listed in its own /history. Nothing from the input folder, nothing else saved."""
+        own_output = type_ == "output" and (subfolder == OUTPUT_SUBFOLDER or subfolder.startswith(f"{OUTPUT_SUBFOLDER}/"))
+        if not (own_output or type_ == "temp"):
+            raise ComfyError(403, f"Not an image this app made: {type_}/{subfolder}/{filename}")
         response = self._request("GET", f"{base}/view",
                                  params={"filename": filename, "subfolder": subfolder, "type": type_})
         return response.content, response.headers.get("Content-Type", "").split(";")[0].strip()
 
     def upload_image(self, base: str, data: bytes, filename: str, content_type: str) -> str:
-        """Upload an input image; returns the name a LoadImage node takes."""
-        response = self._request("POST", f"{base}/upload/image",
-                                 files={"image": (filename, data, content_type)}, data={"overwrite": "true"})
+        """Upload an input image into UPLOAD_SUBFOLDER; returns the name a LoadImage node takes."""
+        response = self._request("POST", f"{base}/upload/image", files={"image": (filename, data, content_type)},
+                                 data={"overwrite": "true", "subfolder": UPLOAD_SUBFOLDER})
         info = response.json()
         return f"{info['subfolder']}/{info['name']}" if info.get("subfolder") else info["name"]
 
@@ -178,6 +190,8 @@ class Comfy:
 
     def metadata(self, folder: str, filename: str) -> dict | None:
         """A model file's own metadata (the .safetensors header), or None if it has none."""
+        if folder not in MODEL_FOLDERS:
+            raise ValueError(f"not a model folder: {folder}")
         base = self.pick_base()
         response = self._request("GET", f"{base}/view_metadata/{folder}",
                                  params={"filename": filename.replace("\\", "/")}, timeout=(CONNECT_TIMEOUT, 60))
@@ -188,6 +202,8 @@ class Comfy:
         return data if isinstance(data, dict) else None
 
     def models(self, folder: str) -> list[str]:
+        if folder not in MODEL_FOLDERS:
+            raise ValueError(f"not a model folder: {folder}")
         cached = self._models.get(folder)
         if cached and time.monotonic() - cached[1] < MODELS_CACHE_SECONDS:
             return cached[0]

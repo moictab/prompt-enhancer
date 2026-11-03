@@ -59,20 +59,73 @@ def test_run_a_library_workflow_with_changes(setup):
 
 
 def test_run_the_workflow_embedded_in_an_image_keeping_its_seed_and_feeding_an_image(setup):
-    box, fake, _ = setup
+    box, fake, conversation_id = setup
+    image_id = conversations.get(conversation_id)["messages"][0]["images"][0]["id"]
 
     result, _ = _run(box, workflow="image:1", changes={"seed": "keep", "input_images": [{"node": "8", "image": 1}]})
 
     assert "error" not in result, result
     [sent] = fake.submitted
     assert sent["3"]["inputs"]["seed"] == 77
-    assert sent["8"]["inputs"]["image"].startswith("prompt-enhancer_")
-    assert fake.uploads == [sent["8"]["inputs"]["image"]]
+    # Uploaded into prompt-enhancer's own subfolder, named after the conversation and the image.
+    assert fake.uploads == [f"{conversation_id}-{image_id}.png"]
+    assert sent["8"]["inputs"]["image"] == f"prompt-enhancer/{conversation_id}-{image_id}.png"
+
+
+def test_a_file_the_conversation_didnt_share_is_refused(setup):
+    box, fake, _ = setup
+
+    # The shared workflow's LoadImage still points at the user's own file in ComfyUI.
+    result, part = _run(box, workflow="image:1")
+
+    assert "node 8 (LoadImage) input image refers to 'old.png'" in result["error"]
+    assert part["error"]
+    assert fake.submitted == []
+
+
+def test_the_isolation_holds_against_any_edit(setup):
+    box, fake, conversation_id = setup
+    other = "11111111-2222-3333-4444-555555555555"
+    attempts = {
+        "a node that reads ComfyUI's output folder": {
+            "add": [{"id": "30", "class_type": "LoadImageOutput", "inputs": {"image": "ComfyUI_00001_.png [output]"}}]},
+        "a node type nobody gave it": {
+            "add": [{"id": "30", "class_type": "Some Custom Loader", "inputs": {"folder": "output"}}]},
+        "a path": {"set": [{"node": "8", "input": "image", "value": "C:/Users/moict/Pictures/x.png"}]},
+        "a URL": {"set": [{"node": "8", "input": "image", "value": "https://example.com/x.png"}]},
+        "another conversation's upload": {
+            "set": [{"node": "8", "input": "image", "value": f"prompt-enhancer/{other}-{'a' * 32}.png"}]},
+        "an image of this conversation that doesn't exist": {
+            "set": [{"node": "8", "input": "image", "value": f"prompt-enhancer/{conversation_id}-{'b' * 32}.png"}]},
+    }
+    for label, changes in attempts.items():
+        result, _ = _run(box, workflow="image:1", changes=changes)
+        assert "reaches outside" in result.get("error", ""), label
+    assert fake.submitted == []
+
+
+def test_prompts_with_links_or_file_names_in_their_text_are_fine(setup):
+    box, fake, _ = setup
+
+    result, _ = _run(box, workflow="image:1", changes={
+        "remove": ["8"], "positive": "poster in the style of https://example.com, file photo.png on a desk"})
+
+    assert "error" not in result, result
+
+
+def test_saving_cant_widen_the_node_types(setup):
+    box, _, _ = setup
+
+    result, _ = _run(box, _name="save_workflow", workflow="image:1", name="mine/sneaky", description="x",
+                     changes={"add": [{"id": "30", "class_type": "Some Custom Loader", "inputs": {}}]})
+
+    assert "isn't a node type available here" in result["error"]
+    assert workflows.find_by_name("mine/sneaky") is None
 
 
 def test_rerun_an_earlier_run(setup):
     box, fake, _ = setup
-    _run(box, workflow="image:1", changes={"positive": "a dog"})
+    _run(box, workflow="image:1", changes={"positive": "a dog", "remove": ["8"]})
 
     _run(box, workflow="run:1")
 
@@ -153,7 +206,7 @@ def test_save_workflow_creates_and_replaces_only_when_asked(setup):
 
 def test_cancel_run(setup):
     box, fake, conversation_id = setup
-    _run(box, workflow="image:1")
+    _run(box, workflow="image:1", changes={"remove": ["8"]})
 
     result, _ = _run(box, _name="cancel_run", run=1)
 

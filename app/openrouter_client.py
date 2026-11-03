@@ -16,6 +16,9 @@ TIMEOUT_SECONDS = 180
 MODELS_TIMEOUT_SECONDS = 30
 MODELS_CACHE_TTL_SECONDS = 3600
 MAX_TOKENS = 8192
+# Every request asks OpenRouter to route only to providers that neither store the data
+# nor train on it: the prompts and images sent here are personal.
+PROVIDER_PREFERENCES = {"data_collection": "deny"}
 
 logger = logging.getLogger("app.openrouter")
 
@@ -89,6 +92,11 @@ def _raise_for_status(response: requests.Response) -> None:
         raise RuntimeError(
             "OpenRouter rate limit exceeded. Wait a moment and try again."
         )
+    if response.status_code == 404 and "data policy" in response.text.lower():
+        raise RuntimeError(
+            "No provider of this model meets the privacy requirement (no storing or training on "
+            "the data). Pick another model."
+        )
     if response.status_code != 200:
         raise RuntimeError(
             f"OpenRouter returned HTTP {response.status_code}: {response.text[:300]}"
@@ -122,6 +130,7 @@ def call_openrouter(
         "temperature": temperature,
         "max_tokens": MAX_TOKENS,
         "usage": {"include": True},
+        "provider": PROVIDER_PREFERENCES,
     }
 
     max_attempts = 2
@@ -200,6 +209,7 @@ def stream_chat(
         "temperature": temperature,
         "max_tokens": MAX_TOKENS,
         "usage": {"include": True},
+        "provider": PROVIDER_PREFERENCES,
         "stream": True,
     }
     if tools:

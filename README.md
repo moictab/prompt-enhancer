@@ -18,6 +18,12 @@ A small, self-hosted web app that uses an LLM (via OpenRouter) to craft image-ge
 - **Peticiones** (from Ajustes) — every request sent to OpenRouter exactly as it went out, with what came back: messages, images, parameters, tokens, cost, timing and errors. Each Conversar reply and history entry links to its own.
 - **Ajustes** — edit the per-mode system prompts (with a one-click reload of the original text) including the Conversar bot's personality, the bot's memory, the model families (their rules and whether they use negative prompts), the characters, the ComfyUI workflow library (import from an API-format JSON or from an image ComfyUI generated) and the installed models and LoRAs, with a description of what each one does.
 
+## Privacy
+
+- Every request to OpenRouter asks for providers that neither store nor train on the data (`data_collection: deny`).
+- The Conversar bot works in isolation: in ComfyUI it can only use the library workflows, the workflows in images you share with it, its own runs and the images of the conversation. Workflows that would read anything else from ComfyUI (its output folder, files by path, URLs, other projects' history) are refused before they are sent, and the app only downloads the images it made.
+- Everything sent to OpenRouter is also logged locally, under `data/requests/`.
+
 ## Setup
 
 1. Copy `.env.example` to `.env` and fill in:
