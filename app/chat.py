@@ -47,6 +47,7 @@ NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 
 COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workflow launches a workflow -- one from the library above, "image:N" for the one embedded in image N, or "run:N" for an earlier run's -- with changes such as the prompt, seed, LoRAs, sampler settings, size or any node input. inspect_workflow shows a workflow's nodes and settings; list_comfy_models lists the installed models and LoRAs (use their exact file names); save_workflow keeps a modified workflow in the library, only when the user wants it kept.
 - When the user wants to see a prompt rendered or asks for images, run it straight away, without asking first. Show the prompt you run in a <prompt> block in the same reply, unless it already is one of your blocks. Inspect a workflow before structural edits (adding, removing or rewiring nodes).
+- Each model belongs to the family its folder is named after (krea-2\\… is Krea 2; the library shows each workflow's family in brackets). A prompt follows the rules of the family of the model it runs on: running a model of another family switches the conversation to that family, and the app hands you its rules to rewrite the prompt by before it runs.
 - You work in isolation: the only images you can feed a workflow are this conversation's (with input_images), and only node types from the library, from workflows the user shared here, and common core nodes are available; anything that reads ComfyUI's folders, files or URLs is refused. If a node you need isn't available, say so: the user can add a workflow that has it to the library.
 - Runs take a while; their images arrive later, in a message of their own. A message that only reports finished runs is automatic: the user hasn't written. Look at the images, say briefly what worked and what didn't against what was intended, and suggest the next step; don't launch anything on that turn.
 - The user can react to the images runs make -- liked, disliked, a comment -- and the reactions come with their next message. Take them as the most direct feedback there is: keep what was liked, fix what wasn't.
@@ -73,6 +74,9 @@ AUTOMATIC_NOTE = "(Automatic message: the user hasn't written.)"
 OMITTED_RESULT = {"note": "Result omitted from an earlier turn; call the tool again if you need it."}
 # Tool results worth replaying in later turns; the rest (listings) can be fetched again.
 KEPT_RESULTS = ("run_workflow", "save_workflow", "cancel_run")
+# A family's rules handed over in a tool result matter in that turn; afterwards they are in
+# the system prompt (the conversation follows that family now).
+FAMILY_RULES_MARK = '"family_rules"'
 
 # A title or note left unclosed ends at the end of its line, not of the reply.
 TITLE_PATTERN = re.compile(r"<title>(.*?)(?:</title>|(?=\n)|$)", re.IGNORECASE | re.DOTALL)
@@ -115,7 +119,9 @@ def build_system_prompt(
         parts.append(f"## Your Notes About The User\n{lines}")
     if workflows is not None:
         lines = "\n".join(
-            f"- {w['name']}: {w['description']}" if w.get("description") else f"- {w['name']}" for w in workflows
+            f"- {w['name']}" + (f" [{w['family']}]" if w.get("family") else "")
+            + (f": {w['description']}" if w.get("description") else "")
+            for w in workflows
         )
         parts.append(f"## Workflow Library\n{lines or '(empty)'}")
         if models:
@@ -212,7 +218,7 @@ def _flatten(content: list[dict]) -> str | list[dict]:
 
 
 def _tool_message_content(name: str, result_text: str, current: bool) -> str:
-    if current or name in KEPT_RESULTS:
+    if current or (name in KEPT_RESULTS and FAMILY_RULES_MARK not in result_text):
         return result_text
     return json.dumps(OMITTED_RESULT)
 

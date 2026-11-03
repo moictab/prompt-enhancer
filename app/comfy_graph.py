@@ -21,6 +21,8 @@ TEXT_NODES = ("PrimitiveStringMultiline", "PrimitiveString")
 SAMPLER_SETTINGS = ("steps", "cfg", "sampler_name", "scheduler", "denoise")
 # Inputs that name the model files a workflow loads.
 MODEL_INPUTS = ("ckpt_name", "unet_name", "model_name", "clip_name", "clip_name1", "clip_name2", "vae_name")
+# The base model itself: a checkpoint, or a diffusion model loaded on its own.
+BASE_MODEL_INPUTS = ("ckpt_name", "unet_name")
 
 # Without node schemas: which input usually carries each kind of output through a node.
 _PASSTHROUGH_INPUTS = {
@@ -164,6 +166,19 @@ class Graph:
                 if isinstance(value, str) and value and value not in names:
                     names.append(value)
         return names
+
+    def base_model_folder(self) -> str | None:
+        """The folder the base model sits in ("krea-2" for "krea-2\\x.safetensors"), which names its
+        family; None when there is no base model in a folder, or base models from several."""
+        folders = set()
+        for node in self.nodes.values():
+            for key in BASE_MODEL_INPUTS:
+                value = node["inputs"].get(key)
+                if isinstance(value, str) and value:
+                    parts = re.split(r"[\\/]", value)
+                    folders.add(parts[0] if len(parts) > 1 else "")
+        folders.discard("")
+        return folders.pop() if len(folders) == 1 else None
 
     def size(self) -> str | None:
         for node_id in self._latents():

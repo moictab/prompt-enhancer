@@ -13,7 +13,7 @@ import re
 
 import requests
 
-from . import catalog, chat, comfy, comfy_policy, conversations, runs, workflows
+from . import catalog, chat, comfy, comfy_policy, conversations, families, runs, workflows
 from .comfy_graph import SAMPLER_SETTINGS, Graph, GraphError, is_api_workflow
 
 logger = logging.getLogger("app.chat_tools")
@@ -393,6 +393,10 @@ class ToolBox:
         graph, label = self._resolve(workflow)
         base = self.client.pick_base()
         done = self._apply(graph, changes, base)
+        # On the workflow as it will be sent: the bot's changes may have swapped the base model.
+        switched = self._follow_family(graph)
+        if switched:
+            return switched
         conversation = self._conversation()
         folder = conversations.output_folder(self.conversation_id, self.title_hint)
         number = len(conversation.get("runs") or []) + 1  # the number add_run will give it
@@ -433,12 +437,43 @@ class ToolBox:
                   "applied": done}
         return result, {"type": "run", "run": run["n"], "workflow": label, "count": len(jobs)}
 
+    def _follow_family(self, graph: Graph) -> tuple[dict, dict] | None:
+        """Prompts follow the rules of the family of the model they run on. When the workflow
+        (as it will be sent) runs a base model of another family than the conversation's, the
+        conversation switches to it, and the run waits: the bot gets that family's rules to
+        rewrite the prompt by, and runs again."""
+        folder = graph.base_model_folder()
+        if folder is None:
+            return None
+        conversation = self._conversation()
+        current = families.get_family(conversation["family_id"])
+        if current is not None and families.covers_folder(current, folder):
+            return None
+        target = families.family_for_folder(folder)
+        if target is None:
+            return None  # no family for that folder: nothing better to go by
+        conversations.update_settings(self.conversation_id, {"family_id": target["id"]})
+        logger.info("conversation family follows the model conversation_id=%s folder=%s family=%s",
+                    self.conversation_id, folder, target["name"])
+        result = {
+            "error": f"Not run yet: this workflow's base model is in {folder}, a {target['name']} model, so "
+                     f"this conversation now follows the {target['name']} family. Rewrite the prompt by its rules "
+                     "below (in a <prompt> block too) and run it again.",
+            "family": target["name"],
+            "uses_negative_prompt": target["has_negative_prompt"],
+            "family_rules": target["instructions"],
+        }
+        return result, {"type": "family", "family": target["name"], "previous": (current or {}).get("name")}
+
     def _tool_inspect_workflow(self, workflow: str) -> tuple[dict, dict]:
         graph, label = self._resolve(workflow)
         slots = graph.prompt_slots()
         entry = workflows.find_by_name(label)
+        folder = graph.base_model_folder()
+        family = families.family_for_folder(folder) if folder else None
         result = {
             "workflow": label,
+            **({"family": family["name"]} if family else {}),
             **({"description": entry["description"]} if entry and entry.get("description") else {}),
             "does": graph.generation_info(),
             "prompt_inputs": {role: [f"{n}.{i}" for n, i in slots[role]] for role in ("positive", "negative")},

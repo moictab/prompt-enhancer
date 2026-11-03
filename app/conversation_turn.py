@@ -102,6 +102,14 @@ def toolbox_for(conversation: dict) -> chat_tools.ToolBox | None:
     return chat_tools.ToolBox(conversation["id"], client)
 
 
+def _library_entry(workflow: dict) -> dict:
+    from .comfy_graph import Graph
+    folder = Graph(workflow["workflow"]).base_model_folder()
+    family = families.family_for_folder(folder) if folder else None
+    return {"name": workflow["name"], "description": workflow["description"],
+            "family": family["name"] if family else None}
+
+
 def _selected_characters(character_ids: list[str]) -> list[dict]:
     return [c for c in list_characters() if c["id"] in character_ids]
 
@@ -142,7 +150,7 @@ def _turn(conversation_id: str, automatic: bool):
     characters = _selected_characters(conversation["character_ids"])
     notes = memory.list_notes()
     toolbox = toolbox_for(conversation)
-    library = [{"name": w["name"], "description": w["description"]} for w in workflows.list_workflows()]
+    library = [_library_entry(w) for w in workflows.list_workflows()]
     models_section = None
     if toolbox:
         catalog.refresh_in_background(toolbox.client)  # once a day, or the first time
@@ -223,6 +231,9 @@ def _turn(conversation_id: str, automatic: bool):
             "request_id": ends[-1].request_id if ends else None,
         }
         return
+    # A run of another family's model may have switched the conversation's family meanwhile:
+    # the reply's prompts are written (and kept) by the family it ended in.
+    family = families.get_family((conversations.get(conversation_id) or {}).get("family_id", "")) or family
     updated = _store_reply(conversation_id, family, characters, notes, steps, ends, failure, automatic)
     if updated is None:
         yield {"type": "error", "detail": "The conversation was deleted while replying."}

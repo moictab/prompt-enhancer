@@ -674,6 +674,12 @@ function fillBotMessage(
     if (part.type === "text") return el("div", { class: "msg-text" }, richText(part.text));
     if (part.type === "run") return runCard(part, live);
     if (part.type === "tool") return toolLine(part);
+    if (part.type === "family") {
+      return el("p", {
+        class: "tool-line",
+        text: `Ha pasado a la familia ${part.family}${part.previous ? ` (antes, ${part.previous})` : ""}: el modelo base que va a usar es de esa familia.`,
+      });
+    }
     number += 1;
     return el(
       "ol",
@@ -1252,6 +1258,8 @@ async function streamReply(url, body, { onRejected } = {}) {
   }
   await syncConversation();
   setBusyState(false);
+  // The bot may have switched the conversation's family by running another family's model.
+  if (state.conversation) applySettingsToForm(state.conversation);
   if (finished) {
     // Now with the runs it launched, and the reactions it carried marked as sent.
     renderLog();
