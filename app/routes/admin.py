@@ -44,12 +44,29 @@ def delete_family(family_id: str):
 
 class NotePayload(BaseModel):
     text: str
+    # Where the note goes (memory.py): general when left out; "family" with family (a model folder),
+    # "topic" with topic. Left out on a rewrite, the note keeps its scope.
+    scope: str | None = None
+    family: str | None = None
+    topic: str | None = None
 
 
 def _require_note_text(payload: NotePayload) -> str:
     if not payload.text.strip():
         raise HTTPException(status_code=400, detail="text is required")
     return payload.text.strip()
+
+
+def _scope(payload: NotePayload) -> dict | None:
+    if payload.scope is None and not payload.family and not payload.topic:
+        return None
+    if payload.scope not in (None, *memory.SCOPES):
+        raise HTTPException(status_code=400, detail=f"scope is one of {', '.join(memory.SCOPES)}")
+    if payload.scope == "family" and not (payload.family or "").strip():
+        raise HTTPException(status_code=400, detail="A family note needs its family (the model folder)")
+    if payload.scope == "topic" and not (payload.topic or "").strip():
+        raise HTTPException(status_code=400, detail="A topic note needs its topic")
+    return memory.clean_scope(payload.scope, payload.family, payload.topic)
 
 
 @router.get("/memory")
@@ -59,15 +76,34 @@ def list_notes():
 
 @router.post("/memory")
 def create_note(payload: NotePayload):
-    return memory.create_note(_require_note_text(payload))
+    return memory.create_note(_require_note_text(payload), scope=_scope(payload))
 
 
 @router.put("/memory/{note_id}")
 def update_note(note_id: str, payload: NotePayload):
-    updated = memory.update_note(note_id, _require_note_text(payload))
+    updated = memory.update_note(note_id, _require_note_text(payload), scope=_scope(payload))
     if updated is None:
         raise HTTPException(status_code=404, detail="Unknown note")
     return updated
+
+
+class TopicKeywordsPayload(BaseModel):
+    keywords: list[str]
+
+
+@router.get("/memory/topics")
+def list_topics():
+    """The topics the notes have, each with its keywords besides its name (they bring its notes into
+    a conversation whose latest messages or title mention them)."""
+    keywords = memory.topic_keywords()
+    return [{"name": name, "keywords": keywords.get(name, [])} for name in memory.topic_names()]
+
+
+@router.put("/memory/topics/{name}")
+def set_topic_keywords(name: str, payload: TopicKeywordsPayload):
+    if name not in memory.topic_names():
+        raise HTTPException(status_code=404, detail="No note has that topic")
+    return {"name": name, "keywords": memory.set_topic_keywords(name, payload.keywords)}
 
 
 @router.delete("/memory/{note_id}")

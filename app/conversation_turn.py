@@ -293,7 +293,13 @@ def _turn(conversation_id: str, automatic: bool):
         yield {"type": "error", "detail": "The conversation's model family no longer exists."}
         return
 
-    notes = memory.list_notes()
+    # The notes that apply here (memory.notes_for_turn): general, this family's, the active topics'.
+    declared = conversation.get("topics") or []
+    recent = [m.get("content") or "" for m in conversation["messages"][-memory.SCAN_MESSAGES:]
+              if m["role"] in ("user", "assistant")]
+    active = memory.active_topics(declared, [conversation.get("title") or "", *recent])
+    notes, notes_left = memory.notes_for_turn(memory.list_notes(),
+                                              lambda folder: families.covers_folder(family, folder), active)
     news = [d for d in conversation.get("downloads") or [] if d.get("told") is False]
     toolbox = toolbox_for(conversation)
     if toolbox:
@@ -316,6 +322,7 @@ def _turn(conversation_id: str, automatic: bool):
     # What changes every turn goes at the end of the latest message, after the cached part.
     context_parts = {
         "notes": notes, "models": models_section, "needs_title": not conversation["title"],
+        "notes_info": {"left": notes_left, "topics": declared, "known": memory.topic_names()},
         "autonomy": chat.autonomy_text(working, automatic, _budget_spent(working)) if working else None,
         "comments_off": bool(toolbox) and not conversations.comments_on_results(conversation),
         # Its look at a run's results launches nothing: it shouldn't say it will.
@@ -484,17 +491,23 @@ def _settle_autonomy(conversation_id: str) -> bool:
     return True
 
 
-def _apply_note_changes(reply_updates, reply_forgets, notes_at_start: list[dict], conversation_id: str) -> list[dict]:
-    """The bot's rewrites and deletions of existing notes, by the numbers it was shown."""
+def _apply_note_changes(reply_updates, reply_forgets, notes_at_start: list[dict], conversation_id: str,
+                        update_meta: dict | None = None) -> list[dict]:
+    """The bot's rewrites (maybe moving a note to another scope) and deletions of existing notes, by
+    the numbers it was shown."""
     changes = []
     by_number = {i: n for i, n in enumerate(notes_at_start, 1)}
     forgotten = set(reply_forgets)
     for number, text in reply_updates:
         note = by_number.get(number)
-        if note is None or number in forgotten or text == note["text"]:
+        meta = (update_meta or {}).get(number)
+        scope = memory.clean_scope(**meta) if meta else None
+        moved = scope is not None and memory.label(scope) != memory.label(note or {})
+        if note is None or number in forgotten or (text == note["text"] and not moved):
             continue
-        if memory.update_note(note["id"], text) is not None:
-            changes.append({"action": "update", "id": note["id"], "text": text, "previous": note["text"]})
+        if memory.update_note(note["id"], text, scope=scope) is not None:
+            changes.append({"action": "update", "id": note["id"], "text": text, "previous": note["text"],
+                            **({"scope": memory.label(scope)} if moved else {})})
     for number in reply_forgets:
         note = by_number.get(number)
         if note is not None and memory.delete_note(note["id"]):
@@ -511,14 +524,18 @@ def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, 
     if conversation is None:
         return None
     parts, new_notes, updates, forgets, title, contents, reviews, ratings = [], [], [], [], "", [], [], []
-    refused = []
+    refused, note_meta, update_meta, confirms, topics = [], [], {}, [], None
     stored_steps = []
     for step in steps:
         reply = chat.parse_reply(step["text"], family["has_negative_prompt"])
         title = title or reply.title
         parts += reply.parts + step["parts"]
         new_notes += reply.notes
+        note_meta += reply.note_meta
         updates += reply.note_updates
+        update_meta.update(reply.update_meta)
+        confirms += reply.confirms
+        topics = reply.topics if reply.topics is not None else topics
         forgets += reply.note_forgets
         reviews += reply.reviews
         ratings += reply.ratings
@@ -528,10 +545,15 @@ def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, 
             contents.append(reply.content)
         stored_steps.append({"content": reply.content, "tool_calls": step["tool_calls"], "results": step["results"]})
 
-    created = [memory.create_note(note, conversation_id) for note in new_notes]
+    created = [memory.create_note(note, conversation_id, scope=memory.clean_scope(**meta))
+               for note, meta in zip(new_notes, note_meta)]
     _store_reviews(conversation_id, conversation, reviews)
     rated = _store_ratings(conversation_id, conversation, ratings)
-    note_changes = _apply_note_changes(updates, forgets, notes_at_start, conversation_id)
+    note_changes = _apply_note_changes(updates, forgets, notes_at_start, conversation_id, update_meta)
+    shown = {i: n for i, n in enumerate(notes_at_start, 1)}
+    confirmed = [memory.confirm_note(shown[n]["id"]) for n in dict.fromkeys(confirms) if n in shown]
+    if topics is not None:
+        conversations.set_topics(conversation_id, memory.clean_topics(topics))
     costs = [e.cost for e in ends if e.cost is not None]
     cost = sum(costs) if costs else None
     request_ids = [e.request_id for e in ends if e.request_id]
@@ -565,7 +587,7 @@ def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, 
         "role": "assistant",
         "content": "\n\n".join(contents),
         "parts": parts,
-        "notes": [{"id": n["id"], "text": n["text"]} for n in created],
+        "notes": [{"id": n["id"], "text": n["text"], "scope": memory.label(n)} for n in created],
         "cost": cost,
         "truncated": any(e.truncated for e in ends),
         "history_id": history_id,

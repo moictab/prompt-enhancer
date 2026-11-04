@@ -112,6 +112,8 @@ function setupMemory() {
   const text = $("memory-text");
   const addButton = $("memory-add");
   let notes = [];
+  let topics = []; // [{name, keywords}]
+  let folders = []; // model family folders, for a family note
 
   const formatDay = (timestamp) => {
     const date = new Date(timestamp);
@@ -119,6 +121,102 @@ function setupMemory() {
       ? ""
       : date.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric", timeZone: TIME_ZONE });
   };
+  const scopeOf = (note) => note.scope || "general";
+  const groupKey = (note) =>
+    scopeOf(note) === "family" ? `family:${note.family}` : scopeOf(note) === "topic" ? `topic:${note.topic}` : "general";
+  const tokens = (items) => Math.round(items.reduce((sum, n) => sum + n.text.length + 8, 0) / 4);
+
+  // Where a note goes: General / a family's folder / a topic, as fields (for the add form and edits).
+  function scopeFields(note = {}) {
+    const scope = el(
+      "select",
+      { "aria-label": "Ámbito de la nota" },
+      el("option", { value: "general", text: "General: va siempre", selected: scopeOf(note) === "general" }),
+      el("option", { value: "family", text: "Familia de modelos", selected: scopeOf(note) === "family" }),
+      el("option", { value: "topic", text: "Tema", selected: scopeOf(note) === "topic" })
+    );
+    const family = el(
+      "select",
+      { "aria-label": "Familia" },
+      [...new Set([...folders, note.family].filter(Boolean))].map((name) =>
+        el("option", { value: name, text: name, selected: name === note.family })
+      )
+    );
+    const topicId = `topics-${Math.random().toString(36).slice(2)}`;
+    const topic = el("input", {
+      type: "text",
+      value: note.topic || "",
+      placeholder: "Kim, Ramona…",
+      maxlength: "40",
+      "aria-label": "Tema",
+    });
+    topic.setAttribute("list", topicId); // a read-only property: only the attribute links the suggestions
+    const options = el("datalist", { id: topicId }, topics.map((t) => el("option", { value: t.name })));
+    const sync = () => {
+      family.hidden = scope.value !== "family";
+      topic.hidden = scope.value !== "topic";
+    };
+    scope.addEventListener("change", sync);
+    sync();
+    return {
+      node: el("span", { class: "memory-scope" }, scope, family, topic, options),
+      value: () =>
+        scope.value === "family"
+          ? { scope: "family", family: family.value }
+          : scope.value === "topic"
+            ? { scope: "topic", topic: topic.value.trim() }
+            : { scope: "general" },
+      check: () => (scope.value === "topic" && !topic.value.trim() ? topic : null),
+    };
+  }
+
+  function groupHeading(key, items) {
+    const size = `${items.length} ${items.length === 1 ? "nota" : "notas"}, unos ${tokens(items)} tokens`;
+    if (key === "general") {
+      return el("li", { class: "memory-group" },
+        el("span", { class: "memory-group-title", text: "General" }),
+        el("span", { class: "memory-group-detail", text: `${size}. Va en todas las conversaciones.` }));
+    }
+    if (key.startsWith("family:")) {
+      const name = key.slice(7);
+      return el("li", { class: "memory-group" },
+        el("span", { class: "memory-group-title", text: `Familia ${name}` }),
+        el("span", { class: "memory-group-detail", text: `${size}. Va cuando la conversación usa esa familia.` }));
+    }
+    const name = key.slice(6);
+    const topic = topics.find((t) => t.name === name) || { name, keywords: [] };
+    const detail = el("span", {
+      class: "memory-group-detail",
+      text: `${size}. Va cuando la conversación trata de ${name} o lo menciona${
+        topic.keywords.length ? ` (o dice ${topic.keywords.join(", ")})` : ""}.`,
+    });
+    const editKeywords = el("button", { type: "button", class: "btn-quiet", text: "Palabras clave",
+      title: `Otras formas de nombrar ${name} que traen sus notas` });
+    editKeywords.addEventListener("click", () => {
+      const input = el("input", { type: "text", value: topic.keywords.join(", "), placeholder: "Kim Pine, la pelirroja…",
+        "aria-label": `Palabras clave de ${name}, separadas por comas` });
+      const save = el("button", { type: "button", class: "btn-secondary", text: "Guardar" });
+      save.addEventListener("click", async () => {
+        setBusy(save, true, "Guardando…");
+        try {
+          const updated = await request(`/api/admin/memory/topics/${encodeURIComponent(name)}`, {
+            method: "PUT",
+            json: { keywords: input.value.split(",").map((k) => k.trim()).filter(Boolean) },
+          });
+          topics = topics.map((t) => (t.name === name ? { ...t, keywords: updated.keywords } : t));
+          render();
+          toast("Palabras clave guardadas.");
+        } catch (err) {
+          setBusy(save, false);
+          toast(err.message, { error: true });
+        }
+      });
+      editKeywords.replaceWith(el("span", { class: "memory-keywords" }, input, save));
+      input.focus();
+    });
+    return el("li", { class: "memory-group" },
+      el("span", { class: "memory-group-title", text: `Tema ${name}` }), detail, editKeywords);
+  }
 
   function render() {
     if (!notes.length) {
@@ -127,10 +225,22 @@ function setupMemory() {
       );
       return;
     }
-    list.replaceChildren(...notes.map(noteItem));
+    const groups = new Map();
+    const order = (key) => (key === "general" ? "0" : key.startsWith("family:") ? `1${key}` : `2${key.toLowerCase()}`);
+    for (const note of notes) {
+      const key = groupKey(note);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(note);
+    }
+    list.replaceChildren(
+      ...[...groups.entries()]
+        .sort(([a], [b]) => order(a).localeCompare(order(b)))
+        .flatMap(([key, items]) => [groupHeading(key, items), ...items.map(noteItem)])
+    );
   }
 
   function noteItem(note) {
+    const confirmed = note.confirmations ? `; confirmada ${note.confirmations} ${note.confirmations === 1 ? "vez" : "veces"}` : "";
     const item = el(
       "li",
       { class: "item", "data-id": note.id },
@@ -143,7 +253,7 @@ function setupMemory() {
       ),
       el("span", {
         class: "item-text",
-        text: `${note.conversation_id ? "Apuntada en una conversación" : "Añadida a mano"}, ${formatDay(note.created_at)}`,
+        text: `${note.conversation_id ? "Apuntada en una conversación" : "Añadida a mano"}, ${formatDay(note.created_at)}${confirmed}`,
       })
     );
     return item;
@@ -151,17 +261,17 @@ function setupMemory() {
 
   function edit(item, note) {
     const area = el("textarea", { rows: 3, value: note.text, "aria-label": "Texto de la nota" });
+    const where = scopeFields(note);
     const save = el("button", { type: "button", class: "btn-primary", text: "Guardar" });
     save.addEventListener("click", async () => {
       const value = area.value.trim();
-      if (!value) {
-        area.focus();
-        return;
-      }
+      if (!value) return area.focus();
+      if (where.check()) return where.check().focus();
       setBusy(save, true, "Guardando…");
       try {
-        const updated = await request(`/api/admin/memory/${note.id}`, { method: "PUT", json: { text: value } });
+        const updated = await request(`/api/admin/memory/${note.id}`, { method: "PUT", json: { text: value, ...where.value() } });
         notes = notes.map((n) => (n.id === updated.id ? updated : n));
+        await loadTopics();
         render();
         toast("Nota guardada.");
       } catch (err) {
@@ -172,6 +282,7 @@ function setupMemory() {
     item.classList.add("is-editing");
     item.replaceChildren(
       area,
+      where.node,
       el("div", { class: "form-actions" }, save, el("button", { type: "button", class: "btn-quiet", text: "Cancelar", onclick: render }))
     );
     area.focus();
@@ -188,17 +299,23 @@ function setupMemory() {
     }
   }
 
+  let addWhere = null;
+  const placeAddScope = () => {
+    addWhere?.node.remove();
+    addWhere = scopeFields();
+    form.insertBefore(addWhere.node, addButton);
+  };
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const value = text.value.trim();
-    if (!value) {
-      text.focus();
-      return;
-    }
+    if (!value) return text.focus();
+    if (addWhere.check()) return addWhere.check().focus();
     setBusy(addButton, true, "Añadiendo…");
     try {
-      notes.push(await request("/api/admin/memory", { method: "POST", json: { text: value } }));
+      notes.push(await request("/api/admin/memory", { method: "POST", json: { text: value, ...addWhere.value() } }));
       text.value = "";
+      await loadTopics();
       render();
       toast("Nota añadida.");
     } catch (err) {
@@ -208,9 +325,20 @@ function setupMemory() {
     }
   });
 
-  request("/api/admin/memory")
-    .then((loaded) => {
+  async function loadTopics() {
+    topics = await request("/api/admin/memory/topics").catch(() => topics);
+  }
+
+  Promise.all([
+    request("/api/admin/memory"),
+    request("/api/admin/memory/topics").catch(() => []),
+    request("/api/model-folders").catch(() => ({})),
+  ])
+    .then(([loaded, knownTopics, modelFolders]) => {
       notes = loaded;
+      topics = knownTopics;
+      folders = [...new Set(Object.values(modelFolders).flat())].sort();
+      placeAddScope();
       render();
     })
     .catch((err) => toast(`No se ha podido cargar la memoria: ${err.message}`, { error: true }));

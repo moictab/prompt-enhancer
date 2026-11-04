@@ -52,10 +52,13 @@ NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 - An image the user shares from Civitai comes with what Civitai says about it: prompt, settings and the resources it was made with (checkpoint, LoRAs with weights, base model, trigger words). To reproduce one, match those resources with what the user has installed and say what is missing and what you use instead; to borrow its style, take what defines it (its style words, LoRAs and weights) into the image you are working on, within the family's rules.
 - Write plain conversational text: short paragraphs, "- " lists when useful, **bold** sparingly. No headings, no tables, no code blocks.
 - Notes: you keep notes about the user across conversations; the ones you have come numbered in the app's context at the end of the latest message. Each note is one claim, telegraphic, at most 200 characters -- a few words, no full sentences (e.g. "likes: cool dawn light, film grain", "krea-2: LoRA strength >0.6 burns faces (3 of 3)") -- and stands on its own in any conversation: never an image number (#N means another image elsewhere); say what was seen instead, and how many images back it. Several findings are several notes. A note that breaks this isn't kept, and you'll be told why. Change them in your reply, right away and without asking: the user sees every change in the chat and can undo it.
-  <remember>note</remember> adds one;
-  <remember id="n">note</remember> rewrites note n (to correct or update it, or to merge another into it);
-  <forget id="n"/> deletes note n (wrong, outdated, or merged into another).
-  Only lasting things -- tastes, what works or fails with a model -- never details of the current image. Rewrite a note rather than add a near-duplicate."""
+  Each note has a scope, which decides where it goes: general (the user's tastes and way of working, true everywhere), a model family's (what works or fails with that model: family="krea-2", the family's model folder) or a topic's (a character, a series, a project or a theme: topic="Kim").
+  <remember>note</remember> adds a general one; <remember family="krea-2">note</remember> or <remember topic="Kim">note</remember> one of that scope;
+  <remember id="n">note</remember> rewrites note n (to correct or update it, or to merge another into it; add family= or topic= to move it);
+  <forget id="n"/> deletes note n (wrong, outdated, or merged into another);
+  <confirm id="n"/> when note n proved right again here: it keeps it up front.
+  Each turn you get the general notes, those of this conversation's family and those of its topics; the rest exist, and the context names them. Declare what this conversation is about, once it's clear and whenever it changes: <topics>Kim</topics> (comma-separated; reuse the topic names your notes already have). A topic's notes also come in whenever its name comes up.
+  Only lasting things -- tastes, what works or fails with a model, what defines a character -- never details of the current image. Rewrite a note rather than add a near-duplicate."""
 
 COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workflow launches a workflow -- one from the library above, "image:N" for the one embedded in image N, "run:N" for an earlier run's, or one you write yourself (graph) -- with changes such as the prompt, the base model, seed, LoRAs, sampler settings, size or any node input. inspect_workflow shows a workflow's nodes and settings; describe_nodes shows the node types you can use and what each takes and gives; list_comfy_models lists the installed models and LoRAs (use their exact file names); save_workflow keeps a workflow in the library, only when the user wants it kept.
 - Workflows are means, not limits: build what the image needs. Change the model, LoRAs, sampler and size; add, remove or rewire nodes (a hires pass, a detailer, an upscale, an image input); or write a workflow from scratch when none fits. The workflow of an image the user shared is a recipe to learn from and start with, not one to stay in. Check a node type's inputs with describe_nodes before writing or rewiring nodes you haven't used in this conversation.
@@ -115,9 +118,12 @@ FAMILY_RULES_MARK = '"family_rules"'
 
 # A title or note left unclosed ends at the end of its line, not of the reply.
 TITLE_PATTERN = re.compile(r"<title>(.*?)(?:</title>|(?=\n)|$)", re.IGNORECASE | re.DOTALL)
-REMEMBER_PATTERN = re.compile(
-    r"<remember(?:\s+id\s*=\s*[\"']?(\d+)[\"']?)?\s*>(.*?)(?:</remember>|(?=\n)|$)", re.IGNORECASE | re.DOTALL
-)
+# <remember>, with its attributes: id="n" (a rewrite), family="krea-2" or topic="Kim" (its scope).
+REMEMBER_PATTERN = re.compile(r"<remember\b([^>]*)>(.*?)(?:</remember>|(?=\n)|$)", re.IGNORECASE | re.DOTALL)
+ATTRIBUTE_PATTERN = re.compile(r"""(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>/]+))""")
+CONFIRM_PATTERN = re.compile(r"<confirm\s+id\s*=\s*[\"']?(\d+)[\"']?\s*/?>(?:\s*</confirm>)?", re.IGNORECASE)
+# The conversation's topics, as the bot declares them: <topics>Kim, Ramona</topics>.
+TOPICS_PATTERN = re.compile(r"<topics>(.*?)(?:</topics>|(?=\n)|$)", re.IGNORECASE | re.DOTALL)
 FORGET_PATTERN = re.compile(r"<forget\s+id\s*=\s*[\"']?(\d+)[\"']?\s*/?>(?:\s*</forget>)?", re.IGNORECASE)
 # An unclosed block (a reply cut off by the length limit) runs to the end.
 PROMPT_PATTERN = re.compile(r"<prompt\b([^>]*)>(.*?)(?:</prompt>|$)", re.IGNORECASE | re.DOTALL)
@@ -134,7 +140,7 @@ RATING_PATTERN = re.compile(
     r"(?:</rating>|(?=\n)|$)",
     re.IGNORECASE | re.DOTALL,
 )
-STRAY_TAG_PATTERN = re.compile(r"</?(?:title|remember|forget|review|rating)\b[^>]*>", re.IGNORECASE)
+STRAY_TAG_PATTERN = re.compile(r"</?(?:title|remember|forget|review|rating|confirm|topics)\b[^>]*>", re.IGNORECASE)
 # A prompt written bare, as "POSITIVE: ..." at the start of a line (the label maybe in **bold**).
 BARE_POSITIVE_LINE = re.compile(r"^[ \t]*(?:\*\*)?POSITIVE[ \t]*:", re.IGNORECASE | re.MULTILINE)
 BARE_NEGATIVE_START = re.compile(r"^[ \t]*(?:\*\*)?NEGATIVE[ \t]*:", re.IGNORECASE)
@@ -251,9 +257,39 @@ def refused_notes_text(refused: list[dict] | None) -> str | None:
             + "\n".join(lines))
 
 
+def notes_text(notes: list[dict], info: dict | None = None) -> str:
+    """The notes a turn carries, numbered across their groups, and what the notes hold besides
+    (info: {"left": {group: count}, "topics": the conversation's, "known": every topic})."""
+    info = info or {}
+    groups: dict[str, list[str]] = {}
+    for number, note in enumerate(notes, 1):
+        scope = note.get("scope") or "general"
+        heading = ("General" if scope == "general" else
+                   f"Family {note.get('family')} (this conversation's family)" if scope == "family" else
+                   f"Topic {note.get('topic')}")
+        groups.setdefault(heading, []).append(f"[{number}] {note['text']}")
+    plain = list(groups) in ([], ["General"]) and not info.get("left") and not info.get("known")
+    if plain:  # nothing scoped: the plain list
+        lines = groups.get("General", [])
+    else:
+        lines = [line for heading, items in groups.items() for line in (f"{heading}:", *items)]
+    if info.get("left"):
+        left = ", ".join(f"{group} ({count})" for group, count in sorted(info["left"].items()))
+        lines.append(f"Not here now -- they don't apply to this conversation, or didn't fit: {left}.")
+    if info.get("known") is not None:
+        declared = info.get("topics") or []
+        lines.append(f"This conversation's topics: {', '.join(declared)}." if declared else
+                     "This conversation has no topics yet: declare them with <topics>…</topics> once it's clear "
+                     "what it's about.")
+        if info["known"]:
+            lines.append(f"Topics your notes have: {', '.join(info['known'])}.")
+    return "\n".join(lines)
+
+
 def turn_context(notes: list[dict], models: str | None = None, needs_title: bool = False,
                  autonomy: str | None = None, comments_off: bool = False, looking: bool = False,
-                 redo: bool = False, downloads: str | None = None, refused: str | None = None) -> str | None:
+                 redo: bool = False, downloads: str | None = None, refused: str | None = None,
+                 notes_info: dict | None = None) -> str | None:
     """What changes from turn to turn, sent at the end of the latest message: the title
     request while the conversation has none, that a run's images won't come back on their
     own (comments_off: the conversation's automatic comments are off), that this turn can't
@@ -274,9 +310,8 @@ def turn_context(notes: list[dict], models: str | None = None, needs_title: bool
         sections.append(LOOKING_RULE)
     if autonomy:
         sections.append(autonomy)
-    if notes:
-        lines = "\n".join(f"[{i}] {n['text']}" for i, n in enumerate(notes, 1))
-        sections.append(f"## Your Notes About The User\n{lines}")
+    if notes or (notes_info or {}).get("left"):
+        sections.append(f"## Your Notes About The User\n{notes_text(notes, notes_info)}")
     if models:
         sections.append(f"## Installed Models\n{models}")
     if not sections:
@@ -558,6 +593,12 @@ class Reply:
     content: str  # the reply without notes or title, prompt blocks kept: what the LLM sees next time
     parts: list[dict] = field(default_factory=list)  # {"type": "text", "text"} | {"type": "prompt", ...}
     notes: list[str] = field(default_factory=list)  # new notes
+    # Each new note's scope, in the same order: {"scope": "general"} | {"scope", "family"} | {"scope", "topic"}.
+    note_meta: list[dict] = field(default_factory=list)
+    # The scope a rewrite moves a note to, by its number (only when the rewrite names one).
+    update_meta: dict[int, dict] = field(default_factory=dict)
+    confirms: list[int] = field(default_factory=list)  # notes found right again, by number
+    topics: list[str] | None = None  # the conversation's topics, when the reply declares them
     # Notes not kept, with why (too long, or citing an image number): (text, reason, note number or None).
     refused_notes: list[tuple[str, str, int | None]] = field(default_factory=list)
     note_updates: list[tuple[int, str]] = field(default_factory=list)  # (note number, new text)
@@ -628,19 +669,29 @@ def note_problem(note: str) -> str | None:
 def parse_reply(text: str, has_negative_prompt: bool) -> Reply:
     title_match = TITLE_PATTERN.search(text)
     title = " ".join(title_match.group(1).split())[:MAX_TITLE_LENGTH] if title_match else ""
-    notes, updates, refused = [], [], []
-    for number, note in REMEMBER_PATTERN.findall(text):
+    notes, note_meta, updates, update_meta, refused = [], [], [], {}, []
+    for attributes, note in REMEMBER_PATTERN.findall(text):
         note = " ".join(note.split())
         if not note:
             continue
+        attrs = {k.lower(): (a or b or c).strip() for k, a, b, c in ATTRIBUTE_PATTERN.findall(attributes)}
+        number = int(attrs["id"]) if attrs.get("id", "").isdigit() else None
         problem = note_problem(note)
         if problem:
-            refused.append((note, problem, int(number) if number else None))
+            refused.append((note, problem, number))
             continue
+        scoped = attrs.get("family") or attrs.get("topic") or attrs.get("scope")
+        scope = {"scope": attrs.get("scope"), "family": attrs.get("family"), "topic": attrs.get("topic")}
         if number:
-            updates.append((int(number), note))
+            updates.append((number, note))
+            if scoped:
+                update_meta[number] = scope
         else:
             notes.append(note)
+            note_meta.append(scope)
+    confirms = list(dict.fromkeys(int(n) for n in CONFIRM_PATTERN.findall(text)))
+    declared = TOPICS_PATTERN.findall(text)
+    topics = ([t.strip() for t in declared[-1].split(",") if t.strip()] if declared else None)
     forgets = list(dict.fromkeys(int(n) for n in FORGET_PATTERN.findall(text)))
     reviews = []
     for number, verdict, note in REVIEW_PATTERN.findall(text):
@@ -659,6 +710,8 @@ def parse_reply(text: str, has_negative_prompt: bool) -> Reply:
     content = TITLE_PATTERN.sub("", text)
     content = REMEMBER_PATTERN.sub("", content)
     content = FORGET_PATTERN.sub("", content)
+    content = CONFIRM_PATTERN.sub("", content)
+    content = TOPICS_PATTERN.sub("", content)
     content = REVIEW_PATTERN.sub("", content)
     content = RATING_PATTERN.sub("", content)
     content = STRAY_TAG_PATTERN.sub("", content)
@@ -688,6 +741,7 @@ def parse_reply(text: str, has_negative_prompt: bool) -> Reply:
         parts.append({"type": "text", "text": after})
 
     return Reply(
-        content=content, parts=parts, notes=notes, note_updates=updates, note_forgets=forgets, reviews=reviews,
-        ratings=ratings, refused_notes=refused, title=title,
+        content=content, parts=parts, notes=notes, note_meta=note_meta, note_updates=updates,
+        update_meta=update_meta, note_forgets=forgets, reviews=reviews, ratings=ratings, refused_notes=refused,
+        confirms=confirms, topics=topics, title=title,
     )

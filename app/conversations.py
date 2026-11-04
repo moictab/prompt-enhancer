@@ -192,6 +192,21 @@ def set_claude_code(conversation_id: str, state: dict | None, root: str | None =
         return conversation
 
 
+def set_topics(conversation_id: str, topics: list[str], root: str | None = None) -> dict | None:
+    """What the conversation is about, as the bot declares it (<topics>): its topics' notes come
+    with every turn (memory.notes_for_turn)."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return None
+        if topics:
+            conversation["topics"] = topics
+        else:
+            conversation.pop("topics", None)
+        storage.write_json(_path(conversation_id, root), conversation)
+        return conversation
+
+
 def set_retry(conversation_id: str, at: int | None, root: str | None = None) -> dict | None:
     """When to answer the last message again by itself (retry_later.py: Claude Code's limit was
     reached, epoch seconds), or None for never. A reply, or a message from the user, clears it."""

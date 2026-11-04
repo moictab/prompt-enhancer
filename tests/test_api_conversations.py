@@ -150,7 +150,7 @@ def test_reply_notes_go_to_memory(mock_stream, api_client, auth_headers, tmp_pat
     [note] = memory.list_notes(path=str(tmp_path / "memory.json"))
     assert note["text"] == "Likes golden hour"
     assert note["conversation_id"] == conversation["id"]
-    assert message["notes"] == [{"id": note["id"], "text": "Likes golden hour"}]
+    assert message["notes"] == [{"id": note["id"], "text": "Likes golden hour", "scope": "general"}]
 
 
 @patch("app.conversation_turn.stream_chat")

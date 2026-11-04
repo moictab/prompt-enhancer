@@ -680,7 +680,9 @@ async def delete_family(family: Family) -> dict:
 
 @server.tool(annotations=READ)
 async def list_notes() -> list[dict]:
-    """The Conversar bot's notes about the owner's tastes and what works with each model."""
+    """The Conversar bot's notes: the owner's tastes (scope general), what works with a model family
+    (scope family, with its model folder) and what defines a topic -- a character, a series, a theme
+    (scope topic). A conversation gets the general ones, its family's and its topics'."""
     return await _json("GET", "/api/admin/memory")
 
 
@@ -688,11 +690,17 @@ async def list_notes() -> list[dict]:
 async def save_note(
     text: str,
     note_id: Annotated[str | None, Field(description="To rewrite an existing note; omit to add one.")] = None,
+    family: Annotated[str | None, Field(description="A model family's note: its model folder, e.g. krea-2.")] = None,
+    topic: Annotated[str | None, Field(description="A topic's note: e.g. a character's name.")] = None,
+    general: Annotated[bool, Field(description="Make it (or move it to) a general note.")] = False,
 ) -> dict:
-    """Add a note to the bot's memory, or rewrite one."""
+    """Add a note to the bot's memory, or rewrite one. Without family, topic or general, a new note is
+    general and a rewritten one keeps its scope."""
+    scope = ({"scope": "family", "family": family} if family else {"scope": "topic", "topic": topic} if topic
+             else {"scope": "general"} if general else {})
     if note_id:
-        return await _json("PUT", f"/api/admin/memory/{note_id}", json={"text": text})
-    return await _json("POST", "/api/admin/memory", json={"text": text})
+        return await _json("PUT", f"/api/admin/memory/{note_id}", json={"text": text, **scope})
+    return await _json("POST", "/api/admin/memory", json={"text": text, **scope})
 
 
 @server.tool(annotations=DELETE)

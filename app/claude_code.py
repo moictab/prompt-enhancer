@@ -41,7 +41,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import bot_seat, chat, conversations, request_log, storage
+from . import bot_seat, chat, conversations, memory, request_log, storage
 from .config import get_settings
 from .openrouter_client import StreamEnd
 
@@ -161,7 +161,8 @@ def _previous_numbers(conversation: dict) -> list[int]:
 def _context(conversation: dict, state: dict, sections: dict[str, str], parts: dict, new_session: bool):
     """The app's context for this turn (chat.turn_context, plus what changed since the session
     started and the numbering of the latest proposals); and what the state records of it."""
-    notes_text = "\n".join(n["text"] for n in parts["notes"])
+    # Their scope and order too: the bot edits them by the numbers it was sent.
+    notes_text = "\n".join(f"{memory.label(n)}|{n['text']}" for n in parts["notes"])
     digests = {"notes": _digest(notes_text), "models": _digest(parts.get("models"))}
     sent_before = state.get("context") or {}
     resend = (new_session or digests != sent_before
@@ -170,7 +171,7 @@ def _context(conversation: dict, state: dict, sections: dict[str, str], parts: d
                              needs_title=parts["needs_title"], autonomy=parts.get("autonomy"),
                              comments_off=parts.get("comments_off", False), looking=parts.get("looking", False),
                              redo=parts.get("redo", False), downloads=parts.get("downloads"),
-                             refused=parts.get("refused"))
+                             refused=parts.get("refused"), notes_info=parts.get("notes_info") if resend else None)
     extra = []
     if not new_session:
         started = state.get("sections") or {}

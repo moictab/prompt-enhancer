@@ -365,7 +365,9 @@ function liveParts(raw) {
     .replace(/<forget\b[^>]*>(?:\s*<\/forget>)?/gi, "")
     .replace(/<review\b[^>]*>[\s\S]*?(?:<\/review>|(?=\n)|$)/gi, "")
     .replace(/<rating\b[^>]*>[\s\S]*?(?:<\/rating>|(?=\n)|$)/gi, "")
-    .replace(/<\/?(?:title|remember|forget|review|rating)\b[^>]*>/gi, "")
+    .replace(/<topics>[\s\S]*?(?:<\/topics>|(?=\n)|$)/gi, "")
+    .replace(/<confirm\b[^>]*>(?:\s*<\/confirm>)?/gi, "")
+    .replace(/<\/?(?:title|remember|forget|review|rating|confirm|topics)\b[^>]*>/gi, "")
     .replace(/^[ \t]*```[\w-]*[ \t]*$\n?/gm, "")
     .replace(/<\/?[a-z]*$/i, "");
   const parts = [];
@@ -897,12 +899,21 @@ function refusedNoteChip(item) {
   );
 }
 
+// "family krea-2" -> " (krea-2)", "topic Kim" -> " (Kim)", "general" -> "".
+function scopeLabel(scope) {
+  const match = /^(?:family|topic) (.+)$/.exec(scope || "");
+  return match ? ` (${match[1]})` : "";
+}
+
 function noteChip(note) {
   const forgotten = state.noteIds && !state.noteIds.has(note.id);
   const chip = el(
     "div",
     { class: forgotten ? "memory-chip is-forgotten" : "memory-chip" },
-    el("span", { class: "memory-chip-label", text: forgotten ? "Olvidado" : "Anotado en la memoria" }),
+    el("span", {
+      class: "memory-chip-label",
+      text: forgotten ? "Olvidado" : `Anotado en la memoria${scopeLabel(note.scope)}`,
+    }),
     el("span", { class: "memory-chip-text", text: note.text })
   );
   if (forgotten) return chip;
@@ -1633,6 +1644,9 @@ function renderHead() {
       el("span", { text: familyName(current.family_id) }),
       el("span", { title: onClaude(current) ? "Responde Claude Code con tu suscripción" : current.llm_model, text: engineLabel(current) }),
       onClaude(current) && usageMeter(conversation?.claude_code_limits),
+      conversation?.topics?.length > 0 &&
+        el("span", { class: "chat-topics", title: "De qué trata la conversación, según el bot: trae las notas de esos temas",
+          text: `Temas: ${conversation.topics.join(", ")}` }),
       conversation?.cost && el("span", { text: formatCost(conversation.cost) }),
     ].filter(Boolean)
   );

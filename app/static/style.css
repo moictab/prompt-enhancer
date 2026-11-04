@@ -813,6 +813,15 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .memory-form { display: flex; align-items: flex-end; gap: 0.75rem; max-width: 52rem; margin-bottom: 1rem; }
 .memory-form textarea { flex: 1; }
 .memory-list { max-width: 52rem; }
+.memory-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.75rem; margin-top: 0.9rem; padding: 0 0.15rem; }
+.memory-group:first-child { margin-top: 0; }
+.memory-group-title { color: var(--safelight); font-weight: 650; }
+.memory-group-detail { color: var(--paper-faint); font-size: var(--step--1); }
+.memory-group .btn-quiet { padding-block: 0.1rem; font-size: 0.75rem; }
+.memory-keywords { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; flex: 1 1 18rem; }
+.memory-keywords input { flex: 1 1 12rem; }
+.memory-scope { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; }
+.memory-scope select, .memory-scope input { width: auto; min-width: 0; }
 .reference-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem; max-width: 52rem; margin-bottom: 1rem; }
 .reference-form .field { margin: 0; }
 .reference-path-field { flex: 1; min-width: min(100%, 18rem); }
