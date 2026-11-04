@@ -240,6 +240,39 @@ def test_failures_say_what_to_do_and_store_nothing(api_client, auth_headers, tmp
     assert any("mustn't have (Bash)" in (r.get("error") or "") for r in log["items"])
 
 
+def test_a_cli_that_quits_before_reading_says_why(api_client, auth_headers, tmp_path, monkeypatch):
+    """The message is written while the CLI starts up; if it ends first, the write fails (a broken
+    pipe), and the reason is what it said, not that it couldn't start."""
+    conversation = _claude_conversation(api_client, auth_headers, _family(tmp_path))
+    monkeypatch.setattr(claude_code, "available", lambda: True)
+
+    class Closed:
+        def write(self, data):
+            raise BrokenPipeError(32, "Broken pipe")
+
+        def close(self):
+            raise BrokenPipeError(32, "Broken pipe")
+
+    class Said:
+        def read(self):
+            return "Error: the configuration file is not valid JSON\n"
+
+    class Quit:
+        stdin, stderr, stdout, returncode = Closed(), Said(), iter(()), 1
+
+        def wait(self, timeout=None):
+            return 1
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(claude_code, "_spawn", lambda args, env, cwd: Quit())
+    failed = _events(_send(api_client, auth_headers, conversation["id"], "hola"))[-1]
+    assert failed["type"] == "error"
+    assert failed["detail"] == "Claude Code stopped (exit code 1): Error: the configuration file is not valid JSON."
+    assert "Is it installed" not in failed["detail"]
+
+
 def test_the_seat_serves_one_turns_tools_and_closes_with_it(api_client, auth_headers, tmp_path, fake_comfy, monkeypatch):
     workflows.ensure_seeded()
     monkeypatch.setattr(runs.tracker, "start", lambda: None)

@@ -307,9 +307,12 @@ def run(conversation: dict, family: dict, toolbox, library: list[dict],
             timer = threading.Timer(TURN_TIMEOUT_SECONDS, process.kill)
             timer.start()
             try:
-                process.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": blocks}})
-                                    + "\n")
-                process.stdin.close()
+                try:
+                    process.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": blocks}})
+                                        + "\n")
+                    process.stdin.close()
+                except OSError as e:  # it ended before reading the message: what it said, and its exit code, follow
+                    logger.warning("claude code closed its input conversation_id=%s: %s", conversation_id, e)
                 for line in process.stdout:
                     line = line.strip()
                     if not line:
