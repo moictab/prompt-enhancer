@@ -37,6 +37,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,6 +68,12 @@ SESSION_SETTINGS = {"cleanupPeriodDays": 3650}
 # that replay itself is nearly as big (SESSION_GROWTH: it must have grown by half since its start).
 SESSION_LIMIT_TOKENS = 80_000
 SESSION_GROWTH = 1.5
+# The prompt cache keeps a session an hour after its last use (a turn 60 minutes after the previous one
+# read it; two hours after, it wrote it all again, at a quarter more than reading it fresh). Resuming a
+# session the cache dropped writes it whole: past COLD_RENEW_TOKENS a new one is cheaper, since the app's
+# replay is never bigger than the session (it holds recent images only, old tool results in brief).
+CACHE_TTL_SECONDS = 3600
+COLD_RENEW_TOKENS = 40_000
 # Images go to Claude Code at most this long a side (the small copy is 1568): about 950 tokens, not 1,600.
 IMAGE_SIDE = 1024
 
@@ -401,10 +408,15 @@ def limit_resets(result: dict | None, rate_limit: dict | None, stderr: str) -> i
 
 
 def _tokens_per_call(result: dict | None) -> int:
-    """What each of a turn's calls read, on average: the session's size, about."""
+    """The session's size: what the turn's last call read, which the next turn's first call reads
+    again. The result's usage lists each call ("iterations", the last one last); its totals aren't
+    one call's, so without the list they're divided by the calls (about)."""
     usage = (result or {}).get("usage") or {}
-    total = sum(usage.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
-    return round(total / max(1, (result or {}).get("num_turns") or 1))
+    keys = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+    calls = usage.get("iterations") or []
+    if calls and isinstance(calls[-1], dict):
+        return sum(calls[-1].get(k) or 0 for k in keys)
+    return round(sum(usage.get(k) or 0 for k in keys) / max(1, (result or {}).get("num_turns") or 1))
 
 
 def _grown(state: dict) -> bool:
@@ -412,6 +424,25 @@ def _grown(state: dict) -> bool:
     would start smaller): then the next turn starts a new one."""
     size = state.get("tokens_per_call") or 0
     return size > SESSION_LIMIT_TOKENS and size > SESSION_GROWTH * (state.get("start_tokens") or 0)
+
+
+def _last_used(conversation: dict, state: dict) -> float | None:
+    """When the session last ran (epoch seconds): recorded, or else its latest reply's time."""
+    if state.get("used_at"):
+        return float(state["used_at"])
+    replies = [m for m in conversation["messages"] if m["role"] == "assistant" and m.get("engine") == ENGINE]
+    try:
+        return datetime.fromisoformat(replies[-1]["timestamp"]).timestamp() if replies else None
+    except (KeyError, ValueError):
+        return None
+
+
+def _cold(conversation: dict, state: dict, now: float) -> bool:
+    """Whether the cache has dropped a session big enough to matter: resuming it would write it all
+    again, and a new one -- the app's replay, never bigger -- costs less."""
+    used = _last_used(conversation, state)
+    return ((state.get("tokens_per_call") or 0) > COLD_RENEW_TOKENS and used is not None
+            and now - used > CACHE_TTL_SECONDS)
 
 
 def _session_lost(text: str, stderr: str) -> bool:
@@ -429,9 +460,10 @@ def run(conversation: dict, family: dict, toolbox, library: list[dict],
     (the old one was lost)."""
     conversation_id = conversation["id"]
     state = {} if fresh else dict(conversation.get("claude_code") or {})
-    if state.get("session_id") and _grown(state):
-        logger.info("claude code session renewed conversation_id=%s tokens_per_call=%s", conversation_id,
-                    state.get("tokens_per_call"))
+    now = time.time()
+    if state.get("session_id") and (_cold(conversation, state, now) or _grown(state)):
+        logger.info("claude code session renewed conversation_id=%s tokens_per_call=%s %s", conversation_id,
+                    state.get("tokens_per_call"), "cold" if _cold(conversation, state, now) else "grown")
         state = {}
     new_session = not state.get("session_id")
     session_id = str(uuid.uuid4()) if new_session else state["session_id"]
@@ -582,8 +614,10 @@ def run(conversation: dict, family: dict, toolbox, library: list[dict],
         conversations.set_claude_code(conversation_id, {
             "session_id": session_id, "model": model, "sections": started, **recorded,
             **({"rate_limit": rate_limit} if rate_limit else {}),
-            # How big the session is (what each call reads), and was when it started: to renew it.
+            # How big the session is (what its next call reads), and was when it started, and when it
+            # last ran (the cache keeps it an hour): to renew it.
             "tokens_per_call": size,
+            "used_at": round(time.time()),
             # (a session from before this was recorded counts as having started at nothing)
             "start_tokens": size if new_session else state.get("start_tokens", 0),
         })

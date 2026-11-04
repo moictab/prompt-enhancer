@@ -371,14 +371,21 @@ def test_a_reply_stopped_by_the_limit_is_answered_again_once_it_resets(api_clien
 
 
 def test_a_retry_waiting_for_the_limit_can_be_called_off(api_client, auth_headers, tmp_path, fake_comfy, claude):
+    import time
+
     from app import retry_later
     conversation = _claude_conversation(api_client, auth_headers, _family(tmp_path))
-    claude([init(), LIMITED, result(error="Claude AI usage limit reached|1793809800")])
+    resets = int(time.time()) + 3600  # still ahead: the retry waits
+    claude([init(), {**LIMITED, "rate_limit_info": {**LIMITED["rate_limit_info"], "resetsAt": resets,
+                                                    "unifiedWindows": {"five_hour": {
+                                                        "utilization": 1.0, "resetsAt": resets,
+                                                        "status": "rejected"}}}},
+            result(error=f"Claude AI usage limit reached|{resets}")])
     try:
         _send(api_client, auth_headers, conversation["id"], "hola")
         summary = next(s for s in api_client.get("/api/conversations", auth=auth_headers).json()
                        if s["id"] == conversation["id"])
-        assert summary["retry_at"] == 1793809800 and conversation["id"] in retry_later.pending()
+        assert summary["retry_at"] == resets and conversation["id"] in retry_later.pending()
         assert api_client.delete(f"/api/conversations/{conversation['id']}/retry", auth=auth_headers).status_code == 200
         assert "retry_at" not in conversations.get(conversation["id"])
         assert conversation["id"] not in retry_later.pending()
@@ -451,6 +458,28 @@ def test_a_session_that_grew_too_big_is_renewed_with_the_apps_replay(api_client,
     assert claude_code.HISTORY_INTRO in fake.sent(2) and "sigue" in fake.sent(2)
     # A replay as big as the session (a long conversation in text) isn't renewed every turn.
     assert not claude_code._grown({"tokens_per_call": 120_000, "start_tokens": 100_000})
+
+
+def test_a_session_the_cache_dropped_is_renewed_and_its_size_is_its_last_calls():
+    # The result's totals aren't one call's: the size is what the last call read.
+    usage = {"input_tokens": 10, "cache_creation_input_tokens": 270_953, "cache_read_input_tokens": 785_758,
+             "iterations": [{"input_tokens": 2, "cache_creation_input_tokens": 7_329,
+                             "cache_read_input_tokens": 263_624}]}
+    assert claude_code._tokens_per_call({"usage": usage, "num_turns": 8}) == 270_955
+    assert claude_code._tokens_per_call({"usage": {"input_tokens": 100, "cache_read_input_tokens": 900},
+                                         "num_turns": 2}) == 500
+
+    now = 1_800_000_000
+    big = {"tokens_per_call": 137_000, "start_tokens": 137_000, "used_at": now - 2 * 3600}
+    conversation = {"messages": []}
+    assert claude_code._cold(conversation, big, now)  # two hours idle: written again whole
+    assert not claude_code._cold(conversation, {**big, "used_at": now - 50 * 60}, now)  # still cached
+    assert not claude_code._cold(conversation, {**big, "tokens_per_call": 20_000}, now)  # small: no matter
+    # A session from before the time was recorded: its latest reply's.
+    legacy = {"tokens_per_call": 137_000}
+    replied = {"messages": [{"role": "assistant", "engine": "claude-code", "timestamp": "2027-01-15T06:00:00+00:00"}]}
+    assert claude_code._cold(replied, legacy, now)
+    assert not claude_code._cold(replied, legacy, 1_800_000_000 - 1_000_000_000)
 
 
 def test_images_go_smaller_and_what_the_bot_does_alone_can_use_a_lighter_model(api_client, auth_headers, tmp_path,
