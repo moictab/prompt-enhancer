@@ -46,4 +46,8 @@ def historial_page(request: Request):
 
 @router.get("/admin", response_class=HTMLResponse)
 def admin_page(request: Request):
-    return templates.TemplateResponse(request, "admin.html", {})
+    return templates.TemplateResponse(request, "admin.html", {
+        # Who can tidy the memory (Ordenar la memoria): Claude Code, when installed, or an OpenRouter model.
+        "claude_code_available": claude_code.available(),
+        "default_llm_model": get_settings().default_llm_model,
+    })

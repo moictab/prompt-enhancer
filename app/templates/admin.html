@@ -38,6 +38,22 @@
 <section class="settings-section" id="memory" aria-labelledby="memory-title">
   <h2 id="memory-title">Memoria del bot</h2>
   <p class="section-intro">Lo que el bot de Conversar ha aprendido de ti. Cada nota tiene su ámbito: las <strong>generales</strong> (tus gustos, cómo trabajas) van en todas las conversaciones; las de una <strong>familia</strong> (lo que funciona o falla con Krea 2, Anima…), cuando la conversación usa esa familia; las de un <strong>tema</strong> (un personaje, una serie, una temática), cuando la conversación trata de él o lo menciona. Cada turno lleva como mucho unos 1.200 tokens de notas. Corrige o borra lo que no sea cierto, cámbialas de ámbito o añade las tuyas.</p>
+  <div class="memory-tidy">
+    <div class="memory-tidy-bar">
+      <button type="button" class="btn-secondary" id="memory-tidy-run">Ordenar la memoria</button>
+      <label class="visually-hidden" for="memory-tidy-engine">Quién la ordena</label>
+      <select id="memory-tidy-engine">
+        {% if claude_code_available %}
+        <option value="claude-code:sonnet">Claude Code, Sonnet</option>
+        <option value="claude-code:opus">Claude Code, Opus</option>
+        {% endif %}
+        <option value="openrouter:{{ default_llm_model }}">OpenRouter, {{ default_llm_model }}</option>
+      </select>
+      <button type="button" class="btn-quiet" id="memory-tidy-undo" hidden>Deshacer el último orden</button>
+    </div>
+    <p class="memory-tidy-hint">El bot revisa todas las notas y propone cambios: reescribir las que están cortadas o citan imágenes, dividir las que dicen varias cosas, fusionar las repetidas, olvidar las superadas y cambiar de ámbito las que estén mal puestas. Tú eliges cuáles se aplican.</p>
+    <div id="memory-tidy-plan"></div>
+  </div>
   <form class="memory-form" id="memory-form">
     <label class="visually-hidden" for="memory-text">Nota nueva</label>
     <textarea id="memory-text" rows="2" placeholder="Prefiero la luz dura y los encuadres cerrados"></textarea>

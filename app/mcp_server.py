@@ -703,6 +703,24 @@ async def save_note(
     return await _json("POST", "/api/admin/memory", json={"text": text, **scope})
 
 
+@server.tool(annotations=LLM)
+async def tidy_memory(
+    engine: Annotated[Literal["claude-code", "openrouter"], Field(description="Who reviews the notes.")] = "claude-code",
+    model: Annotated[str, Field(description="Claude's model (sonnet, opus) or an OpenRouter one; empty: default.")] = "",
+) -> dict:
+    """Ordenar la memoria: the bot reviews every note and proposes changes -- rewrite, split, merge, forget,
+    move to another scope -- each with its reason. Nothing changes until apply_memory_tidy."""
+    return await _json("POST", "/api/admin/memory/tidy", json={"engine": engine, "model": model})
+
+
+@server.tool(annotations=WRITE)
+async def apply_memory_tidy(
+    accept: Annotated[list[int], Field(description="The proposal's operations to apply, by index (from 0).")],
+) -> dict:
+    """Apply the picked operations of the pending memory proposal (tidy_memory); the rest are dropped."""
+    return await _json("POST", "/api/admin/memory/tidy/apply", json={"accept": accept})
+
+
 @server.tool(annotations=DELETE)
 async def delete_note(note_id: str) -> dict:
     """Delete a note from the bot's memory."""

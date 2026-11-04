@@ -117,6 +117,11 @@ def confirm_note(note_id: str, path: str | None = None) -> dict | None:
     return None
 
 
+def replace_all(notes: list[dict], path: str | None = None) -> None:
+    """Write the whole list at once (Ordenar la memoria applies its changes, or undoes them, so)."""
+    storage.write_json(path or _default_path(), notes)
+
+
 def delete_note(note_id: str, path: str | None = None) -> bool:
     resolved_path = path or _default_path()
     notes = list_notes(resolved_path)

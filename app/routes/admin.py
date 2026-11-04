@@ -2,7 +2,7 @@ import requests
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from .. import catalog, comfy, families, image_metadata, memory, references, system_prompt, workflows
+from .. import catalog, comfy, families, image_metadata, memory, memory_tidy, references, system_prompt, workflows
 from ..seed import DEFAULT_SYSTEM_PROMPTS
 from .api import read_image
 
@@ -85,6 +85,54 @@ def update_note(note_id: str, payload: NotePayload):
     if updated is None:
         raise HTTPException(status_code=404, detail="Unknown note")
     return updated
+
+
+class TidyRequest(BaseModel):
+    engine: str = "claude-code"  # or "openrouter"
+    model: str = ""  # Claude's (sonnet, opus...) or an OpenRouter model; empty: the default
+
+
+class TidyApply(BaseModel):
+    accept: list[int]  # the plan's operations to apply, by index
+
+
+@router.get("/memory/tidy")
+def tidy_state():
+    """The proposal waiting for the user (or null), and whether the last applied one can be undone."""
+    return {"plan": memory_tidy.pending(), "can_undo": memory_tidy.can_undo()}
+
+
+@router.post("/memory/tidy")
+def tidy_propose(payload: TidyRequest):
+    """Ordenar la memoria: the bot reviews every note and proposes changes, applied only as picked."""
+    if payload.engine not in ("claude-code", "openrouter"):
+        raise HTTPException(status_code=400, detail="engine is claude-code or openrouter")
+    try:
+        return memory_tidy.propose(payload.engine, payload.model.strip())
+    except memory_tidy.TidyError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.post("/memory/tidy/apply")
+def tidy_apply(payload: TidyApply):
+    try:
+        return memory_tidy.apply(payload.accept)
+    except memory_tidy.TidyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.delete("/memory/tidy")
+def tidy_discard():
+    memory_tidy.discard()
+    return {"discarded": True}
+
+
+@router.post("/memory/tidy/undo")
+def tidy_undo():
+    try:
+        return memory_tidy.undo()
+    except memory_tidy.TidyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 class TopicKeywordsPayload(BaseModel):

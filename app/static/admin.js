@@ -329,19 +329,141 @@ function setupMemory() {
     topics = await request("/api/admin/memory/topics").catch(() => topics);
   }
 
-  Promise.all([
-    request("/api/admin/memory"),
-    request("/api/admin/memory/topics").catch(() => []),
-    request("/api/model-folders").catch(() => ({})),
-  ])
-    .then(([loaded, knownTopics, modelFolders]) => {
-      notes = loaded;
-      topics = knownTopics;
-      folders = [...new Set(Object.values(modelFolders).flat())].sort();
-      placeAddScope();
-      render();
+  const load = (first = false) =>
+    Promise.all([
+      request("/api/admin/memory"),
+      request("/api/admin/memory/topics").catch(() => []),
+      request("/api/model-folders").catch(() => ({})),
+    ])
+      .then(([loaded, knownTopics, modelFolders]) => {
+        notes = loaded;
+        topics = knownTopics;
+        folders = [...new Set(Object.values(modelFolders).flat())].sort();
+        if (first) placeAddScope();
+        render();
+      })
+      .catch((err) => toast(`No se ha podido cargar la memoria: ${err.message}`, { error: true }));
+  load(true);
+  return { reload: () => load() };
+}
+
+// ---------- Ordenar la memoria: the bot proposes, the user picks ----------
+
+const TIDY_KINDS = {
+  rewrite: "Reescribir",
+  split: "Dividir",
+  merge: "Fusionar",
+  forget: "Olvidar",
+  move: "Cambiar de ámbito",
+};
+
+// "family krea-2" -> "Familia krea-2", "topic Kim" -> "Tema Kim", "general" -> "General".
+function scopeName(label) {
+  if (!label || label === "general") return "General";
+  return label.replace(/^family /, "Familia ").replace(/^topic /, "Tema ");
+}
+
+function setupTidy(memoryList) {
+  const run = $("memory-tidy-run");
+  const engine = $("memory-tidy-engine");
+  const undo = $("memory-tidy-undo");
+  const box = $("memory-tidy-plan");
+  if (!run) return;
+
+  const noteLine = (text, label, cls) =>
+    el("li", { class: cls }, el("span", { class: "tidy-scope", text: scopeName(label) }), el("span", { text }));
+
+  function render(plan) {
+    if (!plan) {
+      box.replaceChildren();
+      return;
+    }
+    if (!plan.operations.length) {
+      box.replaceChildren(
+        el("p", { class: "memory-tidy-hint", text: "El bot no propone cambios: las notas ya están en orden." }),
+        el("button", { type: "button", class: "btn-quiet", text: "Cerrar", onclick: discard })
+      );
+      return;
+    }
+    const checks = [];
+    const items = plan.operations.map((op, index) => {
+      const check = el("input", { type: "checkbox", checked: true, "aria-label": `Aplicar: ${TIDY_KINDS[op.kind]}` });
+      checks.push([index, check]);
+      return el(
+        "li",
+        { class: `tidy-op is-${op.kind}` },
+        el("label", { class: "tidy-op-head" }, check, el("span", { class: "tidy-kind", text: TIDY_KINDS[op.kind] || op.kind }),
+          op.why && el("span", { class: "tidy-why", text: op.why })),
+        el("ul", { class: "tidy-notes" },
+          op.before.map((b) => noteLine(b.text, b.label, "is-before")),
+          op.after.map((a) => noteLine(a.text, a.label, "is-after")))
+      );
+    });
+    const apply = el("button", { type: "button", class: "btn-primary", text: "Aplicar los marcados" });
+    apply.addEventListener("click", async () => {
+      const accept = checks.filter(([, c]) => c.checked).map(([i]) => i);
+      if (!accept.length) return toast("Marca al menos un cambio, o descarta la propuesta.");
+      setBusy(apply, true, "Aplicando…");
+      try {
+        const done = await request("/api/admin/memory/tidy/apply", { method: "POST", json: { accept } });
+        toast(`Aplicados ${done.applied} cambios: de ${done.before} notas a ${done.after}.` +
+          (done.skipped ? ` ${done.skipped} no se aplicaron porque esas notas cambiaron entretanto.` : ""));
+        render(null);
+        undo.hidden = false;
+        memoryList.reload();
+      } catch (err) {
+        setBusy(apply, false);
+        toast(err.message, { error: true });
+      }
+    });
+    const cost = plan.cost != null ? `, ${plan.engine === "claude-code" ? "unos " : ""}$${plan.cost.toFixed(3)}` : "";
+    box.replaceChildren(
+      el("p", { class: "tidy-summary", text:
+        `Propuesta para ${plan.notes} notas: ${plan.operations.length} cambios${
+          plan.dropped ? ` (${plan.dropped} más descartados por no cumplir las reglas)` : ""}${cost}. Desmarca los que no quieras.` }),
+      el("ol", { class: "tidy-ops" }, items),
+      el("div", { class: "form-actions" }, apply,
+        el("button", { type: "button", class: "btn-quiet", text: "Descartar la propuesta", onclick: discard }))
+    );
+  }
+
+  async function discard() {
+    await request("/api/admin/memory/tidy", { method: "DELETE" }).catch(() => {});
+    render(null);
+  }
+
+  run.addEventListener("click", async () => {
+    const [chosenEngine, ...rest] = engine.value.split(":");
+    setBusy(run, true, "Revisando las notas… (puede tardar un par de minutos)");
+    try {
+      render(await request("/api/admin/memory/tidy", { method: "POST", json: { engine: chosenEngine, model: rest.join(":") } }));
+    } catch (err) {
+      toast(`No se ha podido ordenar: ${err.message}`, { error: true });
+    } finally {
+      setBusy(run, false);
+    }
+  });
+
+  undo.addEventListener("click", async () => {
+    setBusy(undo, true, "Deshaciendo…");
+    try {
+      const done = await request("/api/admin/memory/tidy/undo", { method: "POST" });
+      toast(`Memoria como estaba antes del último orden: ${done.notes} notas.`);
+      undo.hidden = true;
+      memoryList.reload();
+    } catch (err) {
+      toast(err.message, { error: true });
+    } finally {
+      setBusy(undo, false);
+    }
+  });
+
+  request("/api/admin/memory/tidy")
+    .then((state) => {
+      render(state.plan);
+      undo.hidden = !state.can_undo;
     })
-    .catch((err) => toast(`No se ha podido cargar la memoria: ${err.message}`, { error: true }));
+    .catch(() => {});
 }
 
 // ---------- reference folders ----------
@@ -754,7 +876,7 @@ function setupCatalog() {
 
 document.addEventListener("DOMContentLoaded", () => {
   setupSystemPrompts();
-  setupMemory();
+  setupTidy(setupMemory());
   setupReferences();
   setupFamilies();
   setupWorkflows();

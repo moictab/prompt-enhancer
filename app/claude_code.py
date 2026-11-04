@@ -242,6 +242,53 @@ def _write_files(folder: Path, system: str, seat: bot_seat.Seat) -> dict[str, Pa
     return files
 
 
+class AskError(RuntimeError):
+    """A one-off request to Claude Code that failed: the reason, to show."""
+
+
+def ask(system: str, prompt: str, model: str, context: dict, effort: str | None = None,
+        timeout: float = 600) -> tuple[str, dict]:
+    """One request to Claude Code that isn't a conversation's turn (Ordenar la memoria): no
+    tools, no MCP, no session kept, the same locked-down configuration and account. Returns the
+    reply's text and what the CLI says of it (cost estimate, duration); raises AskError."""
+    folder = _folder("asks", uuid.uuid4().hex)
+    files = {"system": folder / "system.md", "settings": folder / "settings.json"}
+    files["system"].write_text(system, encoding="utf-8")
+    files["settings"].write_text(json.dumps(SESSION_SETTINGS), encoding="utf-8")
+    command = shutil.which(get_settings().claude_code_command) or get_settings().claude_code_command
+    args = [command, "-p", "--output-format", "json", "--model", model, *(["--effort", effort] if effort else []),
+            "--tools", "", "--strict-mcp-config", "--permission-mode", "dontAsk", "--setting-sources", "",
+            "--settings", str(files["settings"]), "--system-prompt-file", str(files["system"]),
+            "--no-session-persistence", "--max-turns", "1"]
+    record = request_log.RequestRecord({"model": f"claude-code/{model}", "system": system,
+                                        "messages": [{"role": "user", "content": prompt}]}, context)
+    try:
+        with _slots:
+            process = _spawn(args, environment(), str(_folder("workspace")))
+            try:
+                out, err = process.communicate(prompt, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                raise AskError("Claude Code didn't finish in time.")
+    except OSError as e:
+        record.finish(error=str(e))
+        raise AskError(f"Claude Code couldn't start ({e}).")
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+    try:
+        result = json.loads(out.strip().splitlines()[-1]) if out.strip() else None
+    except ValueError:
+        result = None
+    if not result or result.get("is_error") or result.get("subtype") != "success":
+        detail = _failure_text(result, err or "", process.returncode)
+        record.finish(error=detail, response={"result": (result or {}).get("result")})
+        raise AskError(detail)
+    info = {"estimated_cost": result.get("total_cost_usd"), "duration_ms": result.get("duration_ms"),
+            "usage": result.get("usage") or {}}
+    record.finish(response={"text": result.get("result") or "", **info})
+    return result.get("result") or "", info
+
+
 def _logged_blocks(blocks: list[dict]) -> list[dict]:
     """The message for the request log: images as data URIs, which the log keeps once each."""
     out = []
