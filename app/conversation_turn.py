@@ -339,7 +339,7 @@ def _turn(conversation_id: str, automatic: bool):
     logger.info(
         "conversation reply conversation_id=%s family_id=%s model=%s messages=%d tools=%s automatic=%s",
         conversation_id, family["id"],
-        f"claude-code/{claude_code.model_for(conversation)}" if on_claude else conversation["llm_model"],
+        f"claude-code/{claude_code.model_for(conversation, automatic)}" if on_claude else conversation["llm_model"],
         len(conversation["messages"]), bool(toolbox), automatic,
     )
 

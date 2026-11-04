@@ -431,3 +431,46 @@ def test_a_reply_the_limit_cut_off_midway_carries_on_once_it_resets(api_client, 
 
 def test_pages_show_times_in_the_apps_zone(api_client, auth_headers):
     assert 'data-time-zone="Europe/Madrid"' in api_client.get("/conversar", auth=auth_headers).text
+
+
+def test_a_session_that_grew_too_big_is_renewed_with_the_apps_replay(api_client, auth_headers, tmp_path,
+                                                                      fake_comfy, claude):
+    conversation = _claude_conversation(api_client, auth_headers, _family(tmp_path))
+    fake = claude([init(), text("Uno."), result()], [init(), text("Dos."), result()],
+                  [init(session="s2"), text("Tres."), result()])
+    _send(api_client, auth_headers, conversation["id"], "hola")
+    _send(api_client, auth_headers, conversation["id"], "sigue")
+    assert "--resume" in fake.launches[1]["args"]  # small: the same session
+    # The session has grown past the limit since it started (each call reads 120k tokens now, 30k then).
+    state = conversations.get(conversation["id"])["claude_code"]
+    conversations.set_claude_code(conversation["id"], {**state, "tokens_per_call": 120_000, "start_tokens": 30_000})
+    _send(api_client, auth_headers, conversation["id"], "y más")
+
+    args = fake.launches[2]["args"]
+    assert "--resume" not in args and args[args.index("--session-id") + 1] != state["session_id"]
+    assert claude_code.HISTORY_INTRO in fake.sent(2) and "sigue" in fake.sent(2)
+    # A replay as big as the session (a long conversation in text) isn't renewed every turn.
+    assert not claude_code._grown({"tokens_per_call": 120_000, "start_tokens": 100_000})
+
+
+def test_images_go_smaller_and_what_the_bot_does_alone_can_use_a_lighter_model(api_client, auth_headers, tmp_path,
+                                                                                fake_comfy, claude):
+    import base64
+    import io
+
+    from PIL import Image
+
+    from .conftest import png_bytes
+    conversation = _claude_conversation(api_client, auth_headers, _family(tmp_path), claude_auto_model="haiku")
+    fake = claude([init(), text("La veo."), result()])
+    _send(api_client, auth_headers, conversation["id"], "mira", files=[
+        ("images", ("big.png", png_bytes(size=(2400, 1600)), "image/png"))])
+    line = json.loads(fake.launches[0]["process"].stdin.written)
+    [image] = [b for b in line["message"]["content"] if b["type"] == "image"]
+    assert max(Image.open(io.BytesIO(base64.b64decode(image["source"]["data"]))).size) == claude_code.IMAGE_SIDE
+    args = fake.launches[0]["args"]
+    assert args[args.index("--model") + 1] == "sonnet"  # the user's turn: the conversation's model
+    assert claude_code.model_for({"claude_model": "opus", "claude_auto_model": "haiku"}, automatic=True) == "haiku"
+    assert claude_code.model_for({"claude_model": "opus", "claude_auto_model": ""}, automatic=True) == "opus"
+    assert api_client.patch(f"/api/conversations/{conversation['id']}", auth=auth_headers,
+                            json={"claude_auto_model": "gpt"}).status_code == 422

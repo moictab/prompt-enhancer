@@ -58,6 +58,15 @@
         </select>
         <p class="chat-auto-comment-hint" id="chat-claude-effort-hint">Cuánto piensa antes de responder. Más esfuerzo, respuestas más pensadas, más lentas y más uso de tu suscripción.</p>
       </div>
+      <div class="field" id="chat-claude-auto-field" hidden>
+        <label for="chat-claude-auto">Modelo para lo que hace solo</label>
+        <select id="chat-claude-auto" aria-describedby="chat-claude-auto-hint">
+          <option value="">El mismo</option>
+          <option value="sonnet">Sonnet</option>
+          <option value="haiku">Haiku</option>
+        </select>
+        <p class="chat-auto-comment-hint" id="chat-claude-auto-hint">Cuando comenta las imágenes que llegan o sigue trabajando sin ti. Un modelo más ligero gasta bastante menos de tu suscripción; sus comentarios serán algo menos finos.</p>
+      </div>
       {% endif %}
       <div class="field" id="chat-model-field">
         <label for="chat-model">Modelo de texto</label>

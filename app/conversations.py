@@ -58,6 +58,7 @@ def create(
     claude_model: str = "",
     initiative_images: int | None = None,
     claude_effort: str = "",
+    claude_auto_model: str = "",
 ) -> dict:
     """auto_comment: when a run finishes, the bot looks at its images on its own; off, they
     wait for the user's next message (one request fewer per run). Older conversations,
@@ -78,6 +79,9 @@ def create(
         "engine": engine,
         "claude_model": claude_model,
         "claude_effort": claude_effort,
+        # What the bot does on its own (its look at a run's images, carrying on alone) on another,
+        # cheaper Claude model; "" for the same one.
+        "claude_auto_model": claude_auto_model,
         "initiative_images": INITIATIVE_IMAGES if initiative_images is None else initiative_images,
         "cost": None,
         "messages": [],
@@ -155,7 +159,7 @@ def list_summaries(root: str | None = None) -> list[dict]:
 def update_settings(conversation_id: str, changes: dict, root: str | None = None) -> dict | None:
     """Change settings, or the title (the user's: the bot only titles an untitled
     conversation). Neither counts as activity: updated_at, the list's order, stays."""
-    allowed = {"family_id", "llm_model", "temperature", "title", "auto_comment", "engine", "claude_model", "claude_effort",
+    allowed = {"family_id", "llm_model", "temperature", "title", "auto_comment", "engine", "claude_model", "claude_effort", "claude_auto_model",
                "initiative_images"}
     with _lock:
         conversation = get(conversation_id, root)

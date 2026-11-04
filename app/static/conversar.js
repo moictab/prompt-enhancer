@@ -57,6 +57,8 @@ const ui = {
   claudeModelField: $("chat-claude-model-field"),
   claudeEffort: $("chat-claude-effort"),
   claudeEffortField: $("chat-claude-effort-field"),
+  claudeAuto: $("chat-claude-auto"),
+  claudeAutoField: $("chat-claude-auto-field"),
   modelField: $("chat-model-field"),
   temperatureField: $("chat-temperature-field"), // Claude Code has no temperature to set
   chat: document.querySelector(".chat"),
@@ -115,6 +117,7 @@ function settings() {
     engine: source.engine || "openrouter",
     claude_model: source.claude_model || "",
     claude_effort: source.claude_effort || "",
+    claude_auto_model: source.claude_auto_model || "",
   };
 }
 
@@ -1666,6 +1669,8 @@ function applySettingsToForm(values) {
     ui.claudeModelField.hidden = !onClaude(values);
     ui.claudeEffort.value = values.claude_effort || "";
     ui.claudeEffortField.hidden = !onClaude(values);
+    ui.claudeAuto.value = values.claude_auto_model || "";
+    ui.claudeAutoField.hidden = !onClaude(values);
     ui.modelField.hidden = onClaude(values);
     ui.temperatureField.hidden = onClaude(values);
   }
@@ -1703,7 +1708,7 @@ async function changeSettings(changes) {
   }
   try {
     const updated = await request(`/api/conversations/${state.conversation.id}`, { method: "PATCH", json: changes });
-    for (const key of ["family_id", "llm_model", "temperature", "auto_comment", "initiative_images", "engine", "claude_model", "claude_effort"]) {
+    for (const key of ["family_id", "llm_model", "temperature", "auto_comment", "initiative_images", "engine", "claude_model", "claude_effort", "claude_auto_model"]) {
       state.conversation[key] = updated[key];
     }
     rememberSettings();
@@ -1880,6 +1885,7 @@ function defaultSettings() {
     engine: ui.engine && stored.engine === CLAUDE_CODE ? CLAUDE_CODE : "openrouter",
     claude_model: stored.claude_model || "",
     claude_effort: stored.claude_effort || "",
+    claude_auto_model: stored.claude_auto_model || "",
   };
 }
 
@@ -2683,6 +2689,7 @@ function setupSettings() {
   });
   ui.claudeModel?.addEventListener("change", () => changeSettings({ claude_model: ui.claudeModel.value }).then(renderHead));
   ui.claudeEffort?.addEventListener("change", () => changeSettings({ claude_effort: ui.claudeEffort.value }).then(renderHead));
+  ui.claudeAuto?.addEventListener("change", () => changeSettings({ claude_auto_model: ui.claudeAuto.value }));
   ui.temperature.addEventListener("input", () => (ui.temperatureValue.textContent = ui.temperature.value));
   ui.temperature.addEventListener("change", () => changeSettings({ temperature: Number(ui.temperature.value) }));
   ui.initiative?.addEventListener("change", () => {

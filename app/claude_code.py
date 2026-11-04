@@ -61,12 +61,21 @@ TURN_TIMEOUT_SECONDS = 1800
 CHANGING_SECTIONS = ("family", "library", "families")
 # Claude Code ages sessions out after 30 days by default: these are conversations, kept longer.
 SESSION_SETTINGS = {"cleanupPeriodDays": 3650}
+# A session keeps everything it saw -- every image, every tool result -- and every call in a turn re-reads
+# it all. Once a turn's calls read more than this (tokens per call), the next turn starts a new session,
+# given the conversation as the app replays it (recent images only, old tool results in brief) -- unless
+# that replay itself is nearly as big (SESSION_GROWTH: it must have grown by half since its start).
+SESSION_LIMIT_TOKENS = 80_000
+SESSION_GROWTH = 1.5
+# Images go to Claude Code at most this long a side (the small copy is 1568): about 950 tokens, not 1,600.
+IMAGE_SIDE = 1024
 
 CLAUDE_CODE_MECHANICS = """- Your tools reach you through the app: you have no others (no shell, files or web). Their names here start with mcp__pe__; these instructions call them by their short names.
 - The app numbers your <prompt> blocks across the conversation, in order (1, 2, 3...): the app's context in the latest message says which numbers your previous reply's blocks got, so you can tell which one the user means by its number.
 - New images come attached to their message; get_image shows any image of the conversation again by its number. get_balance_data lists every image the runs made here, with its recipe, your review and the user's reaction.
 - Your notes and the installed models come in the app's context when they change: otherwise the latest list you got still holds, numbers included.
-- Unlike what's said above, a launch here doesn't end your reply: launch every run you announced (one call each), then end it in one short sentence at most, since their images come in a later message."""
+- Unlike what's said above, a launch here doesn't end your reply: launch every run you announced (one call each), then end it in one short sentence at most, since their images come in a later message.
+- Each call you make re-reads this whole conversation, so make few: calls that don't depend on each other go together in one message (all of a batch's launches at once); don't call list_comfy_models when the installed models in the app's context already answer, nor get_image for an image attached here or one you don't need to look at again."""
 
 HISTORY_INTRO = ("[This conversation began before this session. Here it is so far, as the app keeps it: the "
                  "user's messages, your earlier replies (their prompt blocks numbered), the runs' results and "
@@ -97,7 +106,15 @@ def effort_for(conversation: dict) -> str | None:
     return effort if effort in EFFORTS else None
 
 
-def model_for(conversation: dict) -> str:
+def model_for(conversation: dict, automatic: bool = False) -> str:
+    """The model for this turn: the conversation's, or for what the bot does on its own (its look at a
+    run's images, carrying on alone) the cheaper one the conversation may set (claude_auto_model)."""
+    if automatic and conversation.get("claude_auto_model") in MODELS:
+        return conversation["claude_auto_model"]
+    return _model(conversation)
+
+
+def _model(conversation: dict) -> str:
     return conversation.get("claude_model") or get_settings().claude_code_model
 
 
@@ -115,6 +132,24 @@ def _folder(*parts: str) -> Path:
 
 # --- what Claude Code is sent ----------------------------------------------------------------------
 
+def _smaller(media_type: str, data: str) -> tuple[str, str]:
+    """An image at most IMAGE_SIDE long a side, as JPEG (base64 in and out); as it was if smaller."""
+    import base64
+    import io
+
+    from PIL import Image
+    try:
+        with Image.open(io.BytesIO(base64.b64decode(data))) as image:
+            if max(image.size) <= IMAGE_SIDE:
+                return media_type, data
+            image.thumbnail((IMAGE_SIDE, IMAGE_SIDE))
+            out = io.BytesIO()
+            image.convert("RGB").save(out, "JPEG", quality=88)
+    except Exception:  # not an image Pillow reads: as it came
+        return media_type, data
+    return "image/jpeg", base64.b64encode(out.getvalue()).decode()
+
+
 def _blocks(content) -> list[dict]:
     """A chat message's content (build_llm_messages: a string, or text and image_url parts) as
     Claude's content blocks."""
@@ -126,7 +161,7 @@ def _blocks(content) -> list[dict]:
             out.append({"type": "text", "text": part["text"]})
         elif part["type"] == "image_url":
             header, _, data = part["image_url"]["url"].partition(",")
-            media_type = header[len("data:"):].split(";")[0]
+            media_type, data = _smaller(header[len("data:"):].split(";")[0], data)
             out.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
     return out
 
@@ -365,6 +400,20 @@ def limit_resets(result: dict | None, rate_limit: dict | None, stderr: str) -> i
     return int(info["resetsAt"]) if info.get("resetsAt") else None
 
 
+def _tokens_per_call(result: dict | None) -> int:
+    """What each of a turn's calls read, on average: the session's size, about."""
+    usage = (result or {}).get("usage") or {}
+    total = sum(usage.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+    return round(total / max(1, (result or {}).get("num_turns") or 1))
+
+
+def _grown(state: dict) -> bool:
+    """Whether the session is past SESSION_LIMIT_TOKENS and has grown since it started (a new one
+    would start smaller): then the next turn starts a new one."""
+    size = state.get("tokens_per_call") or 0
+    return size > SESSION_LIMIT_TOKENS and size > SESSION_GROWTH * (state.get("start_tokens") or 0)
+
+
 def _session_lost(text: str, stderr: str) -> bool:
     lowered = f"{text} {stderr}".lower()
     return "no conversation found" in lowered or "session not found" in lowered
@@ -380,9 +429,13 @@ def run(conversation: dict, family: dict, toolbox, library: list[dict],
     (the old one was lost)."""
     conversation_id = conversation["id"]
     state = {} if fresh else dict(conversation.get("claude_code") or {})
+    if state.get("session_id") and _grown(state):
+        logger.info("claude code session renewed conversation_id=%s tokens_per_call=%s", conversation_id,
+                    state.get("tokens_per_call"))
+        state = {}
     new_session = not state.get("session_id")
     session_id = str(uuid.uuid4()) if new_session else state["session_id"]
-    model = model_for(conversation)
+    model = model_for(conversation, automatic)
     sections = chat.system_sections(family, workflows=library if toolbox else None,
                                     families=family_names if toolbox else None,
                                     extra_mechanics=CLAUDE_CODE_MECHANICS)
@@ -525,9 +578,13 @@ def run(conversation: dict, family: dict, toolbox, library: list[dict],
     if failure is None or any(s["tool_calls"] for s in steps):
         # The session holds this turn now: later turns resume it.
         started = state.get("sections") if not new_session else {n: _digest(sections.get(n)) for n in CHANGING_SECTIONS}
+        size = _tokens_per_call(final)
         conversations.set_claude_code(conversation_id, {
             "session_id": session_id, "model": model, "sections": started, **recorded,
             **({"rate_limit": rate_limit} if rate_limit else {}),
+            # How big the session is (what each call reads), and was when it started: to renew it.
+            "tokens_per_call": size,
+            "start_tokens": size if new_session else state.get("start_tokens", size),
         })
     ends = [StreamEnd(cost=None, truncated=(final or {}).get("stop_reason") == "max_tokens", request_id=record.id)]
     extra = {"engine": ENGINE, "claude_code": {
