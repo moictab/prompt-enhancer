@@ -168,15 +168,17 @@ def _comfy_graph(candidates: list) -> dict | None:
     return None
 
 
-def read(data: bytes) -> tuple[dict | None, dict | None]:
+def read(data) -> tuple[dict | None, dict | None]:
     """(metadata, workflow): the generation metadata worth showing, or None if the file has
-    none, and the API-format ComfyUI workflow it embeds, if any (stored apart: it can be large)."""
+    none, and the API-format ComfyUI workflow it embeds, if any (stored apart: it can be large).
+    data: the image's bytes, or a file's path (only its header is read: the text chunks Pillow
+    writes come before the pixels)."""
     try:
-        image = Image.open(io.BytesIO(data))
-        texts = {k: v for k, v in image.info.items() if isinstance(v, str)}
-        exif_texts = _exif_texts(image)
-        size = image.size
-        image_format = image.format
+        with Image.open(io.BytesIO(data) if isinstance(data, (bytes, bytearray)) else data) as image:
+            texts = {k: v for k, v in image.info.items() if isinstance(v, str)}
+            exif_texts = _exif_texts(image)
+            size = image.size
+            image_format = image.format
     except Exception as e:
         logger.info("image metadata unreadable error=%r", e)
         return None, None

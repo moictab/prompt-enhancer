@@ -90,7 +90,8 @@
       <p class="notice is-error" id="chat-error" role="alert" hidden></p>
       <ul class="attachments" id="attachments" aria-label="Imágenes adjuntas" hidden></ul>
       <p class="reaction-hint" id="reaction-hint" hidden></p>
-      <ul class="image-picker" id="image-picker" aria-label="Imágenes de la conversación" hidden></ul>
+      <ul class="image-picker" id="image-picker" aria-label="Imágenes y carpetas que puedes mencionar" hidden></ul>
+      <script type="application/json" id="reference-folders">{{ reference_folders | tojson }}</script>
       <div class="composer-row">
         <label class="btn-icon attach" title="Adjuntar imágenes">
           <input type="file" id="chat-images" accept="image/jpeg,image/png,image/webp" multiple>

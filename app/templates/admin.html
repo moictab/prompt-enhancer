@@ -7,6 +7,7 @@
   <nav class="page-index" aria-label="En esta página">
     <a href="#system-prompts">Personalidad del bot</a>
     <a href="#memory">Memoria del bot</a>
+    <a href="#references">Carpetas de referencia</a>
     <a href="#families">Familias de modelo</a>
     <a href="#workflows">Workflows de ComfyUI</a>
     <a href="#models">Modelos y LoRAs</a>
@@ -43,6 +44,23 @@
     <button type="submit" class="btn-secondary" id="memory-add">Añadir nota</button>
   </form>
   <ul class="item-list memory-list" id="memory-list"></ul>
+</section>
+
+<section class="settings-section" id="references" aria-labelledby="references-title">
+  <h2 id="references-title">Carpetas de referencia</h2>
+  <p class="section-intro">Carpetas de este PC con imágenes que te gustan, por ejemplo de un personaje. En Conversar, escribe <strong>@nombre</strong> o pega la ruta de una (o de una carpeta dentro de ella) y el bot recibe un estudio: qué se repite en sus prompts, modelos, LoRAs y ajustes, y hojas de contactos para ver el estilo. Saca conclusiones y las apunta en su memoria. Solo lee imágenes (PNG, JPEG, WebP), nunca escribe en la carpeta, y no puede leer nada que no esté en esta lista.</p>
+  <form class="reference-form" id="reference-form">
+    <div class="field">
+      <label for="reference-name">Nombre</label>
+      <input id="reference-name" type="text" maxlength="60" placeholder="Ramona" autocomplete="off">
+    </div>
+    <div class="field reference-path-field">
+      <label for="reference-path">Ruta de la carpeta</label>
+      <input id="reference-path" type="text" placeholder="C:\Users\tú\Pictures\Ramona" spellcheck="false" autocomplete="off">
+    </div>
+    <button type="submit" class="btn-secondary" id="reference-add">Aceptar la carpeta</button>
+  </form>
+  <ul class="item-list reference-list" id="reference-list"></ul>
 </section>
 
 <section class="settings-section" id="families" aria-labelledby="families-title">

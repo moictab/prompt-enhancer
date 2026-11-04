@@ -1064,6 +1064,19 @@ function balanceMessage(message) {
   );
 }
 
+// "Estudio de @Ramona: 212 imágenes (180 con metadatos), 3 hojas de contactos."
+function referenceNote(counts) {
+  if (!counts) return null;
+  const images = `${counts.images}${counts.capped ? " o más" : ""} ${counts.images === 1 ? "imagen" : "imágenes"}`;
+  const studied = counts.studied < counts.images ? `, ${counts.studied} estudiadas` : "";
+  const sheets = counts.sheets === 1 ? "1 hoja de contactos" : `${counts.sheets} hojas de contactos`;
+  return el("p", {
+    class: "msg-reference",
+    title: counts.path || "",
+    text: `Estudio de @${counts.name}: ${images}${studied} (${counts.with_metadata} con metadatos), ${sheets}.`,
+  });
+}
+
 function userMessage(message, previews = null) {
   if (message.balance) return balanceMessage(message);
   const numbers = state.conversation ? imageNumbers() : new Map();
@@ -1077,7 +1090,8 @@ function userMessage(message, previews = null) {
     shots.length > 0 && el("div", { class: "msg-images" }, shots),
     ...(previews ? [] : images.map((image) => metadataPanel(image, numbers.get(image.id)))),
     reactionsSummary(message.reactions, numbers),
-    message.content && el("p", { class: "msg-text" }, withImageRefs(message.content))
+    message.content && el("p", { class: "msg-text" }, withImageRefs(message.content)),
+    referenceNote(message.references)
   );
 }
 
@@ -2196,12 +2210,74 @@ function refQuery() {
   return match ? { start: caret - match[2].length - 1, digits: match[2] } : null;
 }
 
+// Accepted reference folders (Ajustes): "@" offers them; a message that names one gets its study.
+const REFERENCE_FOLDERS = (() => {
+  try {
+    return JSON.parse(document.getElementById("reference-folders")?.textContent || "[]");
+  } catch {
+    return [];
+  }
+})();
+
+// The "@" (and what follows) right before the caret, if the user is naming a reference folder.
+function folderQuery() {
+  const caret = ui.input.selectionStart;
+  if (caret !== ui.input.selectionEnd || !REFERENCE_FOLDERS.length) return null;
+  const match = ui.input.value.slice(0, caret).match(/(^|[^\w@])@([^\s@]*)$/);
+  return match ? { start: caret - match[2].length - 1, typed: match[2] } : null;
+}
+
+function renderFolderPicker(query) {
+  const typed = query.typed.toLowerCase();
+  const matches = REFERENCE_FOLDERS.filter((name) => name.toLowerCase().startsWith(typed)).slice(0, 12);
+  if (!matches.length) {
+    hidePicker();
+    return;
+  }
+  ui.picker.replaceChildren(
+    ...matches.map((name) =>
+      el(
+        "li",
+        {},
+        el(
+          "button",
+          {
+            type: "button",
+            class: "image-pick folder-pick",
+            title: `Que el bot estudie la carpeta ${name}`,
+            onmousedown: (event) => event.preventDefault(),
+            onclick: () => insertText(query.start, `@${name} `),
+          },
+          el("span", { text: `@${name}` })
+        )
+      )
+    )
+  );
+  ui.picker.hidden = false;
+}
+
+function insertText(start, inserted) {
+  const value = ui.input.value;
+  const caret = ui.input.selectionStart;
+  ui.input.value = value.slice(0, start) + inserted + value.slice(caret);
+  const position = start + inserted.length;
+  ui.input.setSelectionRange(position, position);
+  hidePicker();
+  resizeInput();
+  ui.input.focus();
+}
+
 function hidePicker() {
   ui.picker.hidden = true;
   ui.picker.replaceChildren();
 }
 
 function renderPicker() {
+  const folder = folderQuery();
+  if (folder) {
+    renderFolderPicker(folder);
+    return;
+  }
   const query = refQuery();
   const images = (state.conversation?.messages || []).flatMap((m) => m.images || []);
   const matches = query
@@ -2239,15 +2315,7 @@ function renderPicker() {
 }
 
 function insertRef(query, number) {
-  const value = ui.input.value;
-  const caret = ui.input.selectionStart;
-  const inserted = `#${number} `;
-  ui.input.value = value.slice(0, query.start) + inserted + value.slice(caret);
-  const position = query.start + inserted.length;
-  ui.input.setSelectionRange(position, position);
-  hidePicker();
-  resizeInput();
-  ui.input.focus();
+  insertText(query.start, `#${number} `);
 }
 
 function setupComposer() {

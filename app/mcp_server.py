@@ -560,6 +560,29 @@ async def retry_reply(conversation_id: str) -> dict:
     return _conversation_view(await _conversation(conversation_id), since=before)
 
 
+@server.tool(annotations=READ)
+async def list_reference_folders() -> list[dict]:
+    """The folders of images on the app's PC the user accepted as references. A message that names one as
+    "@name" (or pastes its path, or a folder's inside it) gets the app's study of it -- what recurs in its
+    images' prompts, models, LoRAs and settings, and contact sheets -- for the bot to learn the style from."""
+    return await _json("GET", "/api/admin/reference-folders")
+
+
+@server.tool(annotations=WRITE)
+async def add_reference_folder(
+    name: Annotated[str, Field(description="How messages name it, as @name.")],
+    path: Annotated[str, Field(description="The folder's full path on the app's PC.")],
+) -> dict:
+    """Accept a folder of images as a reference the bot may be pointed at."""
+    return await _json("POST", "/api/admin/reference-folders", json={"name": name, "path": path})
+
+
+@server.tool(annotations=DELETE)
+async def remove_reference_folder(folder_id: str) -> dict:
+    """Stop accepting a reference folder (nothing in it is touched)."""
+    return await _json("DELETE", f"/api/admin/reference-folders/{folder_id}")
+
+
 @server.tool(annotations=LLM)
 async def redo_reply(conversation_id: str) -> dict:
     """Discard the bot's last reply and have it answer again, differently: the runs that reply

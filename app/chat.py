@@ -468,6 +468,13 @@ def build_llm_messages(
             from . import balance
             asked = message["balance"] if index > last_answer else balance.answered_text(message.get("balance_counts"))
             text = f"{asked}\n\nThe user adds: {text}" if text else asked
+        if message.get("reference_study"):
+            # A reference folder the user pointed at (references.py): the study in full while it waits
+            # for the bot's answer, a line after (its conclusions are in the reply and the notes).
+            from . import references
+            study = (message["reference_study"] if index > last_answer
+                     else references.answered_text(message.get("references")))
+            text = f"{text}\n\n{study}" if text else study
         if message.get("reactions"):
             line = reactions_text(message["reactions"], numbers)
             text = f"{text}\n\n{line}" if text else line

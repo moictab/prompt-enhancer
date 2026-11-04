@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from pydantic import BaseModel, Field
 
 from .. import (balance, catalog, chat_tools, civitai, claude_code, comfy, conversation_turn, conversations, history,
-               memory, retry_later, runs)
+               memory, references, retry_later, runs)
 from .api import _require_family, read_image
 
 router = APIRouter(prefix="/api/conversations")
@@ -97,6 +97,8 @@ def get_conversation(conversation_id: str):
     run is under way): GET …/balance has it."""
     conversation = _require_conversation(conversation_id)
     conversation["messages"] = [{**m, "balance": True} if m.get("balance") else m for m in conversation["messages"]]
+    conversation["messages"] = [{**m, "reference_study": True} if m.get("reference_study") else m
+                                for m in conversation["messages"]]
     if claude_code.engine(conversation):
         # The subscription's usage as the latest turn reported it (any conversation's: it's the account's).
         conversation["claude_code_limits"] = claude_code.limits()
@@ -189,6 +191,14 @@ async def send_message(
             shared.append(await run_in_threadpool(civitai.fetch_image, image_id))
         except civitai.CivitaiError as e:
             raise HTTPException(status_code=400, detail=str(e))
+    # An accepted reference folder ("@name", or its path): the app studies it for the bot.
+    study = None
+    mention = references.find_mention(content, references.list_folders())
+    if mention:
+        try:
+            study = await run_in_threadpool(references.study, *mention, catalog.load()["entries"] or None)
+        except references.ReferenceFolderError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     # Reading metadata and making the small copy takes a moment: off the event loop.
     saved = [
         await run_in_threadpool(conversations.save_image, conversation_id, data, image.content_type)
@@ -198,9 +208,14 @@ async def send_message(
                                 None, item.workflow, item.metadata)
         for item in shared
     ]
-    conversations.append_message(
-        conversation_id, {"role": "user", "content": content.strip(), "images": saved}
-    )
+    message = {"role": "user", "content": content.strip(), "images": saved}
+    if study:
+        sheets = [await run_in_threadpool(conversations.save_image, conversation_id, data, "image/jpeg")
+                  for data in study.sheets]
+        message["images"] = saved + [{**sheet, "sheet": True} for sheet in sheets]
+        message["references"] = study.counts
+        message["reference_study"] = study.text
+    conversations.append_message(conversation_id, message)
     _start_initiative(conversation_id)
     return _reply(conversation_id)
 

@@ -2,7 +2,7 @@ import requests
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from .. import catalog, comfy, families, image_metadata, memory, system_prompt, workflows
+from .. import catalog, comfy, families, image_metadata, memory, references, system_prompt, workflows
 from ..seed import DEFAULT_SYSTEM_PROMPTS
 from .api import read_image
 
@@ -74,6 +74,32 @@ def update_note(note_id: str, payload: NotePayload):
 def delete_note(note_id: str):
     if not memory.delete_note(note_id):
         raise HTTPException(status_code=404, detail="Unknown note")
+    return {"deleted": True}
+
+
+class ReferenceFolderPayload(BaseModel):
+    name: str
+    path: str
+
+
+@router.get("/reference-folders")
+def list_reference_folders():
+    """The folders a message may point the bot at, with how many images each has now."""
+    return [references.with_counts(entry) for entry in references.list_folders()]
+
+
+@router.post("/reference-folders")
+def create_reference_folder(payload: ReferenceFolderPayload):
+    try:
+        return references.with_counts(references.create_folder(payload.name, payload.path))
+    except references.ReferenceFolderError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/reference-folders/{folder_id}")
+def delete_reference_folder(folder_id: str):
+    if not references.delete_folder(folder_id):
+        raise HTTPException(status_code=404, detail="Unknown reference folder")
     return {"deleted": True}
 
 

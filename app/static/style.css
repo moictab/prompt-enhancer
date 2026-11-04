@@ -812,6 +812,14 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .memory-form { display: flex; align-items: flex-end; gap: 0.75rem; max-width: 52rem; margin-bottom: 1rem; }
 .memory-form textarea { flex: 1; }
 .memory-list { max-width: 52rem; }
+.reference-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem; max-width: 52rem; margin-bottom: 1rem; }
+.reference-form .field { margin: 0; }
+.reference-path-field { flex: 1; min-width: min(100%, 18rem); }
+.reference-list { max-width: 52rem; }
+.reference-list .reference-path { overflow-wrap: anywhere; }
+.reference-list .item.is-missing .item-text { color: var(--stop); }
+.msg-reference { margin: 0; color: var(--paper-dim); font-size: var(--step--1); }
+.folder-pick { padding: 0.35rem 0.6rem; }
 
 .file-button { position: relative; cursor: pointer; }
 .file-button:focus-within { outline: 2px solid var(--safelight); outline-offset: 2px; }

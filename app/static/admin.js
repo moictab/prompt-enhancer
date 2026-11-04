@@ -216,6 +216,82 @@ function setupMemory() {
     .catch((err) => toast(`No se ha podido cargar la memoria: ${err.message}`, { error: true }));
 }
 
+// ---------- reference folders ----------
+
+function setupReferences() {
+  const list = $("reference-list");
+  const form = $("reference-form");
+  const name = $("reference-name");
+  const path = $("reference-path");
+  const addButton = $("reference-add");
+  if (!list) return;
+  let folders = [];
+
+  const imagesText = (folder) =>
+    folder.missing
+      ? "La carpeta ya no está en esa ruta."
+      : `${folder.images}${folder.capped ? " o más" : ""} ${folder.images === 1 ? "imagen" : "imágenes"}`;
+
+  function render() {
+    if (!folders.length) {
+      list.replaceChildren(el("li", { class: "item-empty", text: "Aún no hay carpetas aceptadas." }));
+      return;
+    }
+    list.replaceChildren(
+      ...folders.map((folder) =>
+        el(
+          "li",
+          { class: `item${folder.missing ? " is-missing" : ""}`, "data-id": folder.id },
+          el("span", { class: "item-title", text: `@${folder.name}` }),
+          el("span", { class: "item-actions" }, confirmButton("Quitar", () => remove(folder))),
+          el("span", { class: "item-text reference-path", text: folder.path }),
+          el("span", { class: "item-text", text: imagesText(folder) })
+        )
+      )
+    );
+  }
+
+  async function remove(folder) {
+    try {
+      await request(`/api/admin/reference-folders/${folder.id}`, { method: "DELETE" });
+      folders = folders.filter((f) => f.id !== folder.id);
+      render();
+      toast(`@${folder.name} ya no es una carpeta de referencia. No se ha borrado nada de ella.`);
+    } catch (err) {
+      toast(err.message, { error: true });
+    }
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!name.value.trim()) return name.focus();
+    if (!path.value.trim()) return path.focus();
+    setBusy(addButton, true, "Comprobando…");
+    try {
+      const folder = await request("/api/admin/reference-folders", {
+        method: "POST",
+        json: { name: name.value, path: path.value },
+      });
+      folders.push(folder);
+      name.value = "";
+      path.value = "";
+      render();
+      toast(`Carpeta aceptada: @${folder.name}, ${imagesText(folder)}.`);
+    } catch (err) {
+      toast(err.message, { error: true });
+    } finally {
+      setBusy(addButton, false);
+    }
+  });
+
+  request("/api/admin/reference-folders")
+    .then((loaded) => {
+      folders = loaded;
+      render();
+    })
+    .catch((err) => toast(`No se han podido cargar las carpetas: ${err.message}`, { error: true }));
+}
+
 // ---------- list + editor panels (families, workflows) ----------
 
 function setupCrud({ endpoint, list, form, title, saveButton, newButton, nouns, fields, describe, toPayload }) {
@@ -551,6 +627,7 @@ function setupCatalog() {
 document.addEventListener("DOMContentLoaded", () => {
   setupSystemPrompts();
   setupMemory();
+  setupReferences();
   setupFamilies();
   setupWorkflows();
   setupCatalog();

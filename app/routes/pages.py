@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from .. import claude_code, comfy, families
+from .. import claude_code, comfy, families, references
 from ..config import get_settings
 
 router = APIRouter()
@@ -26,6 +26,8 @@ def conversar_page(request: Request):
             "claude_code_available": claude_code.available(),
             "claude_code_models": claude_code.MODELS,
             "default_claude_model": get_settings().claude_code_model,
+            # Offered when "@" is typed in the composer: a message that names one gets its study.
+            "reference_folders": [f["name"] for f in references.list_folders()],
         },
     )
 
