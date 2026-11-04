@@ -32,11 +32,28 @@
           {% endfor %}
         </select>
       </div>
+      {% if claude_code_available %}
       <div class="field">
+        <label for="chat-engine">Responde</label>
+        <select id="chat-engine">
+          <option value="openrouter">Un modelo de OpenRouter</option>
+          <option value="claude-code">Claude Code (tu suscripción)</option>
+        </select>
+      </div>
+      <div class="field" id="chat-claude-model-field" hidden>
+        <label for="chat-claude-model">Modelo de Claude</label>
+        <select id="chat-claude-model" data-default="{{ default_claude_model }}">
+          {% for name in claude_code_models %}
+          <option value="{{ name }}">{{ name | capitalize }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+      <div class="field" id="chat-model-field">
         <label for="chat-model">Modelo de texto</label>
         <input id="chat-model" type="text" list="openrouter-models" value="{{ default_llm_model }}" spellcheck="false" autocomplete="off">
       </div>
-      <div class="field">
+      <div class="field" id="chat-temperature-field">
         <label for="chat-temperature">Creatividad <output id="chat-temperature-value" for="chat-temperature">0.7</output></label>
         <input id="chat-temperature" type="range" min="0" max="1" step="0.05" value="0.7">
       </div>

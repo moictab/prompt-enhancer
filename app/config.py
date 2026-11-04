@@ -21,6 +21,13 @@ class Settings:
     comfy_direct_url: str = ""
     # Civitai's API key: images shared by URL are read with it (optional).
     civitai_api_key: str = ""
+    # Claude Code as Conversar's bot (claude_code.py): the command, the configuration folder whose
+    # login it uses (an account of its own, not the one Claude Code uses elsewhere on the PC), the
+    # model new conversations start with, and the address its MCP calls come back to (this app).
+    claude_code_command: str = "claude"
+    claude_code_config_dir: str = ""
+    claude_code_model: str = "opus"
+    self_url: str = "http://127.0.0.1:8090"
 
 
 def get_settings() -> Settings:
@@ -34,4 +41,9 @@ def get_settings() -> Settings:
         comfy_gateway_url=os.environ.get("COMFY_GATEWAY_URL", "").strip(),
         comfy_direct_url=os.environ.get("COMFY_DIRECT_URL", "").strip(),
         civitai_api_key=os.environ.get("CIVITAI_API_KEY", "").strip(),
+        claude_code_command=os.environ.get("CLAUDE_CODE_COMMAND", "claude").strip() or "claude",
+        claude_code_config_dir=os.path.expanduser(
+            os.environ.get("CLAUDE_CODE_CONFIG_DIR", "").strip() or "~/.claude-prompt-enhancer"),
+        claude_code_model=os.environ.get("CLAUDE_CODE_MODEL", "").strip() or "opus",
+        self_url=(os.environ.get("SELF_URL", "").strip() or "http://127.0.0.1:8090").rstrip("/"),
     )

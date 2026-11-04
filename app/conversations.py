@@ -53,10 +53,13 @@ def create(
     character_ids: list[str],
     root: str | None = None,
     auto_comment: bool = True,
+    engine: str = "openrouter",
+    claude_model: str = "",
 ) -> dict:
     """auto_comment: when a run finishes, the bot looks at its images on its own; off, they
     wait for the user's next message (one request fewer per run). Older conversations,
-    without the field, comment (comments_on_results)."""
+    without the field, comment (comments_on_results). engine: who answers, the LLM on
+    OpenRouter (llm_model) or Claude Code (claude_model; claude_code.py)."""
     now = _now()
     conversation = {
         "id": str(uuid.uuid4()),
@@ -68,6 +71,8 @@ def create(
         "temperature": temperature,
         "character_ids": character_ids,
         "auto_comment": auto_comment,
+        "engine": engine,
+        "claude_model": claude_model,
         "cost": None,
         "messages": [],
     }
@@ -134,12 +139,28 @@ def list_summaries(root: str | None = None) -> list[dict]:
 def update_settings(conversation_id: str, changes: dict, root: str | None = None) -> dict | None:
     """Change settings, or the title (the user's: the bot only titles an untitled
     conversation). Neither counts as activity: updated_at, the list's order, stays."""
-    allowed = {"family_id", "llm_model", "temperature", "character_ids", "title", "auto_comment"}
+    allowed = {"family_id", "llm_model", "temperature", "character_ids", "title", "auto_comment", "engine",
+               "claude_model"}
     with _lock:
         conversation = get(conversation_id, root)
         if conversation is None:
             return None
         conversation.update({k: v for k, v in changes.items() if k in allowed})
+        storage.write_json(_path(conversation_id, root), conversation)
+        return conversation
+
+
+def set_claude_code(conversation_id: str, state: dict | None, root: str | None = None) -> dict | None:
+    """Claude Code's session for the conversation (claude_code.py): its id, what its recorded
+    system prompt held, what context was sent last; None forgets it (the next turn starts a new one)."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return None
+        if state is None:
+            conversation.pop("claude_code", None)
+        else:
+            conversation["claude_code"] = state
         storage.write_json(_path(conversation_id, root), conversation)
         return conversation
 

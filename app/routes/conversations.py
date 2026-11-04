@@ -6,7 +6,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .. import balance, catalog, civitai, conversation_turn, conversations, runs
+from .. import balance, catalog, civitai, claude_code, conversation_turn, conversations, runs
 from .api import _require_family, read_image
 
 router = APIRouter(prefix="/api/conversations")
@@ -28,12 +28,17 @@ def _require_model(llm_model: str) -> str:
     return llm_model.strip()
 
 
+Engine = Literal["openrouter", "claude-code"]
+
+
 class ConversationSettings(BaseModel):
     family_id: str
     llm_model: str
     temperature: float = Field(default=0.7, ge=0, le=2)
     character_ids: list[str] = []
     auto_comment: bool = True
+    engine: Engine = "openrouter"
+    claude_model: str = Field(default="", max_length=80)
 
 
 class ConversationSettingsUpdate(BaseModel):
@@ -43,6 +48,8 @@ class ConversationSettingsUpdate(BaseModel):
     character_ids: list[str] | None = None
     title: str | None = Field(default=None, max_length=MAX_TITLE_LENGTH)
     auto_comment: bool | None = None
+    engine: Engine | None = None
+    claude_model: str | None = Field(default=None, max_length=80)
 
 
 def _require_idle(conversation_id: str) -> None:
@@ -62,12 +69,18 @@ def list_conversations():
     return [_with_activity(s) for s in conversations.list_summaries()]
 
 
+def _require_engine(engine: str | None) -> None:
+    if engine == claude_code.ENGINE and not claude_code.available():
+        raise HTTPException(status_code=400, detail="Claude Code isn't installed here (CLAUDE_CODE_COMMAND)")
+
+
 @router.post("")
 def create_conversation(req: ConversationSettings):
     _require_family(req.family_id)
+    _require_engine(req.engine)
     return conversations.create(
         req.family_id, _require_model(req.llm_model), req.temperature, req.character_ids,
-        auto_comment=req.auto_comment,
+        auto_comment=req.auto_comment, engine=req.engine, claude_model=req.claude_model.strip(),
     )
 
 
@@ -93,6 +106,9 @@ def update_conversation(conversation_id: str, req: ConversationSettingsUpdate):
         _require_family(changes["family_id"])
     if "llm_model" in changes:
         changes["llm_model"] = _require_model(changes["llm_model"])
+    _require_engine(changes.get("engine"))
+    if "claude_model" in changes:
+        changes["claude_model"] = changes["claude_model"].strip()
     updated = conversations.update_settings(conversation_id, changes)
     if updated is None:
         raise HTTPException(status_code=404, detail="Unknown conversation")

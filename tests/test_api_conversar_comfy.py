@@ -143,6 +143,9 @@ def test_finished_runs_bring_their_images_and_an_automatic_comment(api_client, a
     assert last[0]["text"].startswith("[Run 1 (krea-2/txt2img, 2:3 portrait, 1 MP) finished: image 1 (seed")
     assert last[0]["text"].endswith(conversation_turn.chat.AUTOMATIC_NOTE)
     assert sum(1 for p in last if p["type"] == "image_url") == 2
+    # It can't launch on this turn, and is told so: it mustn't promise a run that won't come.
+    assert conversation_turn.chat.LOOKING_RULE in message_text(request["messages"][-1])
+    assert "make all the calls together, in the same step" in request["messages"][0]["content"]
 
     # The image a run made is served, and image:N reruns its exact workflow.
     image_id = results["images"][0]["id"]

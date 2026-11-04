@@ -32,7 +32,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import catalog, chat, chat_tools, comfy, conversations, families, history, memory, runs, workflows
+from . import (catalog, chat, chat_tools, claude_code, comfy, conversations, families, history, memory, runs,
+               workflows)
 from .characters import list_characters
 from .config import get_settings
 from .openrouter_client import StreamEnd, list_models, stream_chat
@@ -234,7 +235,10 @@ def _model_takes_tools(model: str) -> bool:
 
 def toolbox_for(conversation: dict) -> chat_tools.ToolBox | None:
     client = comfy.client()
-    if client is None or not _model_takes_tools(conversation["llm_model"]):
+    if client is None:
+        return None
+    # Claude Code always calls tools; a model on OpenRouter only if the model list says it can.
+    if not claude_code.engine(conversation) and not _model_takes_tools(conversation["llm_model"]):
         return None
     return chat_tools.ToolBox(conversation["id"], client)
 
@@ -296,11 +300,7 @@ def _turn(conversation_id: str, automatic: bool):
         catalog.ensure_fresh(toolbox.client)  # file names: before every turn, if a couple of minutes old
         models_section = catalog.prompt_section()
         installed = catalog.load()["entries"] or None
-    system = chat.build_system_prompt(
-        family, characters,
-        workflows=library if toolbox else None,
-        families=[f["name"] for f in families.list_families()] if toolbox else None,
-    )
+    family_names = [f["name"] for f in families.list_families()]
     # Working on its own: an automatic turn (its look at a run's images) may launch the next run,
     # while the budget lasts.
     working = conversations.autonomy(conversation)
@@ -308,18 +308,65 @@ def _turn(conversation_id: str, automatic: bool):
     # Taking stock (balance.py) is a look back: nothing to call, let alone launch.
     taking_stock = bool(last.get("balance"))
     # What changes every turn goes at the end of the latest message, after the cached part.
-    turn_context = chat.turn_context(notes, models_section, needs_title=not conversation["title"],
-                                     autonomy=chat.autonomy_text(working, automatic, _budget_spent(working))
-                                     if working else None,
-                                     comments_off=bool(toolbox) and not conversations.comments_on_results(conversation))
+    context_parts = {
+        "notes": notes, "models": models_section, "needs_title": not conversation["title"],
+        "autonomy": chat.autonomy_text(working, automatic, _budget_spent(working)) if working else None,
+        "comments_off": bool(toolbox) and not conversations.comments_on_results(conversation),
+        # Its look at a run's results launches nothing: it shouldn't say it will.
+        "looking": bool(toolbox) and automatic and not autonomous,
+    }
     load_image = _image_loader(conversation_id)
-    model, temperature = conversation["llm_model"], conversation["temperature"]
-    api_key = get_settings().openrouter_api_key
+    on_claude = claude_code.engine(conversation)
     logger.info(
         "conversation reply conversation_id=%s family_id=%s model=%s messages=%d tools=%s automatic=%s",
-        conversation_id, family["id"], model, len(conversation["messages"]), bool(toolbox), automatic,
+        conversation_id, family["id"],
+        f"claude-code/{claude_code.model_for(conversation)}" if on_claude else conversation["llm_model"],
+        len(conversation["messages"]), bool(toolbox), automatic,
     )
 
+    extra = None
+    if on_claude:
+        steps, ends, failure, extra = yield from claude_code.run(
+            conversation, family, characters, toolbox, library, family_names, context_parts, load_image, installed,
+            automatic=automatic, tools_allowed=not ((automatic and not autonomous) or taking_stock))
+    else:
+        system = chat.build_system_prompt(family, characters, workflows=library if toolbox else None,
+                                          families=family_names if toolbox else None)
+        steps, ends, failure = yield from _openrouter_steps(
+            conversation, system, chat.turn_context(**context_parts), toolbox, load_image, installed,
+            automatic=automatic, no_tools=(automatic and not autonomous) or taking_stock)
+
+    used_tools = any(s["tool_calls"] for s in steps)
+    if failure and not used_tools:
+        _settle_autonomy(conversation_id)
+        yield {"type": "error", **failure}
+        return
+    if not used_tools and not "".join(s["text"] for s in steps).strip():
+        _settle_autonomy(conversation_id)
+        yield {
+            "type": "error",
+            "detail": "The model returned an empty reply. Try again.",
+            "request_id": ends[-1].request_id if ends else None,
+        }
+        return
+    # A run of another family's model may have switched the conversation's family meanwhile:
+    # the reply's prompts are written (and kept) by the family it ended in.
+    family = families.get_family((conversations.get(conversation_id) or {}).get("family_id", "")) or family
+    updated = _store_reply(conversation_id, family, characters, notes, steps, ends, failure, automatic, extra)
+    if updated is None:
+        yield {"type": "error", "detail": "The conversation was deleted while replying."}
+        return
+    if _settle_autonomy(conversation_id):
+        updated = conversations.get(conversation_id) or updated
+    yield {"type": "done", "message": updated["messages"][-1], "conversation": conversations.summary(updated)}
+
+
+def _openrouter_steps(conversation: dict, system: str, turn_context: str | None, toolbox, load_image, installed,
+                      *, automatic: bool, no_tools: bool):
+    """The reply from the LLM on OpenRouter, in steps: yields its events, returns (steps, ends, failure)."""
+    conversation_id = conversation["id"]
+    model, temperature = conversation["llm_model"], conversation["temperature"]
+    api_key = get_settings().openrouter_api_key
     steps: list[dict] = []  # {"text", "tool_calls", "results", "parts"}
     ends: list[StreamEnd] = []
     failure = None
@@ -337,7 +384,7 @@ def _turn(conversation_id: str, automatic: bool):
             ),
         ]
         messages = with_cache_breakpoints(model, messages, history_length, history.volatile_tail)
-        no_more_tools = (automatic and not autonomous) or taking_stock or index == MAX_STEPS - 1
+        no_more_tools = no_tools or index == MAX_STEPS - 1
         context = {"mode": "conversation", "conversation_id": conversation_id, "step": index + 1}
         if automatic:
             context["automatic"] = True
@@ -378,30 +425,7 @@ def _turn(conversation_id: str, automatic: bool):
             yield {"type": "tool", "part": part}
         if _launched(step):
             break  # the run is under way: nothing left to say until its images arrive
-
-    used_tools = any(s["tool_calls"] for s in steps)
-    if failure and not used_tools:
-        _settle_autonomy(conversation_id)
-        yield {"type": "error", **failure}
-        return
-    if not used_tools and not "".join(s["text"] for s in steps).strip():
-        _settle_autonomy(conversation_id)
-        yield {
-            "type": "error",
-            "detail": "The model returned an empty reply. Try again.",
-            "request_id": ends[-1].request_id if ends else None,
-        }
-        return
-    # A run of another family's model may have switched the conversation's family meanwhile:
-    # the reply's prompts are written (and kept) by the family it ended in.
-    family = families.get_family((conversations.get(conversation_id) or {}).get("family_id", "")) or family
-    updated = _store_reply(conversation_id, family, characters, notes, steps, ends, failure, automatic)
-    if updated is None:
-        yield {"type": "error", "detail": "The conversation was deleted while replying."}
-        return
-    if _settle_autonomy(conversation_id):
-        updated = conversations.get(conversation_id) or updated
-    yield {"type": "done", "message": updated["messages"][-1], "conversation": conversations.summary(updated)}
+    return steps, ends, failure
 
 
 def _launched(step: dict) -> bool:
@@ -458,8 +482,9 @@ def _apply_note_changes(reply_updates, reply_forgets, notes_at_start: list[dict]
     return changes
 
 
-def _store_reply(conversation_id, family, characters, notes_at_start, steps, ends, failure, automatic):
-    """Save the finished reply, its note changes, and (when it proposes prompts) a history entry."""
+def _store_reply(conversation_id, family, characters, notes_at_start, steps, ends, failure, automatic, extra=None):
+    """Save the finished reply, its note changes, and (when it proposes prompts) a history entry.
+    extra: fields for the message (Claude Code's: which engine wrote it, its estimated cost)."""
     conversation = conversations.get(conversation_id)
     if conversation is None:
         return None
@@ -530,6 +555,8 @@ def _store_reply(conversation_id, family, characters, notes_at_start, steps, end
         message["automatic"] = True
     if failure:
         message["error"] = failure["detail"]
+    if extra:
+        message.update(extra)
     logger.info(
         "conversation reply stored conversation_id=%s prompts=%d notes=%d note_changes=%d steps=%d cost=%s",
         conversation_id, len(proposed), len(created), len(note_changes), len(steps), cost,

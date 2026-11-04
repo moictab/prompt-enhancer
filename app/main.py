@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
-from . import comfy, mcp_server, runs
+from . import bot_seat, comfy, mcp_server, runs
 from .auth import require_auth
 from .config import get_settings
 from .logging_config import configure_logging
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
     # still pending from before a restart.
     if comfy.client() is not None:
         runs.tracker.start()
-    async with mcp_server.running():
+    async with mcp_server.running(), bot_seat.running():
         yield
     runs.tracker.stop()
 
@@ -55,10 +55,10 @@ async def log_requests(request: Request, call_next):
         # No build step means no hashed filenames, so make browsers revalidate
         # (cheap 304s) instead of running stale JS/CSS after a deploy.
         response.headers["Cache-Control"] = "no-cache"
-    request_logger.info(
-        "%s %s -> %d (%.1fms)",
-        request.method, request.url.path, response.status_code, duration_ms,
-    )
+    path = request.url.path
+    if path.startswith("/mcp/bot/"):
+        path = "/mcp/bot/<turn>"  # the token opens a turn's tools: not for the log
+    request_logger.info("%s %s -> %d (%.1fms)", request.method, path, response.status_code, duration_ms)
     return response
 
 
@@ -70,3 +70,5 @@ app.include_router(page_routes.router)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 # MCP for agents (/mcp): its own Basic Auth check, since the app's dependency covers only its API routes.
 mcp_server.attach(app)
+# The bot's tools for a Claude Code turn (/mcp/bot/<token>): the token is the credential.
+bot_seat.attach(app)

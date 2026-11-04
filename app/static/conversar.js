@@ -54,6 +54,11 @@ const ui = {
   temperatureValue: $("chat-temperature-value"),
   chips: $("chat-chips"),
   autoComment: $("chat-auto-comment"), // only with ComfyUI configured
+  engine: $("chat-engine"), // only with Claude Code installed
+  claudeModel: $("chat-claude-model"),
+  claudeModelField: $("chat-claude-model-field"),
+  modelField: $("chat-model-field"),
+  temperatureField: $("chat-temperature-field"), // Claude Code has no temperature to set
   chat: document.querySelector(".chat"),
   scroll: $("chat-scroll"),
   log: $("chat-log"),
@@ -107,7 +112,22 @@ function settings() {
     temperature: source.temperature,
     character_ids: source.character_ids || [],
     auto_comment: source.auto_comment !== false, // conversations from before the setting comment
+    engine: source.engine || "openrouter",
+    claude_model: source.claude_model || "",
   };
+}
+
+const CLAUDE_CODE = "claude-code";
+
+function onClaude(values = settings()) {
+  return values.engine === CLAUDE_CODE;
+}
+
+// "Claude Code · Sonnet", or the OpenRouter model's short name.
+function engineLabel(values = settings()) {
+  if (!onClaude(values)) return shortModel(values.llm_model);
+  const name = values.claude_model || ui.claudeModel?.dataset.default || "";
+  return `Claude Code · ${name.charAt(0).toUpperCase()}${name.slice(1)}`;
 }
 
 function familyName(familyId) {
@@ -1233,7 +1253,7 @@ function renderHead() {
   ui.meta.replaceChildren(
     ...[
       el("span", { text: familyName(current.family_id) }),
-      el("span", { title: current.llm_model, text: shortModel(current.llm_model) }),
+      el("span", { title: onClaude(current) ? "Responde Claude Code con tu suscripción" : current.llm_model, text: engineLabel(current) }),
       conversation?.cost && el("span", { text: formatCost(conversation.cost) }),
     ].filter(Boolean)
   );
@@ -1246,6 +1266,13 @@ function applySettingsToForm(values) {
   ui.temperature.value = values.temperature ?? 0.7;
   ui.temperatureValue.textContent = ui.temperature.value;
   if (ui.autoComment) ui.autoComment.checked = values.auto_comment !== false;
+  if (ui.engine) {
+    ui.engine.value = values.engine === CLAUDE_CODE ? CLAUDE_CODE : "openrouter";
+    ui.claudeModel.value = values.claude_model || ui.claudeModel.dataset.default;
+    ui.claudeModelField.hidden = !onClaude(values);
+    ui.modelField.hidden = onClaude(values);
+    ui.temperatureField.hidden = onClaude(values);
+  }
   renderChips();
   renderComfyStatus();
 }
@@ -1257,13 +1284,15 @@ function renderComfyStatus() {
     return;
   }
   const model = settings().llm_model;
-  const takesTools = state.toolSupport.get(model);
+  const takesTools = onClaude() ? true : state.toolSupport.get(model);
   ui.comfyStatus.hidden = false;
   ui.comfyStatus.classList.toggle("is-off", takesTools === false);
   ui.comfyStatus.textContent =
     takesTools === false
       ? `${shortModel(model)} no admite herramientas: con este modelo el bot no puede lanzar workflows en ComfyUI.`
-      : "El bot puede lanzar workflows en tu ComfyUI (a través de comfy-gateway).";
+      : onClaude()
+        ? "Claude Code puede lanzar workflows en tu ComfyUI (a través de comfy-gateway), con las herramientas del bot y nada más."
+        : "El bot puede lanzar workflows en tu ComfyUI (a través de comfy-gateway).";
 }
 
 function rememberSettings() {
@@ -1279,7 +1308,7 @@ async function changeSettings(changes) {
   }
   try {
     const updated = await request(`/api/conversations/${state.conversation.id}`, { method: "PATCH", json: changes });
-    for (const key of ["family_id", "llm_model", "temperature", "character_ids", "auto_comment"]) {
+    for (const key of ["family_id", "llm_model", "temperature", "character_ids", "auto_comment", "engine", "claude_model"]) {
       state.conversation[key] = updated[key];
     }
     rememberSettings();
@@ -1477,6 +1506,8 @@ function defaultSettings() {
     temperature: typeof stored.temperature === "number" ? stored.temperature : 0.7,
     character_ids: Array.isArray(stored.character_ids) ? stored.character_ids : [],
     auto_comment: stored.auto_comment !== false,
+    engine: ui.engine && stored.engine === CLAUDE_CODE ? CLAUDE_CODE : "openrouter",
+    claude_model: stored.claude_model || "",
   };
 }
 
@@ -1849,7 +1880,7 @@ function takeStock() {
   }
   disarmTakeStock();
   const model = settings().llm_model;
-  if (state.visionSupport.get(model) === false) {
+  if (!onClaude() && state.visionSupport.get(model) === false) {
     setSettingsOpen(true);
     showError(`${shortModel(model)} no acepta imágenes. Elige en los ajustes un modelo con visión.`);
     return;
@@ -1901,7 +1932,7 @@ async function submitMessage(event) {
   }
   const hasRunImages = (state.conversation?.messages || []).some((m) => m.role === "results" && m.images?.length);
   const hasCivitaiLink = /civitai\.(?:com|green|red)\/images\/\d+/i.test(content);
-  if ((attachments.length || hasRunImages || hasCivitaiLink) && state.visionSupport.get(current.llm_model) === false) {
+  if ((attachments.length || hasRunImages || hasCivitaiLink) && !onClaude(current) && state.visionSupport.get(current.llm_model) === false) {
     setSettingsOpen(true);
     showError(`${shortModel(current.llm_model)} no acepta imágenes. Elige en los ajustes un modelo con visión.`);
     return;
@@ -2133,6 +2164,17 @@ function setupSettings() {
     if (value) changeSettings({ llm_model: value }).then(renderComfyStatus);
     else ui.model.value = settings().llm_model;
   });
+  ui.engine?.addEventListener("change", () => {
+    const engine = ui.engine.value;
+    const changes = { engine };
+    // The model Claude Code answers with: the last one picked, or the default.
+    if (engine === CLAUDE_CODE && !settings().claude_model) changes.claude_model = ui.claudeModel.value;
+    changeSettings(changes).then(() => {
+      applySettingsToForm(settings());
+      renderHead();
+    });
+  });
+  ui.claudeModel?.addEventListener("change", () => changeSettings({ claude_model: ui.claudeModel.value }).then(renderHead));
   ui.temperature.addEventListener("input", () => (ui.temperatureValue.textContent = ui.temperature.value));
   ui.temperature.addEventListener("change", () => changeSettings({ temperature: Number(ui.temperature.value) }));
   ui.autoComment?.addEventListener("change", () =>
