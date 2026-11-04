@@ -882,6 +882,21 @@ function ratingsLine(ratings) {
   return line;
 }
 
+// A note the bot wrote that wasn't kept (too long, or citing an image number): it's told why next turn.
+const NOTE_REFUSED = {
+  too_long: "No guardada: demasiado larga (una idea por nota). El bot la reescribirá.",
+  image_number: "No guardada: cita un número de imagen, que en otras conversaciones es otra imagen. El bot la reescribirá.",
+};
+
+function refusedNoteChip(item) {
+  return el(
+    "div",
+    { class: "memory-chip is-forgotten" },
+    el("span", { class: "memory-chip-label", text: NOTE_REFUSED[item.reason] || "No guardada" }),
+    el("span", { class: "memory-chip-text", text: item.text })
+  );
+}
+
 function noteChip(note) {
   const forgotten = state.noteIds && !state.noteIds.has(note.id);
   const chip = el(
@@ -1200,6 +1215,7 @@ function fillBotMessage(
     notes = [],
     note_changes: noteChanges = [],
     ratings = [],
+    notes_refused: notesRefused = [],
     cost = null,
     truncated = false,
     request_id: requestId = null,
@@ -1240,8 +1256,12 @@ function fillBotMessage(
     ...[
       ...body,
       !live && ratingsLine(ratings),
-      (notes.length > 0 || noteChanges.length > 0) &&
-        el("div", { class: "msg-notes" }, [...noteChanges.map(noteChangeChip), ...notes.map(noteChip)]),
+      (notes.length > 0 || noteChanges.length > 0 || notesRefused.length > 0) &&
+        el("div", { class: "msg-notes" }, [
+          ...noteChanges.map(noteChangeChip),
+          ...notes.map(noteChip),
+          ...notesRefused.map(refusedNoteChip),
+        ]),
       truncated &&
         el("p", { class: "notice is-warning", text: "La respuesta se cortó por el límite de longitud: lo último puede estar incompleto." }),
       error && el("p", { class: "notice is-error", text: `La respuesta se quedó a medias. ${error}` }),

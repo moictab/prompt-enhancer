@@ -67,6 +67,25 @@ def test_prompt_section_groups_names_and_adds_what_is_known(fake_comfy):
     ]
 
 
+def test_prompt_section_details_only_the_conversations_family(fake_comfy):
+    _refresh(fake_comfy)
+    catalog.set_description(INK, "inky linework")
+    catalog.set_description(DETAIL, "sharpens")
+
+    section = catalog.prompt_section(covers=lambda folder: folder == "krea-2")
+
+    assert section.splitlines()[1:] == [
+        "Checkpoints:",
+        "- illustrious: wai-v14",
+        "Diffusion models:",
+        "- krea-2: krea-2-turbo",
+        "LoRAs:",
+        "- illustrious: 1 LoRA (another family)",
+        "- krea-2: base-real_v3, style-ink_v1 (inky linework)",
+    ]
+    assert "the other families' files" in section.splitlines()[0]
+
+
 def test_prompt_section_is_none_before_the_first_refresh():
     assert catalog.prompt_section() is None
 

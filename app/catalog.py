@@ -411,9 +411,12 @@ def _record_text(record: dict | None) -> str:
     return ", ".join(parts)
 
 
-def prompt_section(data: dict | None = None) -> str | None:
-    """The installed models for the system prompt: names grouped by folder, with the owner's
-    description and how they did here when known. None until the catalog has been read."""
+def prompt_section(data: dict | None = None, covers=None) -> str | None:
+    """The installed models for the turn's context: names grouped by folder and family folder,
+    with the owner's description and how they did here when known. covers(family folder): the
+    conversation's family writes for it -- those in full; the other families' base models by
+    name only and their LoRAs as a count (list_comfy_models has them). None until the catalog
+    has been read."""
     data = data or load()
     if not data["entries"]:
         return None
@@ -422,7 +425,8 @@ def prompt_section(data: dict | None = None) -> str | None:
         "What ComfyUI has installed (file names without .safetensors). After a name: the user's description "
         "of what it does, how much and at what weight the user has used it before, and how images made with it "
         "here went (the user's reactions). list_comfy_models gives details such as trigger words, base model "
-        "and the LoRAs it is usually combined with.",
+        "and the LoRAs it is usually combined with"
+        + (", and the other families' files." if covers else "."),
     ]
     for folder, label in FOLDERS.items():
         files = sorted(f for f, e in data["entries"].items() if e.get("folder") == folder)
@@ -430,18 +434,25 @@ def prompt_section(data: dict | None = None) -> str | None:
             continue
         groups: dict[str, list[str]] = {}
         for file in files:
-            extras = [x for x in (data["descriptions"].get(file), _past_use_text(data["history"].get(file)),
-                                  _record_text(file_stats.get(file))) if x]
-            name = short_name(file)
             family = family_of(file)
+            other = covers is not None and family and not covers(family)
+            name = short_name(file)
             if family:
                 name = name[len(family) + 1:]
+            if other:  # another family's: its name (a base model) or just counted (a LoRA)
+                groups.setdefault(family, []).append(name)
+                continue
+            extras = [x for x in (data["descriptions"].get(file), _past_use_text(data["history"].get(file)),
+                                  _record_text(file_stats.get(file))) if x]
             groups.setdefault(family, []).append(f"{name} ({'; '.join(extras)})" if extras else name)
         if len(groups) == 1 and "" in groups:
             lines.append(f"{label}: {', '.join(groups[''])}")
             continue
         lines.append(f"{label}:")
         for family, names in groups.items():
+            if covers is not None and family and not covers(family) and folder == "loras":
+                lines.append(f"- {family}: {len(names)} LoRA{'s' if len(names) != 1 else ''} (another family)")
+                continue
             lines.append(f"- {family or '(top level)'}: {', '.join(names)}")
     return "\n".join(lines)
 

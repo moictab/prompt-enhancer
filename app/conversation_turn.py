@@ -252,6 +252,14 @@ def _library_entry(workflow: dict) -> dict:
             "model": ", ".join(graph.base_models()) or None}
 
 
+def _last_reply(conversation: dict) -> dict:
+    """The bot's latest reply, if nothing but user-side messages came after it."""
+    for message in reversed(conversation["messages"]):
+        if message["role"] == "assistant":
+            return message
+    return {}
+
+
 def _unanswered(conversation: dict) -> bool:
     return bool(conversation["messages"]) and conversation["messages"][-1]["role"] in ("user", "results")
 
@@ -295,7 +303,8 @@ def _turn(conversation_id: str, automatic: bool):
     if toolbox:
         catalog.refresh_in_background(toolbox.client)  # metadata: once a day, or the first time
         catalog.ensure_fresh(toolbox.client)  # file names: before every turn, if a couple of minutes old
-        models_section = catalog.prompt_section()
+        # In full for the conversation's family; the others, in brief.
+        models_section = catalog.prompt_section(covers=lambda folder: families.covers_folder(family, folder))
         installed = catalog.load()["entries"] or None
     family_names = [f["name"] for f in families.list_families()]
     # Working on its own: an automatic turn (its look at a run's images) may launch the next run,
@@ -315,6 +324,8 @@ def _turn(conversation_id: str, automatic: bool):
         "redo": bool(last.get("redo")),
         # What became of the downloads it prepared, since it last heard (downloads.py).
         "downloads": downloads.news_text(news),
+        # Notes its last reply wrote that weren't kept (too long, or citing an image number).
+        "refused": chat.refused_notes_text(_last_reply(conversation).get("notes_refused")),
     }
     load_image = _image_loader(conversation_id)
     on_claude = claude_code.engine(conversation)
@@ -500,6 +511,7 @@ def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, 
     if conversation is None:
         return None
     parts, new_notes, updates, forgets, title, contents, reviews, ratings = [], [], [], [], "", [], [], []
+    refused = []
     stored_steps = []
     for step in steps:
         reply = chat.parse_reply(step["text"], family["has_negative_prompt"])
@@ -510,6 +522,8 @@ def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, 
         forgets += reply.note_forgets
         reviews += reply.reviews
         ratings += reply.ratings
+        refused += [{"text": text, "reason": reason, **({"id": number} if number else {})}
+                    for text, reason, number in reply.refused_notes]
         if reply.content:
             contents.append(reply.content)
         stored_steps.append({"content": reply.content, "tool_calls": step["tool_calls"], "results": step["results"]})
@@ -563,6 +577,8 @@ def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, 
         message["note_changes"] = note_changes
     if rated:
         message["ratings"] = rated
+    if refused:
+        message["notes_refused"] = refused
     if any(s["tool_calls"] for s in stored_steps):
         message["steps"] = stored_steps
     if automatic:

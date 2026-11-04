@@ -29,7 +29,10 @@ MAX_REFERENCED_IMAGES = 4
 # "#4": an image's number. Not "#ff0000", "#1a" or a "&#39;" entity.
 IMAGE_REF = re.compile(r"(?<![\w&#])#(\d{1,4})\b")
 MAX_TITLE_LENGTH = 80
-MAX_NOTE_LENGTH = 300
+MAX_NOTE_LENGTH = 300  # a review or a rating's words, cut there
+# A note is one claim, short (the rules ask for 200 characters); longer ones aren't kept -- never cut:
+# the bot is told why next turn (refused_notes_text) and writes them again.
+NOTE_LIMIT = 240
 
 CONVERSATION_MECHANICS = """These mechanics take precedence over anything above that contradicts them, including any instruction about what a reply should contain or look like.
 
@@ -48,7 +51,7 @@ NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
 - You can't open links. The one exception is done for you: a link to a Civitai image (civitai.com, .green or .red, /images/<number>) arrives as the image itself, already in the message. A link that didn't arrive that way (a Civitai post or model page, another site) can't be opened: say so and ask for the image's own Civitai link or the image.
 - An image the user shares from Civitai comes with what Civitai says about it: prompt, settings and the resources it was made with (checkpoint, LoRAs with weights, base model, trigger words). To reproduce one, match those resources with what the user has installed and say what is missing and what you use instead; to borrow its style, take what defines it (its style words, LoRAs and weights) into the image you are working on, within the family's rules.
 - Write plain conversational text: short paragraphs, "- " lists when useful, **bold** sparingly. No headings, no tables, no code blocks.
-- Notes: you keep notes about the user across conversations; the ones you have come numbered in the app's context at the end of the latest message. Keep each one telegraphic -- a few words, no full sentences (e.g. "likes: cool dawn light, film grain", "krea-2: LoRA strength >0.6 burns faces"). Change them in your reply, right away and without asking: the user sees every change in the chat and can undo it.
+- Notes: you keep notes about the user across conversations; the ones you have come numbered in the app's context at the end of the latest message. Each note is one claim, telegraphic, at most 200 characters -- a few words, no full sentences (e.g. "likes: cool dawn light, film grain", "krea-2: LoRA strength >0.6 burns faces (3 of 3)") -- and stands on its own in any conversation: never an image number (#N means another image elsewhere); say what was seen instead, and how many images back it. Several findings are several notes. A note that breaks this isn't kept, and you'll be told why. Change them in your reply, right away and without asking: the user sees every change in the chat and can undo it.
   <remember>note</remember> adds one;
   <remember id="n">note</remember> rewrites note n (to correct or update it, or to merge another into it);
   <forget id="n"/> deletes note n (wrong, outdated, or merged into another).
@@ -228,9 +231,29 @@ REDO_RULE = ("The user discarded your previous reply to this message and asked y
              "a different take, not the same reply reworded.")
 
 
+REFUSED_REASONS = {
+    "too_long": "too long ({length} characters; the limit is " + str(NOTE_LIMIT) + "): one claim per note -- split it",
+    "image_number": "it cites an image number, which means another image in other conversations: say what was "
+                    "seen and how many images back it",
+}
+
+
+def refused_notes_text(refused: list[dict] | None) -> str | None:
+    """The notes the bot's last reply wrote that weren't kept, and why: for it to write them again."""
+    if not refused:
+        return None
+    lines = []
+    for item in refused:
+        what = f'note {item["id"]} rewritten as' if item.get("id") else "new note"
+        why = REFUSED_REASONS.get(item["reason"], item["reason"]).format(length=len(item["text"]))
+        lines.append(f'- {what} "{item["text"]}": {why}')
+    return ("## Notes You Wrote That Weren't Kept\nWrite them again, fixed, in this reply (or drop them):\n"
+            + "\n".join(lines))
+
+
 def turn_context(notes: list[dict], models: str | None = None, needs_title: bool = False,
                  autonomy: str | None = None, comments_off: bool = False, looking: bool = False,
-                 redo: bool = False, downloads: str | None = None) -> str | None:
+                 redo: bool = False, downloads: str | None = None, refused: str | None = None) -> str | None:
     """What changes from turn to turn, sent at the end of the latest message: the title
     request while the conversation has none, that a run's images won't come back on their
     own (comments_off: the conversation's automatic comments are off), that this turn can't
@@ -243,6 +266,8 @@ def turn_context(notes: list[dict], models: str | None = None, needs_title: bool
         sections.append(REDO_RULE)
     if downloads:
         sections.append(downloads)
+    if refused:
+        sections.append(refused)
     if comments_off:
         sections.append(COMMENTS_OFF_RULE)
     if looking:
@@ -533,6 +558,8 @@ class Reply:
     content: str  # the reply without notes or title, prompt blocks kept: what the LLM sees next time
     parts: list[dict] = field(default_factory=list)  # {"type": "text", "text"} | {"type": "prompt", ...}
     notes: list[str] = field(default_factory=list)  # new notes
+    # Notes not kept, with why (too long, or citing an image number): (text, reason, note number or None).
+    refused_notes: list[tuple[str, str, int | None]] = field(default_factory=list)
     note_updates: list[tuple[int, str]] = field(default_factory=list)  # (note number, new text)
     note_forgets: list[int] = field(default_factory=list)  # note numbers
     reviews: list[tuple[int, str, str]] = field(default_factory=list)  # (image number, ok|flawed, note)
@@ -588,13 +615,27 @@ def _note_text(text: str) -> str:
     return " ".join(text.split())[:MAX_NOTE_LENGTH]
 
 
+def note_problem(note: str) -> str | None:
+    """Why a note can't be kept as written, or None. Notes travel to every conversation: an
+    image number means another image there, and a long note is several claims in one."""
+    if len(note) > NOTE_LIMIT:
+        return "too_long"
+    if IMAGE_REF.search(note):
+        return "image_number"
+    return None
+
+
 def parse_reply(text: str, has_negative_prompt: bool) -> Reply:
     title_match = TITLE_PATTERN.search(text)
     title = " ".join(title_match.group(1).split())[:MAX_TITLE_LENGTH] if title_match else ""
-    notes, updates = [], []
+    notes, updates, refused = [], [], []
     for number, note in REMEMBER_PATTERN.findall(text):
-        note = _note_text(note)
+        note = " ".join(note.split())
         if not note:
+            continue
+        problem = note_problem(note)
+        if problem:
+            refused.append((note, problem, int(number) if number else None))
             continue
         if number:
             updates.append((int(number), note))
@@ -648,5 +689,5 @@ def parse_reply(text: str, has_negative_prompt: bool) -> Reply:
 
     return Reply(
         content=content, parts=parts, notes=notes, note_updates=updates, note_forgets=forgets, reviews=reviews,
-        ratings=ratings, title=title,
+        ratings=ratings, refused_notes=refused, title=title,
     )
