@@ -57,6 +57,8 @@ class RunTracker:
         self._stop = threading.Event()
         # Called (conversation_id, run) once a run is final and its results message is stored.
         self.on_finished = None
+        # Jobs still waiting or being made, per conversation, as of the latest poll (timing.queue_text).
+        self.waiting: dict[str, int] = {}
 
     def watch(self, conversation_id: str, n: int) -> None:
         with self._lock:
@@ -84,6 +86,7 @@ class RunTracker:
         with self._lock:
             pending = sorted(self._pending)
         client = comfy.client()
+        waiting: dict[str, int] = {}
         for conversation_id, n in pending:
             run = conversations.get_run(conversation_id, n)
             if run is None or run["status"] != "pending" or client is None:
@@ -95,6 +98,11 @@ class RunTracker:
             run = conversations.get_run(conversation_id, n)
             if run is not None and run["status"] == "pending" and all(j["status"] in FINAL for j in run["jobs"]):
                 self._finish(conversation_id, n)
+            elif run is not None:
+                left = sum(1 for j in run["jobs"] if j["status"] == "pending")
+                if left:
+                    waiting[conversation_id] = waiting.get(conversation_id, 0) + left
+        self.waiting = waiting
 
     def _forget(self, conversation_id: str, n: int) -> None:
         with self._lock:
@@ -145,12 +153,13 @@ class RunTracker:
         status = result.status if images or result.status != "success" else "error"
         if status == "error" and not error:
             error = "The workflow finished without saving any image"
-        self._set_job(conversation_id, run["n"], index, status=status, error=error, images=images)
+        self._set_job(conversation_id, run["n"], index, status=status, error=error, images=images,
+                      seconds=result.seconds)
         logger.info("run job finished conversation_id=%s run=%s job=%d status=%s images=%d",
                     conversation_id, run["n"], index, status, len(images))
 
     def _set_job(self, conversation_id: str, n: int, index: int, status: str, error: str | None = None,
-                 images: list[dict] | None = None) -> None:
+                 images: list[dict] | None = None, seconds: float | None = None) -> None:
         def change(run: dict) -> None:
             job = run["jobs"][index]
             if job["status"] != "pending":
@@ -159,6 +168,8 @@ class RunTracker:
             job["error"] = error
             job["images"] = [image["id"] for image in images or []]
             job["finished_at"] = _now()
+            if seconds is not None:
+                job["seconds"] = seconds  # how long ComfyUI took making it (timing.py)
             # The image records travel with the run until the results message takes them.
             run.setdefault("_images", []).extend(images or [])
         conversations.update_run(conversation_id, n, change)

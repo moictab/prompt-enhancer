@@ -1011,7 +1011,9 @@ function runCard(part, live) {
       class: "run-workflow",
       text: part.calibration
         ? `calibración de ${part.calibration} en ${workflowName(part.workflow)}`
-        : part.count > 1
+        : part.finish_of
+          ? `acabado de #${part.finish_of} con ${workflowName(part.workflow)}`
+          : part.count > 1
           ? `${workflowName(part.workflow)} ×${part.count}`
           : workflowName(part.workflow),
     }),
@@ -1429,7 +1431,11 @@ function resultsMessage(message) {
       el("span", { class: "run-label", text: `Ejecución ${message.run}` }),
       run && el("span", {
         class: "run-workflow",
-        text: run.kind === "calibration" ? `calibración de ${run.lora} en ${workflowName(run.workflow)}` : workflowName(run.workflow),
+        text: run.kind === "calibration"
+          ? `calibración de ${run.lora} en ${workflowName(run.workflow)}`
+          : run.kind === "finish"
+            ? `acabado de #${run.finish_of} con ${workflowName(run.workflow)}`
+            : workflowName(run.workflow),
       })
     ),
     (message.images || []).length > 0 &&

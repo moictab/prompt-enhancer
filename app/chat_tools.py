@@ -19,6 +19,8 @@ from .comfy_graph import ASPECTS, SAMPLER_SETTINGS, Graph, GraphError, is_api_wo
 logger = logging.getLogger("app.chat_tools")
 
 MAX_RUN_COUNT = 4
+# A family's finishing workflow in the library: "<model folder>/finish-image" (finish_image).
+FINISH_WORKFLOW = "finish-image"
 # Working on its own (keep_going): images it may make and dollars it may spend on its replies.
 AUTONOMY_IMAGES = 8
 AUTONOMY_MAX_IMAGES = 100
@@ -318,6 +320,26 @@ TOOLS = [
                                                                   f"{AUTONOMY_MAX_COST:g}."},
                     "stop": {"type": "boolean"},
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "finish_image",
+            "description": (
+                "Finish an image: run its family's finishing workflow (the library's \"<model folder>/"
+                f"{FINISH_WORKFLOW}\": a model upscale and detail passes) on the image itself, with the prompt, base "
+                "model and LoRAs it was made with, so its composition stays and the detail comes. changes adjusts "
+                "that run (a LoRA weight, a detailer's denoise with set...)."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "image": {"type": "integer", "minimum": 1, "description": "Its number."},
+                    "workflow": {"type": "string", "description": "Another finishing workflow of the library."},
+                    "changes": CHANGES_PARAM,
+                },
+                "required": ["image"],
             },
         },
     },
@@ -670,6 +692,11 @@ class ToolBox:
 
     def _tool_run_workflow(self, workflow: str | None = None, changes: dict | None = None, count: int = 1,
                            graph: dict | None = None) -> tuple[dict, dict]:
+        return self._launch(workflow, changes, count, graph)
+
+    def _launch(self, workflow: str | None, changes: dict | None, count, graph: dict | None,
+                run_fields: dict | None = None) -> tuple[dict, dict]:
+        """Launch a workflow with changes (run_workflow, finish_image); run_fields go on the run."""
         count = max(1, min(MAX_RUN_COUNT, _number(count or 1, int)))
         changes = changes or {}
         graph, label = self._source(workflow, graph)
@@ -703,7 +730,8 @@ class ToolBox:
             job_graph.set_output_prefix(comfy.output_prefix(folder, number, seed))
             variants.append((job_graph, seed, {}))
         size = graph.shape()
-        run = self._submit_run(label, changes, base, folder, variants, run_fields={"size": size} if size else None)
+        run = self._submit_run(label, changes, base, folder, variants,
+                               run_fields={**({"size": size} if size else {}), **(run_fields or {})} or None)
         result = {"run": run["n"], "status": "queued", "images": run["count"], "seeds": seeds[:run["count"]],
                   "model": ", ".join(run["base_models"]), "applied": done}
         if size:
@@ -924,6 +952,41 @@ class ToolBox:
             result["note"] = f"Only the first {MAX_LISTED_MODELS}: search to narrow it down."
         return result, {"type": "tool", "tool": "list_comfy_models", "folder": folder, "search": search or "",
                         "found": len(matches)}
+
+    def _tool_finish_image(self, image, workflow: str | None = None, changes: dict | None = None) -> tuple[dict, dict]:
+        conversation = self._conversation()
+        record = chat.image_by_number(conversation["messages"], image) if isinstance(image, int) else None
+        if record is None:
+            raise ToolError(f"There is no image {image} in this conversation.")
+        source = conversations.image_workflow(self.conversation_id, record["id"])
+        if not is_api_workflow(source):
+            raise ToolError(f"Image {image} carries no workflow to take its prompt, model and LoRAs from: finish it "
+                            "with run_workflow (a detail workflow, the image in input_images).")
+        made = Graph(source)
+        folder = made.base_model_folder()
+        name = workflow or (f"{folder}/{FINISH_WORKFLOW}" if folder else "")
+        entry = workflows.find_by_name(name) if name else None
+        if entry is None:
+            raise ToolError(f'No finishing workflow for {folder or "its model"}: the library has none named "{name}". '
+                            "Finish it with run_workflow (a detail workflow, the image in input_images), or tell the "
+                            "user one is missing.")
+        inputs = Graph(entry["workflow"]).image_inputs()
+        if not inputs:
+            raise ToolError(f'"{entry["name"]}" takes no image (it has no LoadImage node).')
+        info = made.generation_info()
+        finish: dict = {"input_images": [{"node": inputs[0], "image": image}]}
+        if info.get("positive"):
+            finish["positive"] = info["positive"]
+        if made.base_models() and made.base_models()[0] not in Graph(entry["workflow"]).base_models():
+            finish["model"] = made.base_models()[0]  # the model it was made with, where the workflow loads another
+        finish["loras"] = [
+            {"name": lora["name"], "strength": _number(lora["strength"]) if lora.get("strength") is not None else 1.0,
+             **({"strength_clip": _number(lora["strength_clip"])} if lora.get("strength_clip") is not None else {})}
+            for lora in info.get("loras") or [] if lora.get("name")]
+        finish.update(changes or {})
+        result, part = self._launch(entry["name"], finish, 1, None, run_fields={"kind": "finish", "finish_of": image})
+        result["finishing"] = f"image {image}, with the prompt, model and LoRAs it was made with"
+        return result, {**part, "finish_of": image}
 
     def _tool_get_prompt(self, number) -> tuple[dict, dict]:
         found = chat.prompt_by_number(self._conversation(), number) if isinstance(number, int) else None

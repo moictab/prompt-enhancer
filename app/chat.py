@@ -69,6 +69,7 @@ COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workfl
   - Mix them when it fits: part of a batch pushes the direction that works best, part tries new ground.
   Change approach as the conversation does: an image the user loves turns exploring into focusing; rounds that don't improve, or "something else", turn focusing into exploring. Don't repeat a combination already tried: the runs and your reviews say what was.
 - Different prompts are different runs, one run_workflow each; count makes several images of one prompt, with different seeds.
+- Draft, then finish. Explore and iterate with fast workflows (one sampling pass; the library says how long each takes an image): they show what is being decided -- composition, pose, light, style. Detail passes (a detailer, a model upscale) are for finishing, and you finish from the chosen image itself with finish_image: its composition stays, and only one heavy pass runs. Judge a draft by what finishing won't fix (anatomy, hands, composition, the idea), not by small faces' features or skin texture. When the user marks an image as a favorite (loved), finish it in that same reply, without asking, unless it is finished already; when they like one, offer to finish it; otherwise finish only when asked. When the app's context shows a long ComfyUI queue, launch fewer images.
 - Decide the base model when you write a prompt, not when you launch it: pick it from what is known -- the installed models in the app's context (the user's description of each, how the images made with it went, its past use), your notes, what the user asked -- and say in a few words why when you pick one or change it. Name it in every block: <prompt model="krea-2\\name.safetensors">, the exact file (the library shows each workflow's). That is the model the prompt runs on: when you launch it, the app loads that model in the workflow, whichever it came with (changes.model sets another). The workflow must be able to load it: a checkpoint where it loads a checkpoint, a diffusion model where it loads one, and then of the same family (its text encoders and VAE are that family's).
 - A launch that goes through ends your reply: say what you have to say -- what you run and why -- before calling run_workflow or calibrate_lora, since you won't get to add anything after it, nor to call anything else. To launch several runs (variations, alternatives), make all the calls together, in the same step: one run_workflow per run. If a launch fails, you get the error back and can fix the call.
 - Choose the image's proportions yourself, for what it shows, without waiting to be told: 2:3 or 3:4 for a portrait or a figure, 9:16 for a full-length figure or anything tall, 1:1 for a face, an object or an icon, 3:2 or 4:3 for a scene, a room or two people side by side, 16:9 for a landscape or a wide scene, 21:9 for a panorama. Set them with the aspect change, which keeps the workflow's pixel count (what its model is made for); change megapixels or give an exact width and height only when the user asks. A workflow's proportions in the library are its default, not a choice made for this image. Decide them at an image's first run and keep them while you refine it (run:N keeps them; a library workflow starts again from its default, so pass aspect again): change them only when the composition changes or the user asks, and say so when you do. The images of one set or story share them, unless a shot calls for others.
@@ -111,7 +112,7 @@ AUTOMATIC_NOTE = "(Automatic message: the user hasn't written.)"
 CONTEXT_HEADING = "[The app's context for this turn, refreshed every turn; not written by the user.]"
 OMITTED_RESULT = {"note": "Result omitted from an earlier turn; call the tool again if you need it."}
 # Tool results worth replaying in later turns; the rest (listings) can be fetched again.
-KEPT_RESULTS = ("run_workflow", "save_workflow", "cancel_run", "prepare_download")
+KEPT_RESULTS = ("run_workflow", "save_workflow", "cancel_run", "prepare_download", "finish_image")
 # A family's rules handed over in a tool result matter in that turn; afterwards they are in
 # the system prompt (the conversation follows that family now).
 FAMILY_RULES_MARK = '"family_rules"'
@@ -185,6 +186,7 @@ def system_sections(
             f"- {w['name']}" + (f" [{w['family']}]" if w.get("family") else "")
             + (f" on {w['model']}" if w.get("model") else "")
             + (f" ({w['size']} by default)" if w.get("size") else "")
+            + (f" [{w['speed']}]" if w.get("speed") else "")
             + (f": {w['description']}" if w.get("description") else "")
             for w in workflows
         )
@@ -289,7 +291,8 @@ def notes_text(notes: list[dict], info: dict | None = None) -> str:
 def turn_context(notes: list[dict], models: str | None = None, needs_title: bool = False,
                  autonomy: str | None = None, comments_off: bool = False, looking: bool = False,
                  redo: bool = False, downloads: str | None = None, refused: str | None = None,
-                 notes_info: dict | None = None, image_check: str | None = None) -> str | None:
+                 notes_info: dict | None = None, image_check: str | None = None,
+                 queue: str | None = None) -> str | None:
     """What changes from turn to turn, sent at the end of the latest message: the title
     request while the conversation has none, that a run's images won't come back on their
     own (comments_off: the conversation's automatic comments are off), that this turn can't
@@ -310,6 +313,8 @@ def turn_context(notes: list[dict], models: str | None = None, needs_title: bool
         sections.append(LOOKING_RULE)
     if image_check:
         sections.append(image_check)
+    if queue:
+        sections.append(queue)
     if autonomy:
         sections.append(autonomy)
     if notes or (notes_info or {}).get("left"):
@@ -373,6 +378,8 @@ def results_text(run: dict | None, numbers: dict[str, int], automatic: bool) -> 
         return f"[A run finished.]{note}"
     calibration = run.get("kind") == "calibration"
     label = f"Run {run['n']} ({run['workflow']}{', ' + run['size'] if run.get('size') else ''})"
+    if run.get("kind") == "finish":
+        label = f"Run {run['n']} (finishing image {run.get('finish_of')} with {run['workflow']})"
     if calibration:
         seed = next((j.get("seed") for j in run["jobs"]), None)
         label = f"Run {run['n']} (calibration of {run.get('lora')} on {run['workflow']}, seed {seed})"
@@ -543,7 +550,7 @@ def _call_text(call: dict, known: dict[str, int], brief: bool = False) -> str:
     if isinstance(args.get("graph"), dict):
         args["graph"] = f"(a workflow of {len(args['graph'])} nodes)"
     if brief:
-        kept = {k: args[k] for k in ("workflow", "graph", "count", "lora", "prompt", "name", "run") if k in args}
+        kept = {k: args[k] for k in ("workflow", "graph", "count", "lora", "prompt", "name", "run", "image") if k in args}
         if changes:
             kept.update({k: changes[k] for k in ("positive", "model", "aspect") if k in changes})
         args = kept

@@ -68,7 +68,7 @@ def test_a_launch_that_goes_through_ends_the_turn(api_client, auth_headers, tmp_
     [first] = script.calls
     assert first["tools"] is conversation_turn.chat_tools.TOOLS and first["tool_choice"] is None
     assert ("## Workflow Library\n- krea-2/txt2img on krea-2\\krea-2-turbo-official-comfy-int8-convrot_v1.0.safetensors "
-            "(2:3 portrait, 1 MP by default):") in first["messages"][0]["content"]
+            "(2:3 portrait, 1 MP by default) [not timed yet; 1 sampling pass]:") in first["messages"][0]["content"]
     assert '<prompt model="krea-2\\name.safetensors">' in first["messages"][0]["content"]
     assert "A launch that goes through ends your reply" in first["messages"][0]["content"]
 

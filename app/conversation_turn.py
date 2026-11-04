@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import (catalog, chat, chat_tools, claude_code, comfy, conversations, downloads, families, history,
-               image_check, memory, retry_later, runs, workflows)
+               image_check, memory, retry_later, runs, timing, workflows)
 from .config import get_settings
 from .openrouter_client import StreamEnd, list_models, stream_chat
 
@@ -43,7 +43,7 @@ MAX_STEPS = 6
 # A step that launches a run, and calls nothing else whose result the bot needs to read, ends
 # the turn: asking the model to go on would cost a request for it to say "launched" (the
 # bot says what it runs before the call; COMFY_MECHANICS tells it so).
-LAUNCH_TOOLS = ("run_workflow", "calibrate_lora")
+LAUNCH_TOOLS = ("run_workflow", "calibrate_lora", "finish_image")
 QUIET_TOOLS = (*LAUNCH_TOOLS, "keep_going", "save_workflow", "cancel_run")
 LOCK_WAIT_SECONDS = 600
 # A follower with nothing new for this long gets None (the route sends a blank line), so a
@@ -242,14 +242,16 @@ def toolbox_for(conversation: dict) -> chat_tools.ToolBox | None:
     return chat_tools.ToolBox(conversation["id"], client)
 
 
-def _library_entry(workflow: dict) -> dict:
+def _library_entry(workflow: dict, measured: dict | None = None) -> dict:
+    """A library workflow as the system prompt lists it; measured: timing.load(), for its speed."""
     from .comfy_graph import Graph
     graph = Graph(workflow["workflow"])
     folder = graph.base_model_folder()
     family = families.family_for_folder(folder) if folder else None
     return {"name": workflow["name"], "description": workflow["description"],
             "family": family["name"] if family else None, "size": graph.shape(),
-            "model": ", ".join(graph.base_models()) or None}
+            "model": ", ".join(graph.base_models()) or None,
+            "speed": timing.speed(workflow["name"], graph, measured) if measured is not None else None}
 
 
 def _last_reply(conversation: dict) -> dict:
@@ -304,7 +306,8 @@ def _turn(conversation_id: str, automatic: bool):
     toolbox = toolbox_for(conversation)
     if toolbox:
         toolbox.automatic = automatic
-    library = [_library_entry(w) for w in workflows.list_workflows()]
+    measured = timing.load() if toolbox else None  # each library workflow's time per image
+    library = [_library_entry(w, measured) for w in workflows.list_workflows()]
     models_section = installed = None
     if toolbox:
         catalog.refresh_in_background(toolbox.client)  # metadata: once a day, or the first time
@@ -333,6 +336,8 @@ def _turn(conversation_id: str, automatic: bool):
         "downloads": downloads.news_text(news),
         # Notes its last reply wrote that weren't kept (too long, or citing an image number).
         "refused": chat.refused_notes_text(_last_reply(conversation).get("notes_refused")),
+        # The app's images in ComfyUI's queue right now (timing.py).
+        "queue": timing.queue_text(conversation_id, runs.tracker.waiting, measured.get("typical")) if toolbox else None,
     }
     load_image = _image_loader(conversation_id)
     on_claude = claude_code.engine(conversation)

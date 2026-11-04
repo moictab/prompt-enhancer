@@ -225,7 +225,7 @@ def _context(conversation: dict, state: dict, sections: dict[str, str], parts: d
                              comments_off=parts.get("comments_off", False), looking=parts.get("looking", False),
                              redo=parts.get("redo", False), downloads=parts.get("downloads"),
                              refused=parts.get("refused"), notes_info=parts.get("notes_info") if resend else None,
-                             image_check=parts.get("image_check"))
+                             image_check=parts.get("image_check"), queue=parts.get("queue"))
     extra = []
     if not new_session:
         started = state.get("sections") or {}

@@ -41,7 +41,7 @@ def test_a_batch_is_inspected_once_and_the_bot_gets_what_was_found(monkeypatch):
     assert image_check.check(conversation, load) == 3
     prompt, model, context = asked[0]
     assert model == "opus" and context["mode"] == "image_check"
-    assert prompt[0]["text"] == "Inspect these images, in this order: image 1, image 2, image 3."
+    assert prompt[0]["text"] == "Inspect these images, in this order: image 1 (draft), image 2 (draft), image 3 (draft)."
     assert [b["type"] for b in prompt[1:]] == ["image"] * 3
     # At the size the model takes, not reduced further.
     sent = Image.open(io.BytesIO(base64.b64decode(prompt[1]["source"]["data"])))

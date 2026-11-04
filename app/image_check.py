@@ -24,6 +24,7 @@ logger = logging.getLogger("app.conversations")
 
 MAX_IMAGES = 12
 MAX_ISSUES = 6
+DETAIL_NODES = ("FaceDetailer", "ImageUpscaleWithModel")
 VERDICTS = ("ok", "flawed")
 SEVERITIES = ("minor", "major")
 
@@ -36,6 +37,8 @@ Go over each image region by region before deciding, and check:
 - Continuity: clothing, straps, jewelry or hair that break, change or vanish behind something; patterns that don't continue; objects passing through others.
 - Background and objects: lines that should be straight and aren't, broken perspective, misshapen objects, garbled text or signs.
 - Rendering: styles mixed within the image, smeared or plastic skin, oversharpening, noise, banding, burnt or washed-out colors, seams or tiling.
+
+Each image is a "draft" (a first quick pass: if chosen, a detail pass will redo small faces' features and skin texture -- report those as minor, judge everything else as usual) or "finished" (it had its detail pass: judge every detail).
 
 Most generated images have at least one flaw: look closely for it. But report only what you can actually see, never what is merely likely. "minor": noticeable on a close look; "major": spoils the image at first glance.
 
@@ -55,16 +58,27 @@ def enabled(conversation: dict) -> bool:
     return claude_code.engine(conversation) and conversation.get("image_check", True) is not False
 
 
-def _new_images(conversation: dict) -> list[dict]:
-    """The run images the bot hasn't spoken since (the ones its turn reviews), but calibrations'."""
+def _new_images(conversation: dict, stages: bool = False) -> list:
+    """The run images the bot hasn't spoken since (the ones its turn reviews), but calibrations'.
+    stages: (image, "draft" | "finished") pairs -- finished when a finishing run (finish_image) or a
+    workflow with a detail pass (a detailer, a model upscale) made it."""
     messages = conversation["messages"]
     last_answer = max((i for i, m in enumerate(messages) if m["role"] == "assistant"), default=-1)
     runs = {r["n"]: r for r in conversation.get("runs") or []}
     images = []
     for message in messages[last_answer + 1:]:
-        if message["role"] != "results" or (runs.get(message.get("run")) or {}).get("kind") == "calibration":
+        run = runs.get(message.get("run")) or {}
+        if message["role"] != "results" or run.get("kind") == "calibration":
             continue
-        images += message.get("images") or []
+        if not stages:
+            images += message.get("images") or []
+            continue
+        stage = "finished" if run.get("kind") == "finish" or any(
+            node.get("class_type") in DETAIL_NODES
+            for sent in (conversations.run_workflows(conversation["id"], run["n"]) if run.get("n") else [])
+            for node in (sent.values() if isinstance(sent, dict) else [])
+        ) else "draft"
+        images += [(image, stage) for image in message.get("images") or []]
     return images
 
 
@@ -96,9 +110,10 @@ def check(conversation: dict, load_image) -> int:
     if not enabled(conversation):
         return 0
     numbers = chat.image_numbers(conversation["messages"])
-    pending = [i for i in _new_images(conversation) if not i.get("check") and i["id"] in numbers][:MAX_IMAGES]
-    blocks, asked = [], []
-    for image in pending:
+    pending = [(i, s) for i, s in _new_images(conversation, stages=True)
+               if not i.get("check") and i["id"] in numbers][:MAX_IMAGES]
+    blocks, asked, labels = [], [], []
+    for image, stage in pending:
         uri = load_image(image)
         if not uri:
             continue
@@ -106,9 +121,10 @@ def check(conversation: dict, load_image) -> int:
         blocks.append({"type": "image", "source": {"type": "base64", "media_type": header[5:].split(";")[0],
                                                    "data": data}})
         asked.append(numbers[image["id"]])
+        labels.append(f"image {numbers[image['id']]} ({stage})")
     if not asked:
         return 0
-    listed = ", ".join(f"image {n}" for n in asked)
+    listed = ", ".join(labels)
     model = claude_code.model_for(conversation)
     try:
         text, info = claude_code.ask(SYSTEM, [{"type": "text", "text": f"Inspect these images, in this order: {listed}."},

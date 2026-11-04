@@ -109,13 +109,18 @@ class FakeComfy:
     def node_info(self, class_type):
         return self.node_definitions.get(class_type)
 
-    def finish(self, prompt_id, filename=None, status="success", error=None):
-        """Make a job done: its image (a real PNG) appears in /history and /view."""
+    def finish(self, prompt_id, filename=None, status="success", error=None, seconds=None):
+        """Make a job done: its image (a real PNG) appears in /history and /view; seconds: how long
+        ComfyUI took (its execution start and end messages)."""
         outputs = {}
         if filename:
             self.files[filename] = png_bytes(color=(10, 120, 200))
             outputs = {"29": {"images": [{"filename": filename, "subfolder": "", "type": "output"}]}}
         status_entry = {"status_str": status, "completed": status == "success", "messages": []}
+        if seconds is not None:
+            status_entry["messages"] = [["execution_start", {"prompt_id": prompt_id, "timestamp": 1_000_000}],
+                                        ["execution_success", {"prompt_id": prompt_id,
+                                                               "timestamp": 1_000_000 + seconds * 1000}]]
         if error:
             status_entry["messages"] = [["execution_error", {"exception_type": "RuntimeError",
                                                               "exception_message": error, "node_type": "KSampler"}]]

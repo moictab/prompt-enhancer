@@ -67,6 +67,25 @@ class Result:
     status: str  # "success" | "error" | "interrupted"
     outputs: list[dict]
     error: str | None = None
+    seconds: float | None = None  # how long ComfyUI took making it, queue wait aside
+
+
+def execution_seconds(messages) -> float | None:
+    """From a /history entry's status messages: its last execution start to its end, in seconds."""
+    start = end = None
+    for message in messages or []:
+        if not (isinstance(message, (list, tuple)) and len(message) == 2 and isinstance(message[1], dict)):
+            continue
+        kind, stamp = message[0], message[1].get("timestamp")
+        if not isinstance(stamp, (int, float)):
+            continue
+        if kind == "execution_start":
+            start = stamp
+        elif kind in ("execution_success", "execution_error", "execution_interrupted"):
+            end = stamp
+    if start is None or end is None or end < start:
+        return None
+    return round((end - start) / 1000, 1)
 
 
 def outputs_from_history(entry: dict) -> list[dict]:
@@ -98,13 +117,14 @@ def result_from_history(entry: dict) -> Result | None:
     status = entry.get("status") or {}
     if not status.get("completed") and status.get("status_str") not in ("error", "success"):
         return None
+    messages = status.get("messages") or []
     if status.get("status_str") == "error":
-        messages = status.get("messages") or []
         error = next((_error_text(m[1]) for m in messages if m and m[0] == "execution_error"), None)
         interrupted = any(m and m[0] == "execution_interrupted" for m in messages)
         return Result("interrupted" if interrupted else "error", outputs_from_history(entry),
-                      error or ("interrupted" if interrupted else "ComfyUI reported an error"))
-    return Result("success", outputs_from_history(entry))
+                      error or ("interrupted" if interrupted else "ComfyUI reported an error"),
+                      execution_seconds(messages))
+    return Result("success", outputs_from_history(entry), seconds=execution_seconds(messages))
 
 
 class Comfy:
