@@ -287,6 +287,8 @@ def _turn(conversation_id: str, automatic: bool):
 
     notes = memory.list_notes()
     toolbox = toolbox_for(conversation)
+    if toolbox:
+        toolbox.automatic = automatic
     library = [_library_entry(w) for w in workflows.list_workflows()]
     models_section = installed = None
     if toolbox:

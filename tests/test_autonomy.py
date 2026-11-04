@@ -70,7 +70,8 @@ def test_the_bot_iterates_on_its_own_until_the_images_run_out(api_client, auth_h
         working = conversations.autonomy(conversations.get(conversation_id))
         assert (working["goal"], working["images"], working["max_images"]) == ("a witch with clean hands", 2, 3)
         listed = api_client.get("/api/conversations", auth=auth_headers).json()[0]
-        assert listed["autonomy"] == {"images": 2, "max_images": 3, "cost": 0.01, "max_cost": 0.5}
+        # The user's turn launched within the budget between messages; keep_going made it a goal, keeping the count.
+        assert listed["autonomy"] == {"kind": "goal", "images": 2, "max_images": 3, "cost": 0.01, "max_cost": 0.5}
 
         _finish_all(fake_comfy, "prompt-1", "prompt-2")
         _finish_all(fake_comfy, "prompt-3")
@@ -80,7 +81,7 @@ def test_the_bot_iterates_on_its_own_until_the_images_run_out(api_client, auth_h
     # Working on its own, its look at the images may launch (tools on), and it is told so.
     assert look["context"]["automatic"] and look["tool_choice"] is None
     assert "Goal: a witch with clean hands" in message_text(look["messages"][-1])
-    assert "launch the next run in this same reply" in message_text(look["messages"][-1])
+    assert "launch it in this same reply, without asking" in message_text(look["messages"][-1])
     # With the images spent, it can only sum up.
     assert last_look["tool_choice"] == "none"
     assert "The budget is spent" in message_text(last_look["messages"][-1])

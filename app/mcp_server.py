@@ -295,6 +295,7 @@ def _conversation_view(conversation: dict, since: int = 0, last: int | None = No
         "llm_model": conversation.get("llm_model"),
         "temperature": conversation.get("temperature"),
         "auto_comment": conversation.get("auto_comment", True),
+        "initiative_images": conversation.get("initiative_images", 24),
         "cost": conversation.get("cost"),
         "replying": conversation.get("replying", False),
         "commenting": conversation.get("commenting", False),
@@ -420,11 +421,14 @@ async def start_conversation(
     temperature: Temperature = 0.7,
     auto_comment: Annotated[bool, Field(description="Whether the bot looks at a run's images by itself when "
                                                     "they arrive (one request more per run).")] = True,
+    initiative_images: Annotated[int, Field(ge=0, le=100, description=(
+        "How many images the bot may make on its own after each message -- launching, looking and launching the "
+        "next batch without waiting -- (0: only what it is asked for)."))] = 24,
 ) -> dict:
     """Start a conversation with the prompt-crafting bot and get its first reply."""
     conversation = await _json("POST", "/api/conversations", json={
         "family_id": await _family_id(family), "llm_model": _defaults(llm_model), "temperature": temperature,
-        "auto_comment": auto_comment})
+        "auto_comment": auto_comment, "initiative_images": initiative_images})
     try:
         return await _send(conversation["id"], message, images)
     except ToolError:
@@ -564,10 +568,11 @@ async def update_conversation(
     llm_model: str | None = None,
     temperature: Annotated[float | None, Field(ge=0, le=2)] = None,
     auto_comment: bool | None = None,
+    initiative_images: Annotated[int | None, Field(ge=0, le=100)] = None,
 ) -> dict:
     """Change a conversation's title or settings; what is left out stays as it is."""
     changes: dict[str, Any] = {"title": title, "llm_model": llm_model, "temperature": temperature,
-                               "auto_comment": auto_comment}
+                               "auto_comment": auto_comment, "initiative_images": initiative_images}
     if family is not None:
         changes["family_id"] = await _family_id(family)
     await _json("PATCH", f"/api/conversations/{conversation_id}",

@@ -21,8 +21,12 @@ logger = logging.getLogger("app.chat_tools")
 MAX_RUN_COUNT = 4
 # Working on its own (keep_going): images it may make and dollars it may spend on its replies.
 AUTONOMY_IMAGES = 8
-AUTONOMY_MAX_IMAGES = 40
+AUTONOMY_MAX_IMAGES = 100
 AUTONOMY_COST = 1.0
+# The budget between the user's messages (conversations.initiative): images per conversation's setting,
+# up to this many, and this much money on the bot's own replies.
+INITIATIVE_MAX_IMAGES = 100
+INITIATIVE_COST = 1.0
 AUTONOMY_MAX_COST = 10.0
 MAX_LISTED_MODELS = 80
 MODEL_FOLDERS = list(comfy.MODEL_FOLDERS)
@@ -269,13 +273,13 @@ TOOLS = [
         "function": {
             "name": "keep_going",
             "description": (
-                "Work on your own toward a goal the user set ('until it looks right', 'iterate on your own', "
-                "'try a few things and show me the best'): each run's images then come back to you, and you "
-                "review them and launch the next run yourself, without waiting for the user, until the goal "
-                "is met or the budget is spent -- max_images images made, or max_cost dollars spent on your "
-                "replies. Use the user's limits; without any, the defaults, and say so. Call it again to change "
-                "the goal or the limits (what was used so far still counts), or with stop: true when the user "
-                "asks you to stop."
+                "Take on a bigger task of your own, with a goal the user set ('until it looks right', 'keep "
+                "going up to 60 images', 'try a lot of things and show me the best'): it replaces the budget "
+                "you have between the user's messages until the goal is met or this budget is spent -- "
+                "max_images images made, or max_cost dollars spent on your replies. Each batch's images come "
+                "back to you, and you launch the next yourself, without waiting for the user. Use the user's "
+                "limits; without any, the defaults, and say so. Call it again to change the goal or the limits "
+                "(what was used so far still counts), or with stop: true when the user asks you to stop."
             ),
             "parameters": {
                 "type": "object",
@@ -379,6 +383,9 @@ class ToolBox:
         # The reply being made, so far: the prompt blocks it wrote before a call say which model
         # each prompt is for.
         self.reply_text = ""
+        # A turn the bot takes by itself (its look at a run's results): what it launches then goes behind
+        # what someone asked for in ComfyUI's queue.
+        self.automatic = False
 
     definitions = TOOLS
 
@@ -653,7 +660,8 @@ class ToolBox:
             job_graph.set_output_prefix(comfy.output_prefix(folder, number, seed))
             variants.append((job_graph, seed, {}))
         size = graph.shape()
-        run = self._submit_run(label, changes, base, folder, variants, run_fields={"size": size} if size else None)
+        run = self._submit_run(label, changes, base, folder, variants, run_fields={"size": size} if size else None,
+                               priority=comfy.PRIORITY_ON_ITS_OWN if self.automatic else comfy.PRIORITY)
         result = {"run": run["n"], "status": "queued", "images": run["count"], "seeds": seeds[:run["count"]],
                   "model": ", ".join(run["base_models"]), "applied": done}
         if size:

@@ -25,6 +25,8 @@ IMAGE_EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp
 _CONTENT_TYPES = {ext: content_type for content_type, ext in IMAGE_EXTENSIONS.items()}
 # Ids end up in file paths, so only ids this module could have generated are accepted.
 _ID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+# Images the bot may make on its own after each of the user's messages, by default.
+INITIATIVE_IMAGES = 24
 FALLBACK_TITLE_LENGTH = 60
 
 _lock = threading.Lock()
@@ -54,11 +56,13 @@ def create(
     auto_comment: bool = True,
     engine: str = "openrouter",
     claude_model: str = "",
+    initiative_images: int | None = None,
 ) -> dict:
     """auto_comment: when a run finishes, the bot looks at its images on its own; off, they
     wait for the user's next message (one request fewer per run). Older conversations,
     without the field, comment (comments_on_results). engine: who answers, the LLM on
-    OpenRouter (llm_model) or Claude Code (claude_model; claude_code.py)."""
+    OpenRouter (llm_model) or Claude Code (claude_model; claude_code.py). initiative_images: how
+    many images the bot may make on its own after each of the user's messages (initiative)."""
     now = _now()
     conversation = {
         "id": str(uuid.uuid4()),
@@ -71,11 +75,18 @@ def create(
         "auto_comment": auto_comment,
         "engine": engine,
         "claude_model": claude_model,
+        "initiative_images": INITIATIVE_IMAGES if initiative_images is None else initiative_images,
         "cost": None,
         "messages": [],
     }
     storage.write_json(_path(conversation["id"], root), conversation)
     return conversation
+
+
+def initiative(conversation: dict) -> int:
+    """How many images the bot may make on its own after each of the user's messages (0: only
+    what the user asks for). Conversations from before the setting get the default."""
+    return conversation.get("initiative_images", INITIATIVE_IMAGES)
 
 
 def comments_on_results(conversation: dict) -> bool:
@@ -116,7 +127,7 @@ def summary(conversation: dict) -> dict:
         "last_reply_at": replies[-1].get("timestamp") if replies else None,
         "running": any(r["status"] == "pending" for r in conversation.get("runs") or []),
         # While the bot works on its own there: how much of its budget it has used.
-        "autonomy": ({k: working[k] for k in ("images", "max_images", "cost", "max_cost")}
+        "autonomy": ({k: working.get(k) for k in ("kind", "images", "max_images", "cost", "max_cost")}
                      if (working := autonomy(conversation)) else None),
         # The user ended it (Terminar: the bot's balance, when runs made images); writing reopens it.
         "finished_at": conversation.get("finished_at"),
@@ -139,7 +150,8 @@ def list_summaries(root: str | None = None) -> list[dict]:
 def update_settings(conversation_id: str, changes: dict, root: str | None = None) -> dict | None:
     """Change settings, or the title (the user's: the bot only titles an untitled
     conversation). Neither counts as activity: updated_at, the list's order, stays."""
-    allowed = {"family_id", "llm_model", "temperature", "title", "auto_comment", "engine", "claude_model"}
+    allowed = {"family_id", "llm_model", "temperature", "title", "auto_comment", "engine", "claude_model",
+               "initiative_images"}
     with _lock:
         conversation = get(conversation_id, root)
         if conversation is None:
@@ -436,11 +448,32 @@ def autonomy(conversation: dict) -> dict | None:
     return found if found and found.get("active") else None
 
 
+def start_initiative(conversation_id: str, max_images: int, max_cost: float,
+                     root: str | None = None) -> dict | None:
+    """The user wrote: the bot may carry on alone, until their next message, within max_images
+    images and max_cost dollars (a fresh budget, kind "initiative"). A task it was given with
+    keep_going (kind "goal") is left as it is: the user's message only steers it."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return None
+        current = autonomy(conversation)
+        if current is not None and current.get("kind") != "initiative":
+            return current
+        conversation["autonomy"] = {
+            "active": True, "kind": "initiative", "goal": "", "max_images": max_images, "max_cost": max_cost,
+            "images": 0, "cost": 0.0, "last_turn_cost": 0.0, "started_at": _now(),
+        }
+        storage.write_json(_path(conversation_id, root), conversation)
+        return conversation["autonomy"]
+
+
 def start_autonomy(conversation_id: str, goal: str, max_images: int, max_cost: float,
                    root: str | None = None) -> dict | None:
-    """The bot works on its own toward goal: it launches, looks and launches again, until the
-    goal is met or it has made max_images images or spent max_cost dollars on its replies.
-    Starting again (a new goal or new limits) keeps what was used so far."""
+    """The bot works on its own toward goal (keep_going, kind "goal"): it launches, looks and
+    launches again, until the goal is met or it has made max_images images or spent max_cost
+    dollars on its replies. Starting again (a new goal or new limits) keeps what was used so far,
+    as does turning the budget between messages into a goal."""
     with _lock:
         conversation = get(conversation_id, root)
         if conversation is None:
@@ -448,6 +481,7 @@ def start_autonomy(conversation_id: str, goal: str, max_images: int, max_cost: f
         current = autonomy(conversation) or {}
         conversation["autonomy"] = {
             "active": True,
+            "kind": "goal",
             "goal": goal,
             "max_images": max_images,
             "max_cost": max_cost,

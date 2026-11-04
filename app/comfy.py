@@ -29,6 +29,8 @@ OUTPUT_SUBFOLDER = "prompt-enhancer"
 MODEL_FOLDERS = ("checkpoints", "diffusion_models", "loras", "vae", "text_encoders", "upscale_models",
                  "controlnet", "embeddings")
 PRIORITY = "high"  # a person is waiting for the result in the chat
+# What the bot launches by itself, looking at its own results: behind what someone asked for.
+PRIORITY_ON_ITS_OWN = "normal"
 CONNECT_TIMEOUT = 4
 READ_TIMEOUT = 60
 MODELS_CACHE_SECONDS = 300

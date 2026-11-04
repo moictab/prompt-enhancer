@@ -49,6 +49,7 @@ const ui = {
   temperature: $("chat-temperature"),
   temperatureValue: $("chat-temperature-value"),
   autoComment: $("chat-auto-comment"), // only with ComfyUI configured
+  initiative: $("chat-initiative"), // likewise
   engine: $("chat-engine"), // only with Claude Code installed
   claudeModel: $("chat-claude-model"),
   claudeModelField: $("chat-claude-model-field"),
@@ -105,12 +106,15 @@ function settings() {
     llm_model: source.llm_model,
     temperature: source.temperature,
     auto_comment: source.auto_comment !== false, // conversations from before the setting comment
+    initiative_images: Number.isInteger(source.initiative_images) ? source.initiative_images : INITIATIVE_IMAGES,
     engine: source.engine || "openrouter",
     claude_model: source.claude_model || "",
   };
 }
 
 const CLAUDE_CODE = "claude-code";
+// Images the bot may make on its own after each message, by default (conversations.INITIATIVE_IMAGES).
+const INITIATIVE_IMAGES = 24;
 
 function onClaude(values = settings()) {
   return values.engine === CLAUDE_CODE;
@@ -372,8 +376,11 @@ function renderAutonomy() {
   const conversation = state.conversation;
   const working = conversation?.autonomy;
   const lastUser = conversation?.messages.findLast((m) => m.role === "user");
-  const showEnded = working && !working.active && working.ended_at && (!lastUser || working.ended_at > lastUser.timestamp);
-  if (!working || !(working.active || showEnded)) {
+  const between = working?.kind === "initiative"; // the budget between the user's messages
+  const showEnded = working && !working.active && working.ended_at && (!lastUser || working.ended_at > lastUser.timestamp)
+    && !(between && ["done", "user"].includes(working.end_reason));
+  const showActive = working?.active && !(between && !working.images);
+  if (!working || !(showActive || showEnded)) {
     ui.autonomyBar.hidden = true;
     ui.autonomyBar.replaceChildren();
     return;
@@ -383,7 +390,12 @@ function renderAutonomy() {
     ui.autonomyBar.className = "autonomy-bar is-ended";
     ui.autonomyBar.replaceChildren(
       el("span", { class: "autonomy-state", text: "Ha terminado de trabajar por su cuenta" }),
-      el("span", { class: "autonomy-detail", text: `${AUTONOMY_ENDED[working.end_reason] || ""} (${used}).` })
+      el("span", {
+        class: "autonomy-detail",
+        text: between
+          ? `${working.end_reason === "cost" ? "se acabó el dinero" : "se acabaron las imágenes"} que tenía tras tu mensaje (${used}). Escribe para que siga.`
+          : `${AUTONOMY_ENDED[working.end_reason] || ""} (${used}).`,
+      })
     );
     ui.autonomyBar.hidden = false;
     return;
@@ -402,10 +414,12 @@ function renderAutonomy() {
   });
   ui.autonomyBar.className = "autonomy-bar";
   ui.autonomyBar.replaceChildren(
-    el("span", { class: "autonomy-state", text: "Trabajando por su cuenta" }),
-    el("span", { class: "autonomy-goal", text: `«${working.goal}»` }),
-    el("span", { class: "autonomy-detail", text: `${used}.` }),
-    stop
+    ...[
+      el("span", { class: "autonomy-state", text: "Trabajando por su cuenta" }),
+      !between && el("span", { class: "autonomy-goal", text: `«${working.goal}»` }),
+      el("span", { class: "autonomy-detail", text: between ? `${used}, tras tu mensaje.` : `${used}.` }),
+      stop,
+    ].filter(Boolean)
   );
   ui.autonomyBar.hidden = false;
 }
@@ -1254,6 +1268,7 @@ function applySettingsToForm(values) {
   ui.temperature.value = values.temperature ?? 0.7;
   ui.temperatureValue.textContent = ui.temperature.value;
   if (ui.autoComment) ui.autoComment.checked = values.auto_comment !== false;
+  if (ui.initiative) ui.initiative.value = Number.isInteger(values.initiative_images) ? values.initiative_images : INITIATIVE_IMAGES;
   if (ui.engine) {
     ui.engine.value = values.engine === CLAUDE_CODE ? CLAUDE_CODE : "openrouter";
     ui.claudeModel.value = values.claude_model || ui.claudeModel.dataset.default;
@@ -1295,7 +1310,7 @@ async function changeSettings(changes) {
   }
   try {
     const updated = await request(`/api/conversations/${state.conversation.id}`, { method: "PATCH", json: changes });
-    for (const key of ["family_id", "llm_model", "temperature", "auto_comment", "engine", "claude_model"]) {
+    for (const key of ["family_id", "llm_model", "temperature", "auto_comment", "initiative_images", "engine", "claude_model"]) {
       state.conversation[key] = updated[key];
     }
     rememberSettings();
@@ -1317,7 +1332,7 @@ function threadStatus(summary) {
   if (live || summary.replying || summary.commenting) {
     return { kind: "busy", text: live?.automatic || (!live && summary.commenting) ? "Comentando…" : "Respondiendo…" };
   }
-  if (summary.autonomy) {
+  if (summary.autonomy && !(summary.autonomy.kind === "initiative" && !summary.autonomy.images)) {
     return { kind: "busy", text: `Por su cuenta: ${summary.autonomy.images} de ${summary.autonomy.max_images} imágenes` };
   }
   if (summary.running) return { kind: "busy", text: "Generando imágenes…" };
@@ -1468,6 +1483,7 @@ function defaultSettings() {
     llm_model: stored.llm_model || ui.model.defaultValue,
     temperature: typeof stored.temperature === "number" ? stored.temperature : 0.7,
     auto_comment: stored.auto_comment !== false,
+    initiative_images: Number.isInteger(stored.initiative_images) ? stored.initiative_images : INITIATIVE_IMAGES,
     engine: ui.engine && stored.engine === CLAUDE_CODE ? CLAUDE_CODE : "openrouter",
     claude_model: stored.claude_model || "",
   };
@@ -1815,7 +1831,9 @@ function renderFinish() {
   if (!ui.finish) return;
   const conversation = state.conversation;
   ui.finish.hidden = !conversation?.messages.length || !!conversation.finished_at;
-  ui.finish.disabled = ui.finish.hidden || isBusy(conversation) || !!conversation?.autonomy?.active;
+  // A task it was given has to be stopped first; the budget between messages ends with the conversation.
+  const tasked = conversation?.autonomy?.active && conversation.autonomy.kind !== "initiative";
+  ui.finish.disabled = ui.finish.hidden || isBusy(conversation) || !!tasked;
   if (ui.finish.disabled && finishArmed) disarmFinish();
 }
 
@@ -1825,7 +1843,8 @@ function renderFinish() {
 // are still unrated: the user's reactions are what it learns most from.
 async function finishConversation() {
   const conversation = state.conversation;
-  if (!conversation || isBusy(conversation) || conversation.autonomy?.active) return;
+  if (!conversation || isBusy(conversation)) return;
+  if (conversation.autonomy?.active && conversation.autonomy.kind !== "initiative") return;
   const images = runImages();
   const ratings = images.map((img) => img.reaction?.rating);
   const counts = {
@@ -2154,6 +2173,14 @@ function setupSettings() {
   ui.claudeModel?.addEventListener("change", () => changeSettings({ claude_model: ui.claudeModel.value }).then(renderHead));
   ui.temperature.addEventListener("input", () => (ui.temperatureValue.textContent = ui.temperature.value));
   ui.temperature.addEventListener("change", () => changeSettings({ temperature: Number(ui.temperature.value) }));
+  ui.initiative?.addEventListener("change", () => {
+    const images = Math.round(Number(ui.initiative.value));
+    if (!Number.isFinite(images) || images < 0 || images > 100) {
+      ui.initiative.value = settings().initiative_images;
+      return;
+    }
+    changeSettings({ initiative_images: images });
+  });
   ui.autoComment?.addEventListener("change", () =>
     changeSettings({ auto_comment: ui.autoComment.checked }).then(() => {
       // The note under results waiting for a comment says whether one is coming.

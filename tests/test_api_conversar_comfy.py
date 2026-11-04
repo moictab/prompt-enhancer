@@ -17,9 +17,10 @@ def _family(tmp_path):
     return families.create_family("Krea", "rules", False, path=str(tmp_path / "families.json"))
 
 
-def _conversation(api_client, auth_headers, family):
-    return api_client.post("/api/conversations", auth=auth_headers,
-                           json={"family_id": family["id"], "llm_model": "vendor/model"}).json()
+def _conversation(api_client, auth_headers, family, **settings):
+    """Without the budget between messages, unless asked: these tests look at one turn at a time."""
+    return api_client.post("/api/conversations", auth=auth_headers, json={
+        "family_id": family["id"], "llm_model": "vendor/model", "initiative_images": 0, **settings}).json()
 
 
 def _events(response):
@@ -161,7 +162,8 @@ def test_with_automatic_comments_off_the_images_wait_for_the_users_message(api_c
                                                                            fake_comfy):
     workflows.ensure_seeded()
     created = api_client.post("/api/conversations", auth=auth_headers, json={
-        "family_id": _family(tmp_path)["id"], "llm_model": "vendor/model", "auto_comment": False}).json()
+        "family_id": _family(tmp_path)["id"], "llm_model": "vendor/model", "auto_comment": False,
+        "initiative_images": 0}).json()
     conversation_id = created["id"]
     assert created["auto_comment"] is False
     with patch("app.conversation_turn.stream_chat", Script(("Lanzo dos.", [RUN_CALL]))) as launch:

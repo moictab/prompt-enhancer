@@ -6,7 +6,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .. import balance, catalog, civitai, claude_code, conversation_turn, conversations, runs
+from .. import balance, catalog, chat_tools, civitai, claude_code, comfy, conversation_turn, conversations, runs
 from .api import _require_family, read_image
 
 router = APIRouter(prefix="/api/conversations")
@@ -38,6 +38,7 @@ class ConversationSettings(BaseModel):
     auto_comment: bool = True
     engine: Engine = "openrouter"
     claude_model: str = Field(default="", max_length=80)
+    initiative_images: int = Field(default=conversations.INITIATIVE_IMAGES, ge=0, le=chat_tools.INITIATIVE_MAX_IMAGES)
 
 
 class ConversationSettingsUpdate(BaseModel):
@@ -48,6 +49,7 @@ class ConversationSettingsUpdate(BaseModel):
     auto_comment: bool | None = None
     engine: Engine | None = None
     claude_model: str | None = Field(default=None, max_length=80)
+    initiative_images: int | None = Field(default=None, ge=0, le=chat_tools.INITIATIVE_MAX_IMAGES)
 
 
 def _require_idle(conversation_id: str) -> None:
@@ -79,6 +81,7 @@ def create_conversation(req: ConversationSettings):
     return conversations.create(
         req.family_id, _require_model(req.llm_model), req.temperature,
         auto_comment=req.auto_comment, engine=req.engine, claude_model=req.claude_model.strip(),
+        initiative_images=req.initiative_images,
     )
 
 
@@ -191,7 +194,19 @@ async def send_message(
     conversations.append_message(
         conversation_id, {"role": "user", "content": content.strip(), "images": saved}
     )
+    _start_initiative(conversation_id)
     return _reply(conversation_id)
+
+
+def _start_initiative(conversation_id: str) -> None:
+    """The user wrote: until their next message the bot may carry on alone, within the
+    conversation's image budget (none without ComfyUI, or with the budget at 0)."""
+    conversation = conversations.get(conversation_id) or {}
+    images = conversations.initiative(conversation)
+    if images > 0 and comfy.client() is not None:
+        conversations.start_initiative(conversation_id, images, chat_tools.INITIATIVE_COST)
+    elif (conversations.autonomy(conversation) or {}).get("kind") == "initiative":
+        conversations.end_autonomy(conversation_id, "user")
 
 
 @router.post("/{conversation_id}/reply")
@@ -228,8 +243,11 @@ def finish_conversation(conversation_id: str, focus: str = Form("")):
     conversation is only marked: the answer is the conversation, as JSON."""
     conversation = _require_conversation(conversation_id)
     _require_idle(conversation_id)
-    if conversations.autonomy(conversation):
+    working = conversations.autonomy(conversation)
+    if working and working.get("kind") != "initiative":
         raise HTTPException(status_code=409, detail="The bot is working on its own here: stop it before ending")
+    if working:  # what it does between messages ends with the conversation
+        conversations.end_autonomy(conversation_id, "user")
     if len(focus) > MAX_FOCUS_LENGTH:
         raise HTTPException(status_code=400, detail=f"Keep what you add under {MAX_FOCUS_LENGTH} characters")
     found = balance.ledger(conversation)
