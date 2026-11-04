@@ -30,6 +30,8 @@ const MAX_INPUT_HEIGHT = 240;
 const POLL_MS = 2500;
 // And the list, while another conversation has something under way.
 const LIST_POLL_MS = 5000;
+const RECENT_IMAGES = 30; // conversations.RECENT_IMAGES: the newest run images a summary carries
+const LIST_THUMBS = 4; // the new images shown under a conversation in the list
 // The last reply seen in each conversation, so the list can mark what arrived unseen.
 const SEEN_KEY = "conversation-seen";
 const MAX_TITLE_LENGTH = 120;
@@ -300,6 +302,39 @@ function markSeen(conversation) {
 function isUnread(summary) {
   const seen = state.seen[summary.id];
   return summary.id !== state.conversation?.id && !!seen && !!summary.last_reply_at && summary.last_reply_at > seen;
+}
+
+// The run images that arrived there since the user last looked, newest first (same rule as isUnread).
+function unseenImages(summary) {
+  const seen = state.seen[summary.id];
+  if (summary.id === state.conversation?.id || !seen) return [];
+  return (summary.recent_images || []).filter((image) => image.at && image.at > seen);
+}
+
+// "3 imágenes nuevas"; "30+" when the summary's whole window is new.
+function unseenCount(summary, images) {
+  const n = images.length;
+  const full = n === (summary.recent_images || []).length && n >= RECENT_IMAGES;
+  return `${n}${full ? "+" : ""} ${n === 1 && !full ? "imagen nueva" : "imágenes nuevas"}`;
+}
+
+// Under a conversation in the list: the new images themselves, the newest few, then how many more.
+function unseenStrip(summary, images) {
+  const shown = images.slice(0, LIST_THUMBS);
+  const more = images.length - shown.length;
+  return el(
+    "span",
+    { class: "thread-new-images", "aria-hidden": "true" },
+    ...shown.map((image) =>
+      el("img", {
+        src: `/api/conversations/${summary.id}/images/${image.id}${image.small ? "?small=true" : ""}`,
+        alt: "",
+        loading: "lazy",
+        decoding: "async",
+      })
+    ),
+    more > 0 && el("span", { class: "thread-new-more", text: `+${more}` })
+  );
 }
 
 // ---------- the bot's text ----------
@@ -1792,6 +1827,8 @@ function threadStatus(summary) {
     return { kind: "busy", text: `Por su cuenta: ${summary.autonomy.images} de ${summary.autonomy.max_images} imágenes` };
   }
   if (summary.running) return { kind: "busy", text: "Generando imágenes…" };
+  const unseen = unseenImages(summary);
+  if (unseen.length) return { kind: "fresh", text: unseenCount(summary, unseen) };
   if (isUnread(summary)) return { kind: "fresh", text: "Respuesta nueva" };
   if (summary.finished_at) return { kind: "done", text: "Terminada" };
   return null;
@@ -1814,6 +1851,9 @@ const BIN = "M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10 11v6M14 11v6";
 function threadItem(summary) {
   const title = summary.title || "Conversación sin título";
   const status = threadStatus(summary);
+  const unseen = unseenImages(summary);
+  // While images are still being made, the status says so: the new ones' count goes with the strip.
+  const unseenNote = status?.kind === "busy" && unseen.length > 0 && unseenCount(summary, unseen);
   const when = [formatWhen(summary.updated_at), formatCost(summary.cost)].filter(Boolean).join(", ");
   const link = el(
     "a",
@@ -1832,8 +1872,10 @@ function threadItem(summary) {
       "span",
       { class: "thread-meta" },
       status && el("span", { class: `thread-status is-${status.kind}`, text: status.text }),
+      unseenNote && el("span", { class: "thread-status is-fresh", text: unseenNote }),
       el("span", { text: when })
-    )
+    ),
+    unseen.length > 0 && unseenStrip(summary, unseen)
   );
   const rename = el(
     "button",
@@ -1854,7 +1896,7 @@ function threadItem(summary) {
   remove.setAttribute("aria-label", `Eliminar «${title}»`);
   const item = el(
     "li",
-    { class: status?.kind === "fresh" ? "thread-item is-fresh" : "thread-item" },
+    { class: status?.kind === "fresh" || unseen.length ? "thread-item is-fresh" : "thread-item" },
     link,
     el("div", { class: "thread-actions" }, rename, remove)
   );

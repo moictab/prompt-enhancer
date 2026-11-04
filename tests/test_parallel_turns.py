@@ -186,3 +186,23 @@ def test_summaries_say_when_the_bot_last_added_something_and_whether_runs_are_pe
     assert listed["running"] is False
     conversations.add_run(conversation_id, {"workflow": "w", "status": "pending", "jobs": []}, [])
     assert api_client.get("/api/conversations", auth=auth_headers).json()[0]["running"] is True
+
+
+def test_summaries_carry_the_newest_run_images_with_when_they_arrived(api_client, auth_headers, tmp_path,
+                                                                       monkeypatch):
+    """For the list to show the images that came since the user last opened the conversation."""
+    from .conftest import png_bytes
+    monkeypatch.setattr(conversations, "RECENT_IMAGES", 3)
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
+    shared = conversations.save_image(conversation_id, png_bytes(), "image/png")
+    conversations.append_message(conversation_id, {"role": "user", "content": "mira", "images": [shared]})
+    made = [conversations.save_image(conversation_id, png_bytes(size=(2400, 2400)), "image/png") for _ in range(4)]
+    conversations.append_message(conversation_id, {"role": "results", "run": 1, "content": "", "images": made[:2]})
+    conversations.append_message(conversation_id, {"role": "results", "run": 2, "content": "", "images": made[2:]})
+    first, second = conversations.get(conversation_id)["messages"][-2:]
+
+    listed = api_client.get("/api/conversations", auth=auth_headers).json()[0]["recent_images"]
+
+    assert [i["id"] for i in listed] == [made[3]["id"], made[2]["id"], made[1]["id"]]  # newest first, runs' only
+    assert [i["at"] for i in listed] == [second["timestamp"], second["timestamp"], first["timestamp"]]
+    assert all(i["small"] for i in listed)

@@ -28,6 +28,8 @@ _ID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 # Images the bot may make on its own after each of the user's messages, by default.
 INITIATIVE_IMAGES = 24
 FALLBACK_TITLE_LENGTH = 60
+# The list's summaries carry this many of a conversation's newest run images (_recent_images).
+RECENT_IMAGES = 30
 
 _lock = threading.Lock()
 
@@ -122,6 +124,20 @@ def display_title(conversation: dict) -> str:
     return text
 
 
+def _recent_images(conversation: dict) -> list[dict]:
+    """The latest RECENT_IMAGES images runs brought, newest first: {id, small, at} (at: their results
+    message's timestamp, compared with when the user last looked, the chat's "conversation-seen")."""
+    recent = []
+    for message in reversed(conversation["messages"]):
+        if message["role"] != "results":
+            continue
+        for image in reversed(message.get("images") or []):
+            recent.append({"id": image["id"], "small": bool(image.get("small")), "at": message.get("timestamp")})
+            if len(recent) == RECENT_IMAGES:
+                return recent
+    return recent
+
+
 def summary(conversation: dict) -> dict:
     replies = [m for m in conversation["messages"] if m["role"] in ("assistant", "results")]
     return {
@@ -135,6 +151,8 @@ def summary(conversation: dict) -> dict:
         "llm_model": conversation["llm_model"],
         # When the bot (or a run) last added something: the chat marks what arrived unseen.
         "last_reply_at": replies[-1].get("timestamp") if replies else None,
+        # The newest run images, with when they arrived: the list shows those the user hasn't seen.
+        "recent_images": _recent_images(conversation),
         "running": any(r["status"] == "pending" for r in conversation.get("runs") or []),
         # While the bot works on its own there: how much of its budget it has used.
         "autonomy": ({k: working.get(k) for k in ("kind", "images", "max_images", "cost", "max_cost")}
