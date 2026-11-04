@@ -532,7 +532,13 @@ def test_images_go_smaller_and_what_the_bot_does_alone_can_use_a_lighter_model(a
         ("images", ("big.png", png_bytes(size=(2400, 1600)), "image/png"))])
     line = json.loads(fake.launches[0]["process"].stdin.written)
     [image] = [b for b in line["message"]["content"] if b["type"] == "image"]
-    assert max(Image.open(io.BytesIO(base64.b64decode(image["source"]["data"]))).size) == claude_code.IMAGE_SIDE
+    side = lambda block: max(Image.open(io.BytesIO(base64.b64decode(block["source"]["data"]))).size)  # noqa: E731
+    # The turn's own image, the one the bot judges: as the app keeps it for the model (the small copy).
+    assert side(image) == 1568
+    # What came before, replayed when a session starts: smaller.
+    replayed = claude_code._history([{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image['source']['data']}"}}]}])
+    assert side(next(b for b in replayed if b["type"] == "image")) == claude_code.IMAGE_SIDE
     args = fake.launches[0]["args"]
     assert args[args.index("--model") + 1] == "sonnet"  # the user's turn: the conversation's model
     assert claude_code.model_for({"claude_model": "opus", "claude_auto_model": "haiku"}, automatic=True) == "haiku"

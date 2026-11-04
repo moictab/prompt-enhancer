@@ -289,7 +289,7 @@ def notes_text(notes: list[dict], info: dict | None = None) -> str:
 def turn_context(notes: list[dict], models: str | None = None, needs_title: bool = False,
                  autonomy: str | None = None, comments_off: bool = False, looking: bool = False,
                  redo: bool = False, downloads: str | None = None, refused: str | None = None,
-                 notes_info: dict | None = None) -> str | None:
+                 notes_info: dict | None = None, image_check: str | None = None) -> str | None:
     """What changes from turn to turn, sent at the end of the latest message: the title
     request while the conversation has none, that a run's images won't come back on their
     own (comments_off: the conversation's automatic comments are off), that this turn can't
@@ -308,6 +308,8 @@ def turn_context(notes: list[dict], models: str | None = None, needs_title: bool
         sections.append(COMMENTS_OFF_RULE)
     if looking:
         sections.append(LOOKING_RULE)
+    if image_check:
+        sections.append(image_check)
     if autonomy:
         sections.append(autonomy)
     if notes or (notes_info or {}).get("left"):

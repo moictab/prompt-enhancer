@@ -59,6 +59,7 @@ def create(
     initiative_images: int | None = None,
     claude_effort: str = "",
     claude_auto_model: str = "",
+    image_check: bool = True,
 ) -> dict:
     """auto_comment: when a run finishes, the bot looks at its images on its own; off, they
     wait for the user's next message (one request fewer per run). Older conversations,
@@ -82,6 +83,8 @@ def create(
         # What the bot does on its own (its look at a run's images, carrying on alone) on another,
         # cheaper Claude model; "" for the same one.
         "claude_auto_model": claude_auto_model,
+        # On Claude Code, a separate inspection of each run's images before the bot sees them (image_check.py).
+        "image_check": image_check,
         "initiative_images": INITIATIVE_IMAGES if initiative_images is None else initiative_images,
         "cost": None,
         "messages": [],
@@ -160,7 +163,7 @@ def update_settings(conversation_id: str, changes: dict, root: str | None = None
     """Change settings, or the title (the user's: the bot only titles an untitled
     conversation). Neither counts as activity: updated_at, the list's order, stays."""
     allowed = {"family_id", "llm_model", "temperature", "title", "auto_comment", "engine", "claude_model", "claude_effort", "claude_auto_model",
-               "initiative_images"}
+               "initiative_images", "image_check"}
     with _lock:
         conversation = get(conversation_id, root)
         if conversation is None:
@@ -359,6 +362,19 @@ def set_review(conversation_id: str, image_id: str, verdict: str, note: str, roo
                            "at": _now()}
         storage.write_json(_path(conversation_id, root), conversation)
         return image
+
+
+def set_image_checks(conversation_id: str, checks: dict[str, dict], root: str | None = None) -> None:
+    """The independent inspection of run images (image_check.py), by image id."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return
+        for message in conversation["messages"]:
+            for image in message.get("images") or []:
+                if image["id"] in checks:
+                    image["check"] = checks[image["id"]]
+        storage.write_json(_path(conversation_id, root), conversation)
 
 
 # Why an image was disliked, picked with a tap (the chat's chips; a comment can add to them).

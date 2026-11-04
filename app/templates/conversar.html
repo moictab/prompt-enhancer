@@ -82,6 +82,10 @@
         <input id="chat-initiative" type="number" min="0" max="100" step="1" value="24" inputmode="numeric" aria-describedby="chat-initiative-hint">
         <p class="chat-auto-comment-hint" id="chat-initiative-hint">Tras cada mensaje tuyo sigue solo hasta este número de imágenes: lanza, mira y lanza la siguiente tanda, centrándose o explorando según la conversación. Con 0, solo lanza lo que le pidas.</p>
       </div>
+      <div class="chat-auto-comment" id="chat-image-check-field" hidden>
+        <label class="checkbox"><input type="checkbox" id="chat-image-check" checked aria-describedby="chat-image-check-hint"> Revisión independiente de las imágenes</label>
+        <p class="chat-auto-comment-hint" id="chat-image-check-hint">Antes de que el bot vea una tanda, otra consulta aparte busca defectos en cada imagen (manos, anatomía, caras, incoherencias) sin saber qué se pidió. Una consulta corta por tanda; lo que encuentra sale bajo cada imagen.</p>
+      </div>
       <div class="chat-auto-comment">
         <label class="checkbox"><input type="checkbox" id="chat-auto-comment" checked aria-describedby="chat-auto-comment-hint"> Comentar las imágenes cuando lleguen</label>
         <p class="chat-auto-comment-hint" id="chat-auto-comment-hint">Si lo quitas, el bot las verá con tu siguiente mensaje: una petición menos por cada ejecución. Mientras trabaja por su cuenta las comenta siempre.</p>

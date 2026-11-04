@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import (catalog, chat, chat_tools, claude_code, comfy, conversations, downloads, families, history,
-               memory, retry_later, runs, workflows)
+               image_check, memory, retry_later, runs, workflows)
 from .config import get_settings
 from .openrouter_client import StreamEnd, list_models, stream_chat
 
@@ -336,6 +336,10 @@ def _turn(conversation_id: str, automatic: bool):
     }
     load_image = _image_loader(conversation_id)
     on_claude = claude_code.engine(conversation)
+    if on_claude and not taking_stock and image_check.check(conversation, load_image):
+        conversation = conversations.get(conversation_id) or conversation
+    # What the separate inspection found in the images this turn reviews (Claude Code; image_check.py).
+    context_parts["image_check"] = image_check.context_text(conversation) if on_claude else None
     logger.info(
         "conversation reply conversation_id=%s family_id=%s model=%s messages=%d tools=%s automatic=%s",
         conversation_id, family["id"],

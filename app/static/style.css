@@ -1115,6 +1115,9 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 /* Uncropped: judging an image means seeing all of it (hands, edges, framing). */
 .contact-sheet .shot img { display: block; width: 100%; height: auto; border-radius: var(--radius); }
 .contact-sheet .shot-no { font-size: 0.8125rem; }
+.shot-check { margin: 0.3rem 0 0; font-size: 0.72rem; line-height: 1.35; color: var(--paper-faint); }
+.shot-check.is-minor { color: var(--paper-dim); }
+.shot-check.is-major { color: var(--stop); }
 .shot-weight { display: block; margin-top: 0.3rem; color: var(--safelight); font-size: var(--step--1); font-variant-numeric: tabular-nums; }
 .reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem; margin-top: 0.35rem; }
 .react {

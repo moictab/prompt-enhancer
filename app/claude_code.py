@@ -78,12 +78,15 @@ COLD_RENEW_TOKENS = 40_000
 # of 13 blocks found the session cached, one of 16 or more never did (and wrote it all again). A message
 # is packed into few blocks (_packed); one still wider than this starts a new session instead.
 CACHE_LOOKBACK_BLOCKS = 12
-# Images go to Claude Code at most this long a side (the small copy is 1568): about 950 tokens, not 1,600.
+# The images of what came before, replayed when a session starts, go at most this long a side (the
+# small copy is 1568): about 950 tokens, not 1,600. The turn's own images -- the ones the bot judges --
+# go as the small copy: hands and eyes need every pixel the model takes.
 IMAGE_SIDE = 1024
 
 CLAUDE_CODE_MECHANICS = """- Your tools reach you through the app: you have no others (no shell, files or web). Their names here start with mcp__pe__; these instructions call them by their short names.
 - The app numbers your <prompt> blocks across the conversation, in order (1, 2, 3...): the app's context in the latest message says which numbers your previous reply's blocks got, so you can tell which one the user means by its number.
 - New images come attached to their message; get_image shows any image of the conversation again by its number. get_balance_data lists every image the runs made here, with its recipe, your review and the user's reaction.
+- Look closely before judging a run's images: the attached copy is reduced, and hands, fingers, eyes, teeth and joints are where generated images fail -- and where you, knowing what you asked for, tend to see what you expected. When the app's context brings an independent check of the new images, weigh it (it can be wrong). Zoom in with get_image and regions on hands, faces and anything doubtful in the images that matter -- the ones worth keeping or building on, and what the check flagged -- asking for every crop you need in one go (several regions in one call, the calls for several images in the same message), then write your reviews.
 - Your notes and the installed models come in the app's context when they change: otherwise the latest list you got still holds, numbers included.
 - Unlike what's said above, a launch here doesn't end your reply: launch every run you announced (one call each), then end it in one short sentence at most, since their images come in a later message.
 - Each call you make re-reads this whole conversation, so make few: calls that don't depend on each other go together in one message (all of a batch's launches at once); don't call list_comfy_models when the installed models in the app's context already answer, nor get_image for an image attached here or one you don't need to look at again."""
@@ -161,9 +164,11 @@ def _smaller(media_type: str, data: str) -> tuple[str, str]:
     return "image/jpeg", base64.b64encode(out.getvalue()).decode()
 
 
-def _blocks(content) -> list[dict]:
+def _blocks(content, shrink: bool = False) -> list[dict]:
     """A chat message's content (build_llm_messages: a string, or text and image_url parts) as
-    Claude's content blocks."""
+    Claude's content blocks. shrink: images at most IMAGE_SIDE a side (the replay of what came
+    before); else as the app keeps them for the model (the small copy, 1568), since this turn's
+    images are the ones the bot judges."""
     if isinstance(content, str):
         return [{"type": "text", "text": content}] if content else []
     out = []
@@ -172,7 +177,9 @@ def _blocks(content) -> list[dict]:
             out.append({"type": "text", "text": part["text"]})
         elif part["type"] == "image_url":
             header, _, data = part["image_url"]["url"].partition(",")
-            media_type, data = _smaller(header[len("data:"):].split(";")[0], data)
+            media_type = header[len("data:"):].split(";")[0]
+            if shrink:
+                media_type, data = _smaller(media_type, data)
             out.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
     return out
 
@@ -182,7 +189,7 @@ def _history(messages: list[dict]) -> list[dict]:
     blocks = [{"type": "text", "text": HISTORY_INTRO}]
     for message in messages:
         label = "[The user]" if message["role"] == "user" else "[You]"
-        content = _blocks(message.get("content") or "")
+        content = _blocks(message.get("content") or "", shrink=True)
         if content and content[0]["type"] == "text":
             content[0] = {"type": "text", "text": f"{label}\n{content[0]['text']}"}
         else:
@@ -217,7 +224,8 @@ def _context(conversation: dict, state: dict, sections: dict[str, str], parts: d
                              needs_title=parts["needs_title"], autonomy=parts.get("autonomy"),
                              comments_off=parts.get("comments_off", False), looking=parts.get("looking", False),
                              redo=parts.get("redo", False), downloads=parts.get("downloads"),
-                             refused=parts.get("refused"), notes_info=parts.get("notes_info") if resend else None)
+                             refused=parts.get("refused"), notes_info=parts.get("notes_info") if resend else None,
+                             image_check=parts.get("image_check"))
     extra = []
     if not new_session:
         started = state.get("sections") or {}
@@ -323,27 +331,32 @@ class AskError(RuntimeError):
     """A one-off request to Claude Code that failed: the reason, to show."""
 
 
-def ask(system: str, prompt: str, model: str, context: dict, effort: str | None = None,
+def ask(system: str, prompt: str | list[dict], model: str, context: dict, effort: str | None = None,
         timeout: float = 600) -> tuple[str, dict]:
-    """One request to Claude Code that isn't a conversation's turn (Ordenar la memoria): no
-    tools, no MCP, no session kept, the same locked-down configuration and account. Returns the
-    reply's text and what the CLI says of it (cost estimate, duration); raises AskError."""
+    """One request to Claude Code that isn't a conversation's turn (Ordenar la memoria, the
+    independent check of a run's images): no tools, no MCP, no session kept, the same locked-down
+    configuration and account. prompt: text, or content blocks (with images). Returns the reply's
+    text and what the CLI says of it (cost estimate, duration, usage); raises AskError."""
     folder = _folder("asks", uuid.uuid4().hex)
     files = {"system": folder / "system.md", "settings": folder / "settings.json"}
     files["system"].write_text(system, encoding="utf-8")
     files["settings"].write_text(json.dumps(SESSION_SETTINGS), encoding="utf-8")
     command = shutil.which(get_settings().claude_code_command) or get_settings().claude_code_command
-    args = [command, "-p", "--output-format", "json", "--model", model, *(["--effort", effort] if effort else []),
+    blocks = prompt if isinstance(prompt, list) else None
+    formats = (["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"] if blocks
+               else ["--output-format", "json"])
+    args = [command, "-p", *formats, "--model", model, *(["--effort", effort] if effort else []),
             "--tools", "", "--strict-mcp-config", "--permission-mode", "dontAsk", "--setting-sources", "",
             "--settings", str(files["settings"]), "--system-prompt-file", str(files["system"]),
             "--no-session-persistence", "--max-turns", "1"]
-    record = request_log.RequestRecord({"model": f"claude-code/{model}", "system": system,
-                                        "messages": [{"role": "user", "content": prompt}]}, context)
+    record = request_log.RequestRecord({"model": f"claude-code/{model}", "system": system, "messages": [
+        {"role": "user", "content": _logged_blocks(blocks) if blocks else prompt}]}, context)
+    sent = (json.dumps({"type": "user", "message": {"role": "user", "content": blocks}}) + "\n") if blocks else prompt
     try:
         with _slots:
             process = _spawn(args, environment(), str(_folder("workspace")))
             try:
-                out, err = process.communicate(prompt, timeout=timeout)
+                out, err = process.communicate(sent, timeout=timeout)
             except subprocess.TimeoutExpired:
                 process.kill()
                 raise AskError("Claude Code didn't finish in time.")
@@ -352,10 +365,16 @@ def ask(system: str, prompt: str, model: str, context: dict, effort: str | None 
         raise AskError(f"Claude Code couldn't start ({e}).")
     finally:
         shutil.rmtree(folder, ignore_errors=True)
-    try:
-        result = json.loads(out.strip().splitlines()[-1]) if out.strip() else None
-    except ValueError:
-        result = None
+    result = None
+    for line in (out or "").splitlines():  # json: one line; stream-json: events, the result last
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "result":
+            result = event
+        elif isinstance(event, dict) and event.get("type") == "rate_limit_event" and event.get("rate_limit_info"):
+            save_limits(event["rate_limit_info"])
     if not result or result.get("is_error") or result.get("subtype") != "success":
         detail = _failure_text(result, err or "", process.returncode)
         record.finish(error=detail, response={"result": (result or {}).get("result")})

@@ -59,6 +59,8 @@ const ui = {
   claudeEffortField: $("chat-claude-effort-field"),
   claudeAuto: $("chat-claude-auto"),
   claudeAutoField: $("chat-claude-auto-field"),
+  imageCheck: $("chat-image-check"),
+  imageCheckField: $("chat-image-check-field"),
   modelField: $("chat-model-field"),
   temperatureField: $("chat-temperature-field"), // Claude Code has no temperature to set
   chat: document.querySelector(".chat"),
@@ -118,6 +120,7 @@ function settings() {
     claude_model: source.claude_model || "",
     claude_effort: source.claude_effort || "",
     claude_auto_model: source.claude_auto_model || "",
+    image_check: source.image_check !== false,
   };
 }
 
@@ -1437,6 +1440,8 @@ function resultsMessage(message) {
           const shot = numberedImage(image, numbers.get(image.id), { reactable: true });
           const job = run?.kind === "calibration" && run.jobs.find((j) => (j.images || []).includes(image.id));
           if (job) shot.querySelector("a").after(el("span", { class: "shot-weight", text: `peso ${job.calibration_weight}` }));
+          const found = checkLine(image.check);
+          if (found) shot.append(found);
           return shot;
         })
       ),
@@ -1450,6 +1455,15 @@ function resultsMessage(message) {
     run && run.status !== "pending" && failed.some((job) => (job.error || "").startsWith("Couldn't download")) &&
       retryDownloadsButton(run)
   );
+}
+
+// What the independent inspection of the image found (image_check.py), under it.
+function checkLine(check) {
+  if (!check || !["ok", "flawed"].includes(check.verdict)) return null;
+  if (check.verdict === "ok") return el("p", { class: "shot-check is-ok", text: "Revisión: sin defectos a la vista" });
+  const issues = check.issues.map((i) => `${i.what}${i.where ? ` (${i.where})` : ""}`).join("; ");
+  const major = check.issues.some((i) => i.severity === "major");
+  return el("p", { class: `shot-check ${major ? "is-major" : "is-minor"}`, title: "Revisión independiente", text: `Revisión: ${issues}` });
 }
 
 // The images were made but didn't come down: they are still in ComfyUI, so fetch them again.
@@ -1673,6 +1687,10 @@ function applySettingsToForm(values) {
     ui.claudeEffortField.hidden = !onClaude(values);
     ui.claudeAuto.value = values.claude_auto_model || "";
     ui.claudeAutoField.hidden = !onClaude(values);
+    if (ui.imageCheck) {
+      ui.imageCheck.checked = values.image_check !== false;
+      ui.imageCheckField.hidden = !onClaude(values) || !ui.autoComment;
+    }
     ui.modelField.hidden = onClaude(values);
     ui.temperatureField.hidden = onClaude(values);
   }
@@ -1710,7 +1728,7 @@ async function changeSettings(changes) {
   }
   try {
     const updated = await request(`/api/conversations/${state.conversation.id}`, { method: "PATCH", json: changes });
-    for (const key of ["family_id", "llm_model", "temperature", "auto_comment", "initiative_images", "engine", "claude_model", "claude_effort", "claude_auto_model"]) {
+    for (const key of ["family_id", "llm_model", "temperature", "auto_comment", "initiative_images", "engine", "claude_model", "claude_effort", "claude_auto_model", "image_check"]) {
       state.conversation[key] = updated[key];
     }
     rememberSettings();
@@ -1888,6 +1906,7 @@ function defaultSettings() {
     claude_model: stored.claude_model || "",
     claude_effort: stored.claude_effort || "",
     claude_auto_model: stored.claude_auto_model || "",
+    image_check: stored.image_check !== false,
   };
 }
 
@@ -2692,6 +2711,7 @@ function setupSettings() {
   ui.claudeModel?.addEventListener("change", () => changeSettings({ claude_model: ui.claudeModel.value }).then(renderHead));
   ui.claudeEffort?.addEventListener("change", () => changeSettings({ claude_effort: ui.claudeEffort.value }).then(renderHead));
   ui.claudeAuto?.addEventListener("change", () => changeSettings({ claude_auto_model: ui.claudeAuto.value }));
+  ui.imageCheck?.addEventListener("change", () => changeSettings({ image_check: ui.imageCheck.checked }));
   ui.temperature.addEventListener("input", () => (ui.temperatureValue.textContent = ui.temperature.value));
   ui.temperature.addEventListener("change", () => changeSettings({ temperature: Number(ui.temperature.value) }));
   ui.initiative?.addEventListener("change", () => {

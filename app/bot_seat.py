@@ -14,6 +14,7 @@ reply's text before it -- the <prompt> block naming the model the prompt runs on
 being written -- is known when the tool runs, and its card goes into the chat after that text.
 """
 import base64
+import io
 import json
 import logging
 import secrets
@@ -40,15 +41,30 @@ DONE_WAIT_SECONDS = 5
 # Tools that only look: not part of the reply as stored (nor replayed on OpenRouter, which
 # doesn't have them).
 LOOKUPS = ("get_image", "get_balance_data", "get_prompt")
+# Zooming in (get_image with regions): crops of the original, at least ZOOM_MIN_SIDE a side (a small
+# crop scaled up, so the model looks at it closely) and at most ZOOM_MAX_SIDE (what it takes).
+MAX_REGIONS = 6
+ZOOM_MIN_SIDE = 768
+ZOOM_MAX_SIDE = 1568
+MIN_REGION_PERCENT = 2
 
 LOOKUP_TOOLS = [
     types.Tool(
         name="get_image",
         description="Look at an image of this conversation again, by its number (#N): the ones still attached "
-                    "come with the messages; this shows any of them, with the generation metadata it carries.",
+                    "come with the messages; this shows any of them, with the generation metadata it carries. "
+                    "With regions, zoom in instead: each region comes cropped from the original at its full "
+                    "detail (hands, faces, joints, anything doubtful).",
         input_schema={"type": "object", "properties": {
             "number": {"type": "integer", "minimum": 1, "description": "The image's number in the conversation."},
             "full_size": {"type": "boolean", "description": "The original instead of the reduced copy."},
+            "regions": {"type": "array", "maxItems": MAX_REGIONS, "description": (
+                "Parts to zoom in on, each in percent of the image's width and height from its top left "
+                "corner, e.g. a hand low on the left: {\"x\": 5, \"y\": 60, \"width\": 25, \"height\": 25}."),
+                "items": {"type": "object", "properties": {
+                    "x": {"type": "number"}, "y": {"type": "number"},
+                    "width": {"type": "number"}, "height": {"type": "number"}},
+                    "required": ["x", "y", "width", "height"]}},
         }, "required": ["number"]},
     ),
     types.Tool(
@@ -191,11 +207,54 @@ def _text(payload, error: bool = False) -> types.CallToolResult:
     return types.CallToolResult(content=[types.TextContent(type="text", text=text)], is_error=error)
 
 
-def _image(seat: Seat, number, full_size: bool = False) -> types.CallToolResult:
+def _zoomed(path: str, regions) -> list | str:
+    """Each region of the image at path, cropped from it and sized for a close look; or what's wrong."""
+    from PIL import Image
+    if not isinstance(regions, list) or not regions:
+        return "regions must be a list of {x, y, width, height}, in percent."
+    out: list = []
+    with Image.open(path) as original:
+        original.load()
+        width, height = original.size
+        for region in regions[:MAX_REGIONS]:
+            try:
+                x, y, w, h = (float(region[k]) for k in ("x", "y", "width", "height"))
+            except (KeyError, TypeError, ValueError):
+                return "Each region needs x, y, width and height, in percent."
+            x, y = min(max(x, 0.0), 100 - MIN_REGION_PERCENT), min(max(y, 0.0), 100 - MIN_REGION_PERCENT)
+            w, h = min(max(w, MIN_REGION_PERCENT), 100 - x), min(max(h, MIN_REGION_PERCENT), 100 - y)
+            box = (round(x * width / 100), round(y * height / 100),
+                   round((x + w) * width / 100), round((y + h) * height / 100))
+            crop = original.crop(box).convert("RGB")
+            side = max(crop.size)
+            scale = ZOOM_MIN_SIDE / side if side < ZOOM_MIN_SIDE else min(1.0, ZOOM_MAX_SIDE / side)
+            if scale != 1.0:
+                crop = crop.resize((max(1, round(crop.width * scale)), max(1, round(crop.height * scale))),
+                                   Image.LANCZOS)
+            data = io.BytesIO()
+            crop.save(data, "JPEG", quality=92)
+            out.append(types.TextContent(type="text", text=(
+                f"Region x {x:g}% y {y:g}%, {w:g}% x {h:g}% of the image ({box[2] - box[0]}x{box[3] - box[1]} px "
+                f"of the original, shown at {crop.width}x{crop.height}):")))
+            out.append(types.ImageContent(type="image", data=base64.b64encode(data.getvalue()).decode("ascii"),
+                                          mime_type="image/jpeg"))
+    return out
+
+
+def _image(seat: Seat, number, full_size: bool = False, regions=None) -> types.CallToolResult:
     conversation = conversations.get(seat.conversation_id) or {"messages": []}
     image = chat.image_by_number(conversation["messages"], number) if isinstance(number, int) else None
     if image is None:
         return _text({"error": f"There is no image {number} in this conversation."}, error=True)
+    if regions is not None:
+        original = conversations.image_file(seat.conversation_id, image["id"])
+        if original is None:
+            return _text({"error": f"Image {number} is gone."}, error=True)
+        zoomed = _zoomed(original[0], regions)
+        if isinstance(zoomed, str):
+            return _text({"error": zoomed}, error=True)
+        return types.CallToolResult(content=[types.TextContent(type="text", text=f"Image {number}, zoomed in:"),
+                                             *zoomed])
     found = conversations.image_file(seat.conversation_id, image["id"], small=not full_size)
     if found is None:
         return _text({"error": f"Image {number} is gone."}, error=True)
@@ -221,7 +280,8 @@ async def _call_tool(ctx, params) -> types.CallToolResult:
     name, arguments = params.name, dict(params.arguments or {})
     if name == "get_image":
         return await anyio.to_thread.run_sync(lambda: _image(seat, arguments.get("number"),
-                                                             bool(arguments.get("full_size"))))
+                                                             bool(arguments.get("full_size")),
+                                                             arguments.get("regions")))
     if name == "get_balance_data":
         found = balance.ledger(conversations.get(seat.conversation_id) or {"id": seat.conversation_id,
                                                                            "messages": [], "runs": []})
