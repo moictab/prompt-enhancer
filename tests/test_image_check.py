@@ -3,11 +3,28 @@ import base64
 import io
 import json
 
+import pytest
 from PIL import Image
 
 from app import bot_seat, claude_code, conversation_turn, conversations, image_check
 
 from .conftest import png_bytes
+
+
+@pytest.fixture(autouse=True)
+def check_on(monkeypatch):
+    """The check is off app-wide (image_check.ACTIVE); these tests are about how it works when on."""
+    monkeypatch.setattr(image_check, "ACTIVE", True)
+
+
+def test_while_off_app_wide_nothing_is_inspected_nor_reported(monkeypatch):
+    conversation = _conversation_with_a_batch()
+    monkeypatch.setattr(image_check, "ACTIVE", False)
+    monkeypatch.setattr(claude_code, "ask", lambda *a, **k: pytest.fail("asked while off"))
+    assert image_check.check(conversation, conversation_turn._image_loader(conversation["id"])) == 0
+    conversation["messages"][-1]["images"][0]["check"] = {"verdict": "flawed", "issues": [
+        {"what": "x", "where": "", "severity": "major"}]}
+    assert image_check.context_text(conversation) is None
 
 
 def _conversation_with_a_batch(**settings):

@@ -2,7 +2,7 @@
 {% block title %}Conversar{% endblock %}
 {% block body_class %}page-chat{% endblock %}
 {% block content %}
-<div class="chat-layout" id="chat-layout" data-comfy="{{ 'on' if comfy_configured else 'off' }}">
+<div class="chat-layout" id="chat-layout" data-comfy="{{ 'on' if comfy_configured else 'off' }}" data-image-check="{{ 'on' if image_check_active else 'off' }}">
   <aside class="threads" aria-labelledby="threads-title">
     <h2 id="threads-title" class="visually-hidden">Conversaciones</h2>
     <button type="button" class="btn-secondary threads-new" id="new-conversation">Nueva conversación</button>

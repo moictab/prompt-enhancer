@@ -12,6 +12,12 @@ doesn't pay for them again, and the chat shows them under each image.
 One request per batch, up to MAX_IMAGES images: their tokens and a short answer, no session
 re-read -- cheaper than any call of the turn itself. A conversation turns it off with
 `image_check: false` ("Revisión independiente de las imágenes").
+
+Off for every conversation since 2026-11-05 (ACTIVE): over its first 87 images it found something
+in nearly all (52 of the 54 it answered for), so its findings told good from bad no better than
+chance, its "major" findings fell on 4 images the user liked and 1 they disliked, and 9 of its 26
+requests came back with nothing usable. What it taught, and what to try before turning it on again,
+is in the owner's notes for this project (Claude Code memory: the image check's lessons).
 """
 import json
 import logging
@@ -22,6 +28,7 @@ from . import chat, claude_code, conversations
 
 logger = logging.getLogger("app.conversations")
 
+ACTIVE = False  # see above: off for now, whatever a conversation's setting says
 MAX_IMAGES = 12
 MAX_ISSUES = 6
 DETAIL_NODES = ("FaceDetailer", "ImageUpscaleWithModel")
@@ -55,7 +62,7 @@ CONTEXT_HEADING = (
 
 
 def enabled(conversation: dict) -> bool:
-    return claude_code.engine(conversation) and conversation.get("image_check", True) is not False
+    return ACTIVE and claude_code.engine(conversation) and conversation.get("image_check", True) is not False
 
 
 def _new_images(conversation: dict, stages: bool = False) -> list:
@@ -146,6 +153,8 @@ def check(conversation: dict, load_image) -> int:
 
 def context_text(conversation: dict) -> str | None:
     """What the inspection found in the images this turn reviews, for the turn's context."""
+    if not enabled(conversation):
+        return None
     numbers = chat.image_numbers(conversation["messages"])
     lines = []
     for image in _new_images(conversation):

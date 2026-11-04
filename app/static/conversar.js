@@ -86,6 +86,8 @@ const state = {
   visionSupport: new Map(), // model id -> accepts images, once the model list has loaded
   toolSupport: new Map(), // model id -> takes tools (can run ComfyUI workflows)
   comfy: document.getElementById("chat-layout").dataset.comfy === "on",
+  // The independent check of run images (image_check.py), off app-wide for now: no setting, no findings shown.
+  imageCheck: document.getElementById("chat-layout").dataset.imageCheck === "on",
   pollTimer: 0,
   downloadChoices: {}, // "<conversation>:<n>" -> the folder, family and name the user left in a download's card
   noteIds: null, // ids of the notes still in memory, to show forgotten ones as such
@@ -1465,7 +1467,7 @@ function resultsMessage(message) {
 
 // What the independent inspection of the image found (image_check.py), under it.
 function checkLine(check) {
-  if (!check || !["ok", "flawed"].includes(check.verdict)) return null;
+  if (!state.imageCheck || !check || !["ok", "flawed"].includes(check.verdict)) return null;
   if (check.verdict === "ok") return el("p", { class: "shot-check is-ok", text: "Revisión: sin defectos a la vista" });
   const issues = check.issues.map((i) => `${i.what}${i.where ? ` (${i.where})` : ""}`).join("; ");
   const major = check.issues.some((i) => i.severity === "major");
@@ -1695,7 +1697,7 @@ function applySettingsToForm(values) {
     ui.claudeAutoField.hidden = !onClaude(values);
     if (ui.imageCheck) {
       ui.imageCheck.checked = values.image_check !== false;
-      ui.imageCheckField.hidden = !onClaude(values) || !ui.autoComment;
+      ui.imageCheckField.hidden = !state.imageCheck || !onClaude(values) || !ui.autoComment;
     }
     ui.modelField.hidden = onClaude(values);
     ui.temperatureField.hidden = onClaude(values);

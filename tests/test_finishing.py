@@ -70,6 +70,7 @@ def test_a_finished_image_is_inspected_as_finished(finishing, monkeypatch):
     conversations.append_message(conversation_id, {"role": "results", "run": 1, "content": "", "images": [finished]})
     conversation = conversations.get(conversation_id)
     conversation["engine"] = "claude-code"
+    monkeypatch.setattr(image_check, "ACTIVE", True)  # off app-wide for now
     asked = []
     monkeypatch.setattr("app.claude_code.ask", lambda system, prompt, model, context, **k: (
         asked.append(prompt[0]["text"]) or ('{"images": []}', {})))
