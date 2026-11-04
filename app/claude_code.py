@@ -74,6 +74,10 @@ SESSION_GROWTH = 1.5
 # replay is never bigger than the session (it holds recent images only, old tool results in brief).
 CACHE_TTL_SECONDS = 3600
 COLD_RENEW_TOKENS = 40_000
+# And it looks back only about 20 content blocks from where a request asks it to store: a turn's message
+# of 13 blocks found the session cached, one of 16 or more never did (and wrote it all again). A message
+# is packed into few blocks (_packed); one still wider than this starts a new session instead.
+CACHE_LOOKBACK_BLOCKS = 12
 # Images go to Claude Code at most this long a side (the small copy is 1568): about 950 tokens, not 1,600.
 IMAGE_SIDE = 1024
 
@@ -239,10 +243,41 @@ def build_message(conversation: dict, state: dict, sections: dict[str, str], par
     """The user-side message of this turn, as Claude content blocks; and the context it records."""
     context, recorded = _context(conversation, state, sections, parts, new_session)
     replay = chat.build_llm_messages(conversation, load_image, tools=False, installed=installed, context=context)
-    blocks = _blocks(replay[-1]["content"]) if replay and replay[-1]["role"] == "user" else []
+    blocks = _packed(_blocks(replay[-1]["content"])) if replay and replay[-1]["role"] == "user" else []
     if new_session and len(replay) > 1:
         blocks = _history(replay[:-1]) + blocks
     return blocks, recorded
+
+
+IMAGE_LABEL = re.compile(r"^Image (\d+)\b")
+
+
+def _packed(blocks: list[dict]) -> list[dict]:
+    """The turn's message in as few blocks as it can be: its text in one (each image's label
+    and metadata in it, and the order the images follow in), then the images, then the text
+    after the last image (the app's context). The prompt cache looks back only about 20 blocks
+    for what an earlier request stored: a message of more -- a batch's images, each with its
+    label -- missed it, and the whole session was written again."""
+    if not any(b["type"] == "image" for b in blocks):
+        texts = [b["text"] for b in blocks if b["type"] == "text" and b["text"]]
+        return [{"type": "text", "text": "\n\n".join(texts)}] if texts else []
+    last_image = max(i for i, b in enumerate(blocks) if b["type"] == "image")
+    before, images, numbers = [], [], []
+    for index, block in enumerate(blocks[:last_image + 1]):
+        if block["type"] == "image":
+            label = IMAGE_LABEL.match(blocks[index - 1]["text"]) if index and blocks[index - 1]["type"] == "text" else None
+            numbers.append(label.group(1) if label else None)
+            images.append(block)
+        elif block.get("text"):
+            before.append(block["text"])
+    if all(numbers):
+        listed = ", ".join(f"image {n}" for n in numbers)
+        before.append(f"(Attached below, in this order: {listed}.)")
+    else:
+        before.append(f"({len(images)} images attached below, in the order named above.)")
+    after = [b["text"] for b in blocks[last_image + 1:] if b["type"] == "text" and b.get("text")]
+    return ([{"type": "text", "text": "\n\n".join(before)}, *images]
+            + ([{"type": "text", "text": "\n\n".join(after)}] if after else []))
 
 
 def args_for(model: str, session_id: str, resume: bool, files: dict[str, Path],
@@ -466,13 +501,20 @@ def run(conversation: dict, family: dict, toolbox, library: list[dict],
                     state.get("tokens_per_call"), "cold" if _cold(conversation, state, now) else "grown")
         state = {}
     new_session = not state.get("session_id")
-    session_id = str(uuid.uuid4()) if new_session else state["session_id"]
     model = model_for(conversation, automatic)
     sections = chat.system_sections(family, workflows=library if toolbox else None,
                                     families=family_names if toolbox else None,
                                     extra_mechanics=CLAUDE_CODE_MECHANICS)
     system = "\n\n".join(sections.values())
     blocks, recorded = build_message(conversation, state, sections, parts, load_image, installed, new_session)
+    if not new_session and len(blocks) > CACHE_LOOKBACK_BLOCKS and (state.get("tokens_per_call") or 0) > COLD_RENEW_TOKENS:
+        # Even packed (a big batch's images), the cache can't reach back across this message: resuming
+        # would write the session all again, and a new one -- the app's replay -- is smaller.
+        logger.info("claude code session renewed conversation_id=%s tokens_per_call=%s wide message (%d blocks)",
+                    conversation_id, state.get("tokens_per_call"), len(blocks))
+        state, new_session = {}, True
+        blocks, recorded = build_message(conversation, state, sections, parts, load_image, installed, True)
+    session_id = str(uuid.uuid4()) if new_session else state["session_id"]
 
     seat = bot_seat.open_seat(conversation_id, toolbox, tools_allowed=tools_allowed)
     folder = _folder("turns", seat.token)

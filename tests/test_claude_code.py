@@ -466,6 +466,36 @@ def test_a_session_that_grew_too_big_is_renewed_with_the_apps_replay(api_client,
     assert not claude_code._grown({"tokens_per_call": 120_000, "start_tokens": 100_000})
 
 
+def test_a_turns_message_goes_in_few_blocks_so_the_cache_reaches_back():
+    image = {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "x"}}
+    blocks = [{"type": "text", "text": "[Run 3 finished: image 5 (seed 1); image 6 (seed 2).]"},
+              {"type": "text", "text": "Image 5:"}, image, {"type": "text", "text": "Image 6:"}, image,
+              {"type": "text", "text": "## The app's context"}]
+    packed = claude_code._packed(blocks)
+    assert [b["type"] for b in packed] == ["text", "image", "image", "text"]
+    assert packed[0]["text"].endswith("Image 6:\n\n(Attached below, in this order: image 5, image 6.)")
+    assert packed[-1]["text"] == "## The app's context"
+    assert claude_code._packed([{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]) == [
+        {"type": "text", "text": "a\n\nb"}]
+
+
+def test_a_message_too_wide_for_the_cache_starts_a_new_session(api_client, auth_headers, tmp_path, fake_comfy,
+                                                               claude, monkeypatch):
+    from .conftest import png_bytes
+    conversation = _claude_conversation(api_client, auth_headers, _family(tmp_path))
+    fake = claude([init(), text("Uno."), result()], [init(session="s2"), text("Dos."), result()])
+    _send(api_client, auth_headers, conversation["id"], "hola")
+    # Big, but neither idle nor grown since it started: it would be resumed...
+    state = conversations.get(conversation["id"])["claude_code"]
+    conversations.set_claude_code(conversation["id"], {**state, "tokens_per_call": 120_000, "start_tokens": 120_000})
+    monkeypatch.setattr(claude_code, "CACHE_LOOKBACK_BLOCKS", 2)
+    # ...but this message is wider than the cache looks back: it would be written all again.
+    _send(api_client, auth_headers, conversation["id"], "mira", files=[
+        ("images", ("a.png", png_bytes(), "image/png")), ("images", ("b.png", png_bytes(), "image/png"))])
+    args = fake.launches[1]["args"]
+    assert "--resume" not in args and claude_code.HISTORY_INTRO in fake.sent(1)
+
+
 def test_a_session_the_cache_dropped_is_renewed_and_its_size_is_its_last_calls():
     # The result's totals aren't one call's: the size is what the last call read.
     usage = {"input_tokens": 10, "cache_creation_input_tokens": 270_953, "cache_read_input_tokens": 785_758,
