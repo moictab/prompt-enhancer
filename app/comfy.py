@@ -160,7 +160,7 @@ class Comfy:
         self._base = None
         raise Unreachable("ComfyUI isn't reachable (neither the gateway nor ComfyUI answer): the PC may be off.")
 
-    def submit(self, base: str, workflow: dict, tag: str = "conversar", priority: str = PRIORITY) -> str:
+    def submit(self, base: str, workflow: dict, tag: str = "Conversar", priority: str = PRIORITY) -> str:
         body = {
             "prompt": workflow,
             "client_id": self.client_id,

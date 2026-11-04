@@ -61,6 +61,7 @@ class FakeComfy:
     def __init__(self):
         self.submitted: list[dict] = []
         self.priorities: list[str] = []
+        self.tags: list[str] = []
         self.histories: dict[str, dict] = {}
         self.files: dict[str, bytes] = {}
         self.uploads: list[str] = []
@@ -77,11 +78,12 @@ class FakeComfy:
             raise comfy.Unreachable("ComfyUI isn't reachable: the PC may be off.")
         return self.base
 
-    def submit(self, base, workflow, tag="conversar", priority="high"):
+    def submit(self, base, workflow, tag="Conversar", priority="high"):
         if self.reject is not None:
             raise self.reject
         self.submitted.append(workflow)
         self.priorities.append(priority)
+        self.tags.append(tag)
         return f"prompt-{len(self.submitted)}"
 
     def history(self, base, prompt_id):

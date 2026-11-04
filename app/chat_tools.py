@@ -33,6 +33,8 @@ MODEL_FOLDERS = list(comfy.MODEL_FOLDERS)
 MAX_SEED = 2 ** 48
 CALIBRATION_WEIGHTS = [0, 0.25, 0.5, 0.75, 1.0]
 MAX_CALIBRATION_WEIGHTS = 6
+# comfy-gateway's panel shows a job's tag cut at about 30 characters: the conversation first, at most this long.
+TAG_TITLE_CHARS = 40
 # Of a reply the user asked for, how many images go to ComfyUI at high priority (they are waiting
 # for them); the rest of its batch, at normal.
 WAITED_FOR_IMAGES = 2
@@ -682,17 +684,34 @@ class ToolBox:
             return comfy.PRIORITY
         return comfy.PRIORITY_REST
 
+    def _tag(self, number: int, calibrating: str | None = None) -> str:
+        """What comfy-gateway's panel shows for the run's jobs: the conversation, the run and who
+        it is for -- "Bruja en el bosque · ejecución 3 · por su cuenta"."""
+        conversation = self._conversation()
+        title = " ".join((conversation.get("title") or self.title_hint
+                          or conversations.display_title(conversation) or "Conversar").split())
+        if len(title) > TAG_TITLE_CHARS:
+            title = title[:TAG_TITLE_CHARS - 1].rstrip() + "…"
+        if calibrating:
+            why = f"calibración de {re.split(r'[\\/]', catalog.short_name(calibrating))[-1]}"
+        else:
+            why = "por su cuenta" if self.automatic else "tras tu mensaje"
+        return f"{title} · ejecución {number} · {why}"
+
     def _submit_run(self, label: str, changes: dict, base: str, folder: str, variants: list,
                     priority: str | None = None, run_fields: dict | None = None) -> dict:
         """Send one job per (graph, seed, job fields) and record the run. priority: every job's, or
         by default each one's by who is waiting for it (_priority)."""
         self._check_budget(len(variants))
+        number = len(self._conversation().get("runs") or []) + 1  # the number add_run will give it
+        tag = self._tag(number, (run_fields or {}).get("lora") if (run_fields or {}).get("kind") == "calibration"
+                        else None)
         jobs, sent, priorities = [], [], []
         for job_graph, seed, fields in variants:
             payload = job_graph.to_api()
             job_priority = priority or self._priority()
             try:
-                prompt_id = self.client.submit(base, payload, priority=job_priority)
+                prompt_id = self.client.submit(base, payload, tag=tag, priority=job_priority)
             except comfy.ComfyError:
                 if not jobs:
                     raise

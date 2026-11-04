@@ -57,7 +57,7 @@ def test_submit_declares_project_priority_and_tag(mock_request):
     assert client.submit("http://gw", {"1": {"class_type": "X", "inputs": {}}}) == "abc"
 
     body = mock_request.call_args.kwargs["json"]
-    assert body["extra_data"] == {"gateway": {"project": "prompt-enhancer", "priority": "high", "tag": "conversar"}}
+    assert body["extra_data"] == {"gateway": {"project": "prompt-enhancer", "priority": "high", "tag": "Conversar"}}
     assert body["client_id"] == client.client_id
 
 

@@ -87,6 +87,7 @@ def test_calibrate_lora_runs_one_image_per_weight_same_seed_at_idle_priority(fak
     assert result["lora"] == INK and result["workflow"] == "krea-2/txt2img" and result["weights"] == [0, 0.5, 1]
     assert part["calibration"] == INK and part["count"] == 3
     assert fake_comfy.priorities == ["idle"] * 3
+    assert all(tag.endswith("· ejecución 1 · calibración de style-ink_v1") for tag in fake_comfy.tags), fake_comfy.tags
     seeds = {next(n["inputs"]["seed"] for n in sent.values() if n["class_type"] == "KSampler")
              for sent in fake_comfy.submitted}
     assert seeds == {result["seed"]}

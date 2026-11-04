@@ -44,6 +44,9 @@ def test_after_a_message_the_bot_goes_on_alone_until_the_budget_is_spent(api_cli
     assert "The budget is spent" in message_text(last_look["messages"][-1])
     # What it launched by itself waits behind what someone asked for.
     assert fake_comfy.priorities == ["high", "high", "low"]
+    # comfy-gateway's panel says which conversation, which run and who it is for.
+    assert fake_comfy.tags == ["hazme una bruja · ejecución 1 · tras tu mensaje"] * 2 + [
+        "hazme una bruja · ejecución 2 · por su cuenta"]
     ended = conversations.get(conversation_id)["autonomy"]
     assert ended["active"] is False and ended["end_reason"] == "images" and ended["images"] == 3
 
