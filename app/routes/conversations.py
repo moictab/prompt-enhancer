@@ -6,7 +6,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .. import catalog, civitai, conversation_turn, conversations, runs
+from .. import balance, catalog, civitai, conversation_turn, conversations, runs
 from .api import _require_family, read_image
 
 router = APIRouter(prefix="/api/conversations")
@@ -74,8 +74,12 @@ def create_conversation(req: ConversationSettings):
 @router.get("/{conversation_id}")
 def get_conversation(conversation_id: str):
     """The conversation, plus whether the bot is replying or commenting on results right
-    now (the chat then follows the reply, GET …/live)."""
-    return _with_activity(_require_conversation(conversation_id))
+    now (the chat then follows the reply, GET …/live). A request to take stock comes without
+    the evidence the bot got (tens of KB, which the chat re-reads every few seconds while a
+    run is under way): GET …/balance has it."""
+    conversation = _require_conversation(conversation_id)
+    conversation["messages"] = [{**m, "balance": True} if m.get("balance") else m for m in conversation["messages"]]
+    return _with_activity(conversation)
 
 
 @router.patch("/{conversation_id}")
@@ -185,6 +189,41 @@ def retry_reply(conversation_id: str):
         raise HTTPException(status_code=409, detail="The last message already has a reply")
     _require_idle(conversation_id)
     _require_family(conversation["family_id"])
+    return _reply(conversation_id)
+
+
+MAX_FOCUS_LENGTH = 2000
+
+
+@router.get("/{conversation_id}/balance")
+def balance_data(conversation_id: str):
+    """The evidence for taking stock of the conversation (balance.py), without asking the bot:
+    every image its runs made with its recipe, review and reaction, and the counts per ingredient."""
+    found = balance.ledger(_require_conversation(conversation_id))
+    if found is None:
+        raise HTTPException(status_code=404, detail="The runs here have made no images yet")
+    return {"text": found.text, **found.counts}
+
+
+@router.post("/{conversation_id}/balance")
+def take_stock(conversation_id: str, focus: str = Form("")):
+    """Ask the bot to take stock of the whole conversation: what worked best and worst, and its
+    notes brought in line with that. A message of its own (with the evidence, and whatever the
+    user adds as focus), answered like any other, without tools; streamed the same way."""
+    conversation = _require_conversation(conversation_id)
+    _require_idle(conversation_id)
+    if conversations.autonomy(conversation):
+        raise HTTPException(status_code=409, detail="The bot is working on its own here: stop it before taking stock")
+    _require_family(conversation["family_id"])
+    if len(focus) > MAX_FOCUS_LENGTH:
+        raise HTTPException(status_code=400, detail=f"Keep what you add under {MAX_FOCUS_LENGTH} characters")
+    found = balance.ledger(conversation)
+    if found is None:
+        raise HTTPException(status_code=400, detail="There is nothing to take stock of yet: the runs here have made no images")
+    conversations.append_message(conversation_id, {
+        "role": "user", "content": focus.strip(), "images": [], "balance": balance.request_text(found),
+        "balance_counts": found.counts,
+    })
     return _reply(conversation_id)
 
 

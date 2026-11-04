@@ -45,7 +45,9 @@ with a prompt-crafting bot that can also run ComfyUI workflows on the owner's PC
 - Conversar: start_conversation, then send_message. The bot replies with prompts (numbered across \
 the conversation, each naming the base model it is for) and may launch ComfyUI runs; their images \
 arrive later: call wait_for_conversation, then get_image to see them, react_to_image to tell the \
-bot what worked. Image N of a conversation is written #N in messages.
+bot what worked. Image N of a conversation is written #N in messages. After a good number of \
+runs, take_stock has the bot look back over all of them (what worked, the best recipe) and fix its \
+notes; get_balance_data gives the same evidence without asking the bot.
 - Everything else the app's settings page does is here too: families, characters, the bot's notes \
 about the user, system prompts, the ComfyUI workflow library, installed models, and the log of \
 every request sent to OpenRouter.
@@ -300,6 +302,8 @@ def _conversation_view(conversation: dict, since: int = 0, last: int | None = No
                         images=[_image_view(i, numbers) for i in message.get("images") or []])
             if message.get("reactions"):
                 view["reactions"] = message["reactions"]
+            if message.get("balance"):
+                view["took_stock"] = message.get("balance_counts") or True  # asked the bot to take stock
         if index >= start:
             shown.append(view)
     return {
@@ -342,11 +346,12 @@ async def _conversation(conversation_id: str) -> dict:
     return await _json("GET", f"/api/conversations/{conversation_id}")
 
 
-async def _send(conversation_id: str, message: str, images: list[str]) -> dict:
+async def _send(conversation_id: str, message: str, images: list[str], path: str = "messages",
+                field: str = "content") -> dict:
     files = [("images", _image_file(data, i)) for i, data in enumerate(images or [], 1)]
     before = len((await _conversation(conversation_id))["messages"])
-    response = await _call("POST", f"/api/conversations/{conversation_id}/messages",
-                           data={"content": message or ""}, files=files or None)
+    response = await _call("POST", f"/api/conversations/{conversation_id}/{path}",
+                           data={field: message or ""}, files=files or None)
     _reply(response)
     conversation = await _conversation(conversation_id)
     view = _conversation_view(conversation, since=before)
@@ -557,6 +562,28 @@ async def send_message(
 ) -> dict:
     """Send a message in a conversation and wait for the bot's reply (its prompts, the runs it launched)."""
     return await _send(conversation_id, message, images)
+
+
+@server.tool(annotations=LLM)
+async def take_stock(
+    conversation_id: str,
+    focus: Annotated[str, Field(max_length=2000, description=(
+        "Optional: what to look at above all (\"sobre todo la luz\"), in any language."))] = "",
+) -> dict:
+    """Ask the bot to take stock of the whole conversation ("Hacer balance" in the chat): the app hands it every
+    image the runs made, with its recipe, the bot's review and the owner's reaction, and counts per ingredient;
+    the bot says what worked best and worst and why, the best recipe and what to try next, and brings its notes
+    in line with that (the note changes come back with the reply). One reply, no runs launched."""
+    return await _send(conversation_id, focus, [], path="balance", field="focus")
+
+
+@server.tool(annotations=READ)
+async def get_balance_data(conversation_id: str) -> dict:
+    """The evidence for taking stock of a conversation, without asking its bot: every image the runs made there
+    (by number) with its recipe -- workflow, the proposal whose prompt it ran, base model, LoRAs and weights,
+    sampler settings, size, seed --, the bot's review and the owner's reaction; then counts per ingredient
+    (liked, disliked, unrated, flawed). As text, plus the totals."""
+    return await _json("GET", f"/api/conversations/{conversation_id}/balance")
 
 
 @server.tool(annotations=READ)

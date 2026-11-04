@@ -76,7 +76,7 @@ def test_the_endpoint_takes_the_apps_credentials_and_lists_every_feature(api_cli
     for name in ("generate_prompt", "prompt_from_image", "write_story", "make_variations", "start_conversation",
                  "send_message", "wait_for_conversation", "get_image", "react_to_image", "search_history",
                  "save_family", "save_character", "save_note", "set_system_prompt", "save_workflow",
-                 "list_installed_models", "list_requests"):
+                 "list_installed_models", "list_requests", "take_stock", "get_balance_data"):
         assert name in tools
     assert tools["delete_conversation"]["annotations"]["destructiveHint"] is True
     assert tools["get_conversation"]["annotations"]["readOnlyHint"] is True
@@ -143,6 +143,15 @@ def test_an_agent_converses_launches_and_looks_at_the_images(agent, tmp_path, fa
     assert "[Reactions: image 1 liked]" in message_text(script.calls[-1]["messages"][-1])
     assert agent.call("get_conversation", conversation_id=conversation_id, last_messages=1)["messages"][0]["text"] \
         == "Me alegro de que te guste."
+
+    # Looking back over the conversation: the evidence alone, or the bot's own balance of it.
+    evidence = agent.call("get_balance_data", conversation_id=conversation_id)
+    assert evidence["images"] == 1 and evidence["liked"] == 1 and "user liked; you: ok" in evidence["text"]
+    with patch("app.conversation_turn.stream_chat", Script(("Lo mejor: #1.", []))):
+        took = agent.call("take_stock", conversation_id=conversation_id, focus="la luz")
+    asked, answered = took["messages"]
+    assert asked["took_stock"]["images"] == 1 and asked["text"] == "la luz"
+    assert answered["text"] == "Lo mejor: #1."
 
 
 def test_a_message_refused_before_anything_is_stored_leaves_no_conversation_behind(agent, tmp_path):

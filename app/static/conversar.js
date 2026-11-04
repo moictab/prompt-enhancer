@@ -67,6 +67,7 @@ const ui = {
   reactionHint: $("reaction-hint"),
   picker: $("image-picker"),
   autonomyBar: $("autonomy-bar"),
+  takeStock: $("take-stock"), // only with ComfyUI configured
 };
 
 const state = {
@@ -164,6 +165,7 @@ function renderComposerState() {
     const commenting = state.live.get(conversation?.id)?.automatic ?? conversation?.commenting;
     setBusy(ui.send, true, commenting ? "Comentando…" : "Respondiendo…");
   }
+  renderTakeStock();
 }
 
 // ---------- what the user has seen ----------
@@ -974,7 +976,28 @@ function botMessage(message, firstNumber) {
   return node;
 }
 
+// "74 imágenes: 34 te gustaron, 5 no te gustaron, 35 sin valorar"
+function balanceCounts(counts) {
+  if (!counts || typeof counts !== "object") return "";
+  const liked = (n) => `${n} ${n === 1 ? "te gustó" : "te gustaron"}`;
+  const disliked = (n) => `${n} no ${n === 1 ? "te gustó" : "te gustaron"}`;
+  return `${counts.images} ${counts.images === 1 ? "imagen" : "imágenes"}: ${liked(counts.liked)}, ${disliked(counts.disliked)}, ${counts.unrated} sin valorar`;
+}
+
+// The user asked the bot to take stock: what it got is the app's evidence, so the chat shows the request, not that text.
+function balanceMessage(message) {
+  const counts = balanceCounts(message.balance_counts);
+  return el(
+    "article",
+    { class: "msg msg-user msg-balance" },
+    el("p", { class: "msg-balance-head" }, el("strong", { text: "Hacer balance" }), counts && ` de ${counts}`),
+    reactionsSummary(message.reactions, imageNumbers()),
+    message.content && el("p", { class: "msg-text" }, withImageRefs(message.content))
+  );
+}
+
 function userMessage(message, previews = null) {
+  if (message.balance) return balanceMessage(message);
   const numbers = state.conversation ? imageNumbers() : new Map();
   const images = message.images || [];
   const shots = previews
@@ -1122,6 +1145,7 @@ function renderLog() {
   const live = conversation && state.live.get(conversation.id);
   renderReactionHint();
   renderAutonomy();
+  renderTakeStock();
   if (conversation) markSeen(conversation);
   if (!messages.length && !live) {
     ui.log.replaceChildren(emptyState());
@@ -1777,6 +1801,73 @@ async function retryReply(event) {
   scrollToBottom();
 }
 
+// ---------- taking stock ----------
+
+const takeStockLabel = ui.takeStock ? [...ui.takeStock.childNodes] : []; // long and short (phone) labels
+let takeStockArmed = 0;
+
+function runImages() {
+  return (state.conversation?.messages || []).filter((m) => m.role === "results").flatMap((m) => m.images || []);
+}
+
+function disarmTakeStock() {
+  clearTimeout(takeStockArmed);
+  takeStockArmed = 0;
+  ui.takeStock.classList.remove("is-armed");
+  ui.takeStock.replaceChildren(...takeStockLabel);
+}
+
+// Once runs have made images, and while the bot is free (not answering, not working on its own).
+function renderTakeStock() {
+  if (!ui.takeStock) return;
+  const conversation = state.conversation;
+  const made = runImages().length > 0;
+  ui.takeStock.hidden = !made;
+  ui.takeStock.disabled = !made || isBusy(conversation) || !!conversation?.autonomy?.active;
+  if (ui.takeStock.disabled && takeStockArmed) disarmTakeStock();
+}
+
+// The bot looks back over every image the runs made here (the app hands it each one's recipe,
+// its review and the user's reaction) and says what worked; its notes follow. With images still
+// unrated, a second press confirms: the user's reactions are what it learns most from.
+function takeStock() {
+  const conversation = state.conversation;
+  if (!conversation || isBusy(conversation) || conversation.autonomy?.active) return;
+  const images = runImages();
+  const ratings = images.map((img) => img.reaction?.rating);
+  const counts = {
+    images: images.length,
+    liked: ratings.filter((r) => r === "up").length,
+    disliked: ratings.filter((r) => r === "down").length,
+  };
+  counts.unrated = counts.images - counts.liked - counts.disliked;
+  if (counts.unrated && !takeStockArmed) {
+    ui.takeStock.classList.add("is-armed");
+    ui.takeStock.textContent = `${counts.unrated} sin valorar: ¿seguir?`;
+    takeStockArmed = setTimeout(disarmTakeStock, 4000);
+    return;
+  }
+  disarmTakeStock();
+  const model = settings().llm_model;
+  if (state.visionSupport.get(model) === false) {
+    setSettingsOpen(true);
+    showError(`${shortModel(model)} no acepta imágenes. Elige en los ajustes un modelo con visión.`);
+    return;
+  }
+  clearError();
+  const reactions = pendingReactions().map((image) => ({ image_id: image.id, ...image.reaction }));
+  ui.reactionHint.hidden = true;
+  ui.log.querySelector(".msg-failed")?.remove();
+  ui.log.append(userMessage({ balance: true, balance_counts: counts, reactions, content: "" }));
+  state.failures.delete(conversation.id);
+  const form = new FormData();
+  form.append("focus", "");
+  const live = follow(conversation.id, `/api/conversations/${conversation.id}/balance`, { body: form });
+  ui.log.append(live.node);
+  renderLive(live);
+  scrollToBottom();
+}
+
 async function createConversation() {
   const created = await request("/api/conversations", { method: "POST", json: settings() });
   rememberSettings();
@@ -2024,6 +2115,8 @@ function setupComposer() {
   });
   ui.input.addEventListener("blur", () => setTimeout(hidePicker, 150));
   ui.composer.addEventListener("submit", submitMessage);
+  ui.takeStock?.addEventListener("click", takeStock);
+  ui.takeStock?.addEventListener("blur", () => takeStockArmed && disarmTakeStock());
   ui.input.addEventListener("input", resizeInput);
   ui.input.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;

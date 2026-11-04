@@ -305,6 +305,8 @@ def _turn(conversation_id: str, automatic: bool):
     # while the budget lasts.
     working = conversations.autonomy(conversation)
     autonomous = automatic and working is not None and not _budget_spent(working)
+    # Taking stock (balance.py) is a look back: nothing to call, let alone launch.
+    taking_stock = bool(last.get("balance"))
     # What changes every turn goes at the end of the latest message, after the cached part.
     turn_context = chat.turn_context(notes, models_section, needs_title=not conversation["title"],
                                      autonomy=chat.autonomy_text(working, automatic, _budget_spent(working))
@@ -335,7 +337,7 @@ def _turn(conversation_id: str, automatic: bool):
             ),
         ]
         messages = with_cache_breakpoints(model, messages, history_length, history.volatile_tail)
-        no_more_tools = (automatic and not autonomous) or index == MAX_STEPS - 1
+        no_more_tools = (automatic and not autonomous) or taking_stock or index == MAX_STEPS - 1
         context = {"mode": "conversation", "conversation_id": conversation_id, "step": index + 1}
         if automatic:
             context["automatic"] = True

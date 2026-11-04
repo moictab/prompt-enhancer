@@ -419,6 +419,9 @@ def build_llm_messages(
             add_user([{"type": "text", "text": text}, *images])
             continue
         text = message["content"].strip()
+        if message.get("balance"):
+            # Taking stock (balance.py): the evidence, as it was when asked, then what the user added.
+            text = f"{message['balance']}\n\nThe user adds: {text}" if text else message["balance"]
         if message.get("reactions"):
             line = reactions_text(message["reactions"], numbers)
             text = f"{text}\n\n{line}" if text else line
