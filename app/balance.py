@@ -28,10 +28,14 @@ SHAPE = re.compile(r"^(\d+:\d+)\b.*?([\d.]+)\s*MP\b", re.IGNORECASE)
 MODEL_EXTENSIONS = (".safetensors", ".ckpt", ".gguf", ".sft", ".pt", ".pth", ".bin")
 
 INTRO = (
-    "[The user asked you to take stock of this whole conversation (the chat's \"take stock\" button). "
-    "Below, made by the app from what is stored: every image the runs made here, with the recipe it was "
-    "made with, your review of it and the user's reaction to it, then the counts per ingredient.]"
+    "[The user is ending this conversation and asked you to take stock of it first. Below, made by the app "
+    "from what is stored: every image the runs made here, with the recipe it was made with, your review of it "
+    "and the user's reaction to it, then the counts per ingredient.]"
 )
+# What later turns replay instead of the evidence, once the bot answered it: its balance follows anyway.
+ANSWERED = ("[The user ended the conversation and asked you to take stock of it: the app sent every image's recipe, "
+            "review and reaction ({images} images; {liked} liked, {disliked} disliked, {unrated} unrated). Your "
+            "balance follows.]")
 
 INSTRUCTIONS = """Take stock, in the user's language:
 - what worked best and what worked worst, and why -- each point with how many images back it ("3 of 4 liked at 0.6");
@@ -306,6 +310,11 @@ def ledger(conversation: dict) -> Ledger | None:
         f"## Counts per ingredient\n{_ingredients_section(rows)}",
     ])
     return found
+
+
+def answered_text(counts: dict | None) -> str:
+    counts = counts or {}
+    return ANSWERED.format(**{k: counts.get(k, "?") for k in ("images", "liked", "disliked", "unrated")})
 
 
 def request_text(found: Ledger) -> str:

@@ -45,9 +45,9 @@ with a prompt-crafting bot that can also run ComfyUI workflows on the owner's PC
 - Conversar: start_conversation, then send_message. The bot replies with prompts (numbered across \
 the conversation, each naming the base model it is for) and may launch ComfyUI runs; their images \
 arrive later: call wait_for_conversation, then get_image to see them, react_to_image to tell the \
-bot what worked. Image N of a conversation is written #N in messages. After a good number of \
-runs, take_stock has the bot look back over all of them (what worked, the best recipe) and fix its \
-notes; get_balance_data gives the same evidence without asking the bot.
+bot what worked. Image N of a conversation is written #N in messages. When a conversation is \
+done, finish_conversation ends it, and the bot first looks back over all its runs (what worked, \
+the best recipe) and fixes its notes; get_balance_data gives the same evidence without asking it.
 - Everything else the app's settings page does is here too: families, characters, the bot's notes \
 about the user, system prompts, the ComfyUI workflow library, installed models, and the log of \
 every request sent to OpenRouter.
@@ -317,6 +317,7 @@ def _conversation_view(conversation: dict, since: int = 0, last: int | None = No
         "replying": conversation.get("replying", False),
         "commenting": conversation.get("commenting", False),
         "autonomy": conversation.get("autonomy"),
+        "finished_at": conversation.get("finished_at"),
         "message_count": len(messages),
         "messages": shown,
         "runs": [_run_view(r, numbers) for r in runs],
@@ -565,16 +566,22 @@ async def send_message(
 
 
 @server.tool(annotations=LLM)
-async def take_stock(
+async def finish_conversation(
     conversation_id: str,
     focus: Annotated[str, Field(max_length=2000, description=(
-        "Optional: what to look at above all (\"sobre todo la luz\"), in any language."))] = "",
+        "Optional: what the bot's balance should look at above all (\"sobre todo la luz\"), in any language."))] = "",
 ) -> dict:
-    """Ask the bot to take stock of the whole conversation ("Hacer balance" in the chat): the app hands it every
-    image the runs made, with its recipe, the bot's review and the owner's reaction, and counts per ingredient;
-    the bot says what worked best and worst and why, the best recipe and what to try next, and brings its notes
-    in line with that (the note changes come back with the reply). One reply, no runs launched."""
-    return await _send(conversation_id, focus, [], path="balance", field="focus")
+    """End a conversation ("Terminar" in the chat; writing again reopens it). When its runs made images, the bot
+    first takes stock of it: the app hands it every image with its recipe, the bot's review and the owner's
+    reaction, and counts per ingredient; the bot says what worked best and worst and why, the best recipe and
+    what to try next, and brings its notes in line with that (the note changes come back with the reply). One
+    reply, no runs launched."""
+    conversation = await _conversation(conversation_id)
+    has_images = any(m["role"] == "results" and m.get("images") for m in conversation["messages"])
+    if not has_images:
+        await _json("POST", f"/api/conversations/{conversation_id}/finish", data={"focus": focus})
+        return _conversation_view(await _conversation(conversation_id), last=1)
+    return await _send(conversation_id, focus, [], path="finish", field="focus")
 
 
 @server.tool(annotations=READ)

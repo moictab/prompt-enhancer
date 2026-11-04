@@ -72,7 +72,7 @@ const ui = {
   reactionHint: $("reaction-hint"),
   picker: $("image-picker"),
   autonomyBar: $("autonomy-bar"),
-  takeStock: $("take-stock"), // only with ComfyUI configured
+  finish: $("finish-conversation"),
 };
 
 const state = {
@@ -185,7 +185,7 @@ function renderComposerState() {
     const commenting = state.live.get(conversation?.id)?.automatic ?? conversation?.commenting;
     setBusy(ui.send, true, commenting ? "Comentando…" : "Respondiendo…");
   }
-  renderTakeStock();
+  renderFinish();
 }
 
 // ---------- what the user has seen ----------
@@ -1004,13 +1004,14 @@ function balanceCounts(counts) {
   return `${counts.images} ${counts.images === 1 ? "imagen" : "imágenes"}: ${liked(counts.liked)}, ${disliked(counts.disliked)}, ${counts.unrated} sin valorar`;
 }
 
-// The user asked the bot to take stock: what it got is the app's evidence, so the chat shows the request, not that text.
+// The user ended the conversation, asking the bot for its balance: what it got is the app's evidence, so the chat
+// shows the request, not that text.
 function balanceMessage(message) {
   const counts = balanceCounts(message.balance_counts);
   return el(
     "article",
     { class: "msg msg-user msg-balance" },
-    el("p", { class: "msg-balance-head" }, el("strong", { text: "Hacer balance" }), counts && ` de ${counts}`),
+    el("p", { class: "msg-balance-head" }, el("strong", { text: "Terminar la conversación" }), counts && `, con balance de ${counts}`),
     reactionsSummary(message.reactions, imageNumbers()),
     message.content && el("p", { class: "msg-text" }, withImageRefs(message.content))
   );
@@ -1165,7 +1166,7 @@ function renderLog() {
   const live = conversation && state.live.get(conversation.id);
   renderReactionHint();
   renderAutonomy();
-  renderTakeStock();
+  renderFinish();
   if (conversation) markSeen(conversation);
   if (!messages.length && !live) {
     ui.log.replaceChildren(emptyState());
@@ -1192,6 +1193,8 @@ function renderLog() {
     ui.log.append(failedReply(failure?.detail || null, failure?.requestId || null));
   } else if (last.role === "results" && !hasPendingRuns() && runByNumber(last.run)?.status !== "cancelled") {
     ui.log.append(uncommentedResults());
+  } else if (conversation.finished_at) {
+    ui.log.append(el("p", { class: "chat-finished", text: "Conversación terminada. Si escribes, continúa." }));
   }
 }
 
@@ -1360,6 +1363,7 @@ function threadStatus(summary) {
   }
   if (summary.running) return { kind: "busy", text: "Generando imágenes…" };
   if (isUnread(summary)) return { kind: "fresh", text: "Respuesta nueva" };
+  if (summary.finished_at) return { kind: "done", text: "Terminada" };
   return null;
 }
 
@@ -1832,36 +1836,36 @@ async function retryReply(event) {
   scrollToBottom();
 }
 
-// ---------- taking stock ----------
+// ---------- ending a conversation ----------
 
-const takeStockLabel = ui.takeStock ? [...ui.takeStock.childNodes] : []; // long and short (phone) labels
-let takeStockArmed = 0;
+const finishLabel = ui.finish ? [...ui.finish.childNodes] : []; // long and short (phone) labels
+let finishArmed = 0;
 
 function runImages() {
   return (state.conversation?.messages || []).filter((m) => m.role === "results").flatMap((m) => m.images || []);
 }
 
-function disarmTakeStock() {
-  clearTimeout(takeStockArmed);
-  takeStockArmed = 0;
-  ui.takeStock.classList.remove("is-armed");
-  ui.takeStock.replaceChildren(...takeStockLabel);
+function disarmFinish() {
+  clearTimeout(finishArmed);
+  finishArmed = 0;
+  ui.finish.classList.remove("is-armed");
+  ui.finish.replaceChildren(...finishLabel);
 }
 
-// Once runs have made images, and while the bot is free (not answering, not working on its own).
-function renderTakeStock() {
-  if (!ui.takeStock) return;
+// For a conversation under way, while the bot is free (not answering, not working on its own).
+function renderFinish() {
+  if (!ui.finish) return;
   const conversation = state.conversation;
-  const made = runImages().length > 0;
-  ui.takeStock.hidden = !made;
-  ui.takeStock.disabled = !made || isBusy(conversation) || !!conversation?.autonomy?.active;
-  if (ui.takeStock.disabled && takeStockArmed) disarmTakeStock();
+  ui.finish.hidden = !conversation?.messages.length || !!conversation.finished_at;
+  ui.finish.disabled = ui.finish.hidden || isBusy(conversation) || !!conversation?.autonomy?.active;
+  if (ui.finish.disabled && finishArmed) disarmFinish();
 }
 
-// The bot looks back over every image the runs made here (the app hands it each one's recipe,
-// its review and the user's reaction) and says what worked; its notes follow. With images still
-// unrated, a second press confirms: the user's reactions are what it learns most from.
-function takeStock() {
+// Ends the conversation (writing again reopens it). When its runs made images, the bot first looks
+// back over all of them (the app hands it each one's recipe, its review and the user's reaction),
+// says what worked and brings its notes in line. A second press confirms, saying how many images
+// are still unrated: the user's reactions are what it learns most from.
+async function finishConversation() {
   const conversation = state.conversation;
   if (!conversation || isBusy(conversation) || conversation.autonomy?.active) return;
   const images = runImages();
@@ -1872,13 +1876,30 @@ function takeStock() {
     disliked: ratings.filter((r) => r === "down").length,
   };
   counts.unrated = counts.images - counts.liked - counts.disliked;
-  if (counts.unrated && !takeStockArmed) {
-    ui.takeStock.classList.add("is-armed");
-    ui.takeStock.textContent = `${counts.unrated} sin valorar: ¿seguir?`;
-    takeStockArmed = setTimeout(disarmTakeStock, 4000);
+  if (!finishArmed) {
+    ui.finish.classList.add("is-armed");
+    ui.finish.textContent = counts.unrated
+      ? `${counts.unrated} sin valorar: ¿terminar?`
+      : images.length ? "¿Terminar? Hará balance" : "¿Terminarla?";
+    finishArmed = setTimeout(disarmFinish, 4000);
     return;
   }
-  disarmTakeStock();
+  disarmFinish();
+  const form = new FormData();
+  form.append("focus", "");
+  const url = `/api/conversations/${conversation.id}/finish`;
+  if (!images.length) {
+    // Nothing to take stock of: it is only marked as ended.
+    try {
+      state.conversation = { ...conversation, ...(await request(url, { method: "POST", form })) };
+    } catch (err) {
+      toast(err.message, { error: true });
+      return;
+    }
+    renderLog();
+    loadSummaries({ quiet: true });
+    return;
+  }
   const model = settings().llm_model;
   if (!onClaude() && state.visionSupport.get(model) === false) {
     setSettingsOpen(true);
@@ -1891,9 +1912,7 @@ function takeStock() {
   ui.log.querySelector(".msg-failed")?.remove();
   ui.log.append(userMessage({ balance: true, balance_counts: counts, reactions, content: "" }));
   state.failures.delete(conversation.id);
-  const form = new FormData();
-  form.append("focus", "");
-  const live = follow(conversation.id, `/api/conversations/${conversation.id}/balance`, { body: form });
+  const live = follow(conversation.id, url, { body: form });
   ui.log.append(live.node);
   renderLive(live);
   scrollToBottom();
@@ -2146,8 +2165,8 @@ function setupComposer() {
   });
   ui.input.addEventListener("blur", () => setTimeout(hidePicker, 150));
   ui.composer.addEventListener("submit", submitMessage);
-  ui.takeStock?.addEventListener("click", takeStock);
-  ui.takeStock?.addEventListener("blur", () => takeStockArmed && disarmTakeStock());
+  ui.finish.addEventListener("click", finishConversation);
+  ui.finish.addEventListener("blur", () => finishArmed && disarmFinish());
   ui.input.addEventListener("input", resizeInput);
   ui.input.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;

@@ -16,9 +16,7 @@
         <h1 id="chat-title">Nueva conversación</h1>
         <p class="chat-meta" id="chat-meta"></p>
       </div>
-      {% if comfy_configured %}
-      <button type="button" class="btn-quiet" id="take-stock" hidden title="Repasa todo lo generado en la conversación: qué ha funcionado mejor y peor, la mejor receta, y pone sus notas al día. Una respuesta más."><span class="take-stock-long">Hacer balance</span><span class="take-stock-short">Balance</span></button>
-      {% endif %}
+      <button type="button" class="btn-quiet" id="finish-conversation" hidden title="Da la conversación por terminada. Si sus ejecuciones han hecho imágenes, antes el bot repasa todo lo generado: qué ha funcionado mejor y peor, la mejor receta, y pone sus notas al día (una respuesta más). Si escribes después, sigue."><span class="finish-long">Terminar conversación</span><span class="finish-short">Terminar</span></button>
       <button type="button" class="btn-quiet" id="settings-toggle" aria-expanded="false" aria-controls="chat-settings">Ajustes</button>
       <span id="delete-slot"></span>
     </header>

@@ -1,6 +1,5 @@
-"""Taking stock of a conversation: the app hands the bot every image its runs made, with the
-recipe, its review and the user's reaction, and the bot looks back and fixes its notes."""
-import json
+"""Ending a conversation, and taking stock of it first: the app hands the bot every image its runs
+made, with the recipe, its review and the user's reaction, and the bot looks back and fixes its notes."""
 import uuid
 from unittest.mock import patch
 
@@ -52,7 +51,7 @@ def test_taking_stock_hands_the_bot_the_whole_record_and_its_notes_follow(api_cl
     looked_back = Script(('Lo que mejor ha ido: #1, con style-ink a 0.6.\n'
                           '<remember id="1">krea-2: style-ink fine at 0.6, hands may break</remember>', []))
     with patch("app.conversation_turn.stream_chat", looked_back):
-        response = api_client.post(f"/api/conversations/{conversation_id}/balance", auth=auth_headers,
+        response = api_client.post(f"/api/conversations/{conversation_id}/finish", auth=auth_headers,
                                    data={"focus": "sobre todo las manos"})
     events = _events(response)
     assert events[-1]["type"] == "done", events[-1]
@@ -62,7 +61,7 @@ def test_taking_stock_hands_the_bot_the_whole_record_and_its_notes_follow(api_cl
     assert request["tools"] and request["tool_choice"] == "none"
     asked = message_text(request["messages"][-1])  # after the run's results, which waited for it
     assert asked.startswith("[Run 1 (krea-2/txt2img")
-    assert "[The user asked you to take stock of this whole conversation" in asked
+    assert "[The user is ending this conversation and asked you to take stock of it first." in asked
     assert "2 images from 1 runs: the user liked 1, disliked 1 and didn't react to 0; you reviewed 1 (1 flawed)." in asked
     assert ("Run 1: workflow krea-2/txt2img, proposal 1; krea-2\\krea-2-turbo-official-comfy-int8-convrot_v1.0; "
             "LoRAs style-ink_v1 0.6;") in asked
@@ -89,29 +88,37 @@ def test_taking_stock_hands_the_bot_the_whole_record_and_its_notes_follow(api_cl
     data = api_client.get(f"/api/conversations/{conversation_id}/balance", auth=auth_headers).json()
     assert data["images"] == 2 and data["unrated"] == 0 and "## Counts per ingredient" in data["text"]
 
-    # Later turns replay the evidence as it was sent, though a reaction changed since: the cache serves it.
-    _react(api_client, auth_headers, conversation_id, first, "down", "ahora no me gusta")
+    assert stored["balance"] == asked[asked.index("[The user is ending"):asked.index("\n\nThe user adds:")]
+    listed = next(s for s in api_client.get("/api/conversations", auth=auth_headers).json() if s["id"] == conversation_id)
+    assert listed["finished_at"]
+
+    # Writing again reopens it; the evidence, answered, comes back as one line (tens of KB less every turn).
     with patch("app.conversation_turn.stream_chat", Script(("Vale.", []))) as later:
         _send(api_client, auth_headers, conversation_id, "sigamos")
-    replayed = [message_text(m) for m in later.calls[0]["messages"] if m["role"] == "user"]
-    assert any(f"{stored['balance']}\n\nThe user adds: sobre todo las manos" in text for text in replayed)
-    assert stored["balance"] == asked[asked.index("[The user asked"):asked.index("\n\nThe user adds:")]
+    assert "finished_at" not in conversations.get(conversation_id)
+    replayed = "\n".join(message_text(m) for m in later.calls[0]["messages"] if m["role"] == "user")
+    assert stored["balance"] not in replayed and "## Every image, by run" not in replayed
+    assert ("[The user ended the conversation and asked you to take stock of it: the app sent every image's recipe, "
+            "review and reaction (2 images; 1 liked, 1 disliked, 0 unrated). Your balance follows.]\n\n"
+            "The user adds: sobre todo las manos") in replayed
 
 
-def test_there_is_nothing_to_take_stock_of_without_images_nor_while_it_works_alone(api_client, auth_headers,
-                                                                                   tmp_path, fake_comfy):
+def test_without_images_ending_only_marks_it_and_not_while_it_works_alone(api_client, auth_headers, tmp_path,
+                                                                           fake_comfy):
     workflows.ensure_seeded()
     conversation_id = api_client.post("/api/conversations", auth=auth_headers, json={
         "family_id": _family(tmp_path)["id"], "llm_model": "vendor/model"}).json()["id"]
     with patch("app.conversation_turn.stream_chat", Script(("Hola.", []))):
         _send(api_client, auth_headers, conversation_id, "hola")
-    refused = api_client.post(f"/api/conversations/{conversation_id}/balance", auth=auth_headers)
-    assert refused.status_code == 400 and "nothing to take stock of" in refused.json()["detail"]
+    with patch("app.conversation_turn.stream_chat", Script()) as nothing:
+        ended = api_client.post(f"/api/conversations/{conversation_id}/finish", auth=auth_headers)
+    assert ended.status_code == 200 and ended.json()["finished_at"] and nothing.calls == []
+    assert [m["role"] for m in conversations.get(conversation_id)["messages"]] == ["user", "assistant"]
     assert api_client.get(f"/api/conversations/{conversation_id}/balance", auth=auth_headers).status_code == 404
 
     working = _two_images(api_client, auth_headers, tmp_path, fake_comfy)
     conversations.start_autonomy(working, "a clean witch", 8, 1.0)
-    busy = api_client.post(f"/api/conversations/{working}/balance", auth=auth_headers)
+    busy = api_client.post(f"/api/conversations/{working}/finish", auth=auth_headers)
     assert busy.status_code == 409 and "working on its own" in busy.json()["detail"]
     assert conversations.get(working)["messages"][-1]["role"] == "results"  # nothing stored
 

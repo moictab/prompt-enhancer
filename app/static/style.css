@@ -982,7 +982,9 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .msg-balance-head strong { color: var(--paper); font-weight: 650; }
 .chat-head .btn-quiet.is-armed { color: var(--paper); background: var(--raised); }
 .chat-head .btn-quiet:disabled { opacity: 0.45; }
-.take-stock-short { display: none; } /* a phone shows "Balance" */
+.finish-short { display: none; } /* a phone shows "Terminar" */
+.thread-status.is-done { color: var(--paper-faint); }
+.chat-finished { color: var(--paper-dim); font-size: var(--step--1); text-align: center; }
 .msg-images { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .msg-user > * + * { margin-top: 0.55rem; }
 .msg-images img { display: block; width: 7.5rem; height: 7.5rem; object-fit: cover; border: 1px solid var(--line); border-radius: var(--radius); }
@@ -1336,9 +1338,9 @@ a.btn-quiet { text-decoration: none; }
   .chat-head { flex-wrap: wrap; padding: 0.6rem 0.9rem; }
   .chat-heading { flex: 1 1 100%; order: -1; }
   .chat-head .btn-quiet { margin-left: -0.6rem; }
-  .chat-head .btn-quiet + .btn-quiet, #delete-slot, .chat-head #take-stock { margin-left: 0; }
-  .take-stock-long { display: none; }
-  .take-stock-short { display: inline; }
+  .chat-head .btn-quiet + .btn-quiet, #delete-slot, .chat-head #finish-conversation { margin-left: 0; }
+  .finish-long { display: none; }
+  .finish-short { display: inline; }
   .chat-settings { padding: 0.9rem; }
   .chat-log { padding: 1rem 0.9rem 1.5rem; }
   .chat-composer { padding: 0.6rem 0.9rem 0.75rem; }

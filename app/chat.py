@@ -414,6 +414,7 @@ def build_llm_messages(
     runs = {r["n"]: r for r in conversation.get("runs") or []}
     tail: list[dict] = []
     proposal = 0
+    last_answer = max((i for i, m in enumerate(all_messages) if m["role"] == "assistant"), default=-1)
 
     def number_block(match: re.Match) -> str:
         nonlocal proposal
@@ -445,8 +446,11 @@ def build_llm_messages(
             continue
         text = message["content"].strip()
         if message.get("balance"):
-            # Taking stock (balance.py): the evidence, as it was when asked, then what the user added.
-            text = f"{message['balance']}\n\nThe user adds: {text}" if text else message["balance"]
+            # Taking stock (balance.py): the evidence as it was when asked, while it waits for the bot's
+            # balance; once answered, a line (tens of KB less in every later turn: the balance follows).
+            from . import balance
+            asked = message["balance"] if index > last_answer else balance.answered_text(message.get("balance_counts"))
+            text = f"{asked}\n\nThe user adds: {text}" if text else asked
         if message.get("reactions"):
             line = reactions_text(message["reactions"], numbers)
             text = f"{text}\n\n{line}" if text else line

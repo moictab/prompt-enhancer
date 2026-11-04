@@ -120,6 +120,8 @@ def summary(conversation: dict) -> dict:
         # While the bot works on its own there: how much of its budget it has used.
         "autonomy": ({k: working[k] for k in ("images", "max_images", "cost", "max_cost")}
                      if (working := autonomy(conversation)) else None),
+        # The user ended it (Terminar: the bot's balance, when runs made images); writing reopens it.
+        "finished_at": conversation.get("finished_at"),
     }
 
 
@@ -146,6 +148,17 @@ def update_settings(conversation_id: str, changes: dict, root: str | None = None
         if conversation is None:
             return None
         conversation.update({k: v for k, v in changes.items() if k in allowed})
+        storage.write_json(_path(conversation_id, root), conversation)
+        return conversation
+
+
+def finish(conversation_id: str, root: str | None = None) -> dict | None:
+    """End a conversation that has nothing to take stock of (no run made images): it is only marked."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return None
+        conversation["finished_at"] = _now()
         storage.write_json(_path(conversation_id, root), conversation)
         return conversation
 
@@ -180,6 +193,11 @@ def append_message(
             reactions = _mark_reactions_sent(conversation)
             if reactions:
                 message = {**message, "reactions": reactions}
+            # Asking for the balance ends the conversation; writing again reopens it.
+            if message.get("balance"):
+                conversation["finished_at"] = now
+            else:
+                conversation.pop("finished_at", None)
         conversation["messages"].append({"id": str(uuid.uuid4()), "timestamp": now, **message})
         if message.get("cost") is not None:
             conversation["cost"] = (conversation["cost"] or 0) + message["cost"]

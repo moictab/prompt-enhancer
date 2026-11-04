@@ -221,21 +221,23 @@ def balance_data(conversation_id: str):
     return {"text": found.text, **found.counts}
 
 
-@router.post("/{conversation_id}/balance")
-def take_stock(conversation_id: str, focus: str = Form("")):
-    """Ask the bot to take stock of the whole conversation: what worked best and worst, and its
-    notes brought in line with that. A message of its own (with the evidence, and whatever the
-    user adds as focus), answered like any other, without tools; streamed the same way."""
+@router.post("/{conversation_id}/finish")
+def finish_conversation(conversation_id: str, focus: str = Form("")):
+    """End the conversation (writing again reopens it). When its runs made images, the bot takes
+    stock of it first: what worked best and worst, and its notes brought in line with that -- a
+    message of its own (the evidence, and whatever the user adds as focus), answered like any
+    other but without tools, streamed the same way. With nothing to take stock of, the
+    conversation is only marked: the answer is the conversation, as JSON."""
     conversation = _require_conversation(conversation_id)
     _require_idle(conversation_id)
     if conversations.autonomy(conversation):
-        raise HTTPException(status_code=409, detail="The bot is working on its own here: stop it before taking stock")
-    _require_family(conversation["family_id"])
+        raise HTTPException(status_code=409, detail="The bot is working on its own here: stop it before ending")
     if len(focus) > MAX_FOCUS_LENGTH:
         raise HTTPException(status_code=400, detail=f"Keep what you add under {MAX_FOCUS_LENGTH} characters")
     found = balance.ledger(conversation)
     if found is None:
-        raise HTTPException(status_code=400, detail="There is nothing to take stock of yet: the runs here have made no images")
+        return conversations.finish(conversation_id)
+    _require_family(conversation["family_id"])
     conversations.append_message(conversation_id, {
         "role": "user", "content": focus.strip(), "images": [], "balance": balance.request_text(found),
         "balance_counts": found.counts,
