@@ -584,7 +584,8 @@ def run(conversation: dict, family: dict, toolbox, library: list[dict],
             **({"rate_limit": rate_limit} if rate_limit else {}),
             # How big the session is (what each call reads), and was when it started: to renew it.
             "tokens_per_call": size,
-            "start_tokens": size if new_session else state.get("start_tokens", size),
+            # (a session from before this was recorded counts as having started at nothing)
+            "start_tokens": size if new_session else state.get("start_tokens", 0),
         })
     ends = [StreamEnd(cost=None, truncated=(final or {}).get("stop_reason") == "max_tokens", request_id=record.id)]
     extra = {"engine": ENGINE, "claude_code": {
