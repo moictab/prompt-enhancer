@@ -407,6 +407,24 @@ def cancel_run(conversation_id: str, n: int):
     return runs.cancel(conversation_id, n)
 
 
+@router.post("/{conversation_id}/runs/{n}/prioritize")
+def prioritize_run(conversation_id: str, n: int):
+    """"Pasar delante": the run's images still waiting in the queue go ahead of everything else
+    waiting, other conversations' and other projects' (runs.prioritize)."""
+    _require_conversation(conversation_id)
+    run = conversations.get_run(conversation_id, n)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Unknown run")
+    if run["status"] != "pending":
+        raise HTTPException(status_code=409, detail="The run has already finished")
+    if comfy.client() is None:
+        raise HTTPException(status_code=503, detail="ComfyUI isn't configured")
+    result = runs.prioritize(conversation_id, n)
+    if not result["raised"] and result["errors"]:
+        raise HTTPException(status_code=502, detail=f"The gateway didn't take it: {result['errors'][0]}")
+    return result
+
+
 @router.post("/{conversation_id}/autonomy/stop")
 def stop_autonomy(conversation_id: str):
     """The bot stops working on its own: it launches nothing more, and comments on whatever

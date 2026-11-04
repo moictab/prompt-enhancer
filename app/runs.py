@@ -30,6 +30,21 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _still_on_time(client: comfy.Comfy, job: dict, timeout: float) -> bool:
+    """A job past its run's time limit that the gateway says is still waiting its turn, or running for
+    less than the limit: the limit counts from when a job starts (the gateway's rule), since waiting in
+    a long queue is no failure -- 13 jobs were given up on 2026-11-04 while still queued, and ComfyUI
+    made their images for nothing. Asked only once the run is past the limit."""
+    record = client.gateway_job(job["base_url"], job["prompt_id"])
+    if not record:
+        return False
+    if record.get("status") == "queued":
+        return True
+    started = record.get("started_at")
+    return (record.get("status") == "running" and isinstance(started, (int, float))
+            and time.time() - started < timeout)
+
+
 def _age_seconds(run: dict) -> float:
     try:
         created = datetime.fromisoformat(run.get("retried_at") or run["created_at"])
@@ -119,7 +134,7 @@ class RunTracker:
             result = None
         if result is None:
             timeout = run.get("timeout_seconds") or JOB_TIMEOUT_SECONDS  # idle runs wait for a free GPU
-            if _age_seconds(run) > timeout:
+            if _age_seconds(run) > timeout and not _still_on_time(client, job, timeout):
                 self._set_job(conversation_id, run["n"], index, status="error",
                               error=f"No result after {timeout // 60} minutes")
             return
@@ -256,6 +271,31 @@ def cancel(conversation_id: str, n: int) -> dict | None:
     if run is not None and run["status"] == "pending":
         tracker._finish(conversation_id, n)
     return conversations.get_run(conversation_id, n)
+
+
+def prioritize(conversation_id: str, n: int) -> dict | None:
+    """Put a run's jobs still waiting in the gateway's queue ahead of everything else waiting
+    (comfy.PRIORITY_AHEAD), for the user working in that conversation now. Jobs already in ComfyUI
+    go on as they are. The run keeps `priority` and `prioritized_at`; the answer says how many
+    jobs moved (`raised`), and `errors` what failed."""
+    run = conversations.get_run(conversation_id, n)
+    client = comfy.client()
+    if run is None or client is None:
+        return None
+    raised, errors = 0, []
+    for job in run["jobs"]:
+        if job["status"] != "pending":
+            continue
+        try:
+            raised += client.prioritize(job["base_url"], job["prompt_id"])
+        except Exception as e:
+            logger.warning("run prioritize failed conversation_id=%s run=%s error=%r", conversation_id, n, e)
+            errors.append(str(e))
+    if raised:
+        conversations.update_run(conversation_id, n, lambda r: r.update(priority=comfy.PRIORITY_AHEAD,
+                                                                        prioritized_at=_now()))
+    logger.info("run prioritized conversation_id=%s run=%s jobs=%d", conversation_id, n, raised)
+    return {"run": conversations.get_run(conversation_id, n), "raised": raised, "errors": sorted(set(errors))}
 
 
 def wait_until_idle(timeout: float = 5.0) -> None:

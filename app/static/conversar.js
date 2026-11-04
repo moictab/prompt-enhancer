@@ -1004,6 +1004,7 @@ function runCard(part, live) {
   let detail = live ? "Lanzada" : RUN_STATUS[status];
   if (status === "pending" && run?.kind === "calibration") detail = "En espera: se genera cuando la GPU está libre";
   if (status === "pending" && run) detail += `, desde las ${formatWhen(run.created_at)}`;
+  if (status === "pending" && run?.priority === "urgent") detail += ", delante de todo";
   if (made.length) detail += `: ${made.length === 1 ? "imagen" : "imágenes"} ${made.map((id) => numbers.get(id)).join(", ")}`;
   const card = el(
     "div",
@@ -1025,6 +1026,7 @@ function runCard(part, live) {
   );
   if (!live && run) {
     const actions = el("span", { class: "run-actions" });
+    if (status === "pending" && run.priority !== "urgent") actions.append(aheadButton(run));
     if (status === "pending") {
       const cancel = el("button", { type: "button", class: "btn-quiet", text: "Cancelar" });
       cancel.addEventListener("click", async () => {
@@ -1052,6 +1054,34 @@ function runCard(part, live) {
     card.append(actions);
   }
   return card;
+}
+
+// "Pasar delante": the run's images still waiting in the queue go before everything else waiting.
+function aheadButton(run) {
+  const button = el("button", {
+    type: "button",
+    class: "btn-quiet",
+    text: "Pasar delante",
+    title: "Sus imágenes que esperan en la cola entran antes que todo lo demás: otras conversaciones y otros proyectos",
+  });
+  button.addEventListener("click", async () => {
+    setBusy(button, true, "Pasando delante…");
+    try {
+      const result = await request(`/api/conversations/${state.conversation.id}/runs/${run.n}/prioritize`, {
+        method: "POST",
+      });
+      Object.assign(run, result.run);
+      toast(
+        result.raised
+          ? `Ejecución ${run.n}: ${result.raised === 1 ? "su imagen pasa" : `sus ${result.raised} imágenes pasan`} delante de todo`
+          : `Ejecución ${run.n}: ya no le queda nada en cola, se está generando`
+      );
+    } catch (err) {
+      toast(err.message, { error: true });
+    }
+    await refreshFromServer();
+  });
+  return button;
 }
 
 // ---------- downloads from Civitai: the bot prepares them, the user accepts each one ----------

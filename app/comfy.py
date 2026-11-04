@@ -34,6 +34,9 @@ PRIORITY = "high"  # the first images of a reply the user asked for: they are wa
 PRIORITY_REST = "normal"  # the rest of that reply's images (an exploring batch)
 # What the bot launches by itself, looking at its own results: no one is waiting for it right now.
 PRIORITY_ON_ITS_OWN = "low"
+# A run the user put ahead of everything else waiting ("Pasar delante"): the gateway owner's override,
+# which skips the hourly limits on urgent and high (Comfy.prioritize).
+PRIORITY_AHEAD = "urgent"
 CONNECT_TIMEOUT = 4
 READ_TIMEOUT = 60
 MODELS_CACHE_SECONDS = 300
@@ -220,6 +223,35 @@ class Comfy:
                                  data={"overwrite": "true", "subfolder": UPLOAD_SUBFOLDER})
         info = response.json()
         return f"{info['subfolder']}/{info['name']}" if info.get("subfolder") else info["name"]
+
+    def prioritize(self, base: str, prompt_id: str, priority: str = PRIORITY_AHEAD) -> bool:
+        """Set the priority of one of this app's jobs still waiting in the gateway's queue, past its
+        hourly limits: the owner's override (POST /gateway/jobs/<id>/priority, which the gateway takes
+        only from this PC). False when the job isn't waiting there: already in ComfyUI (running or
+        done), or sent to ComfyUI directly, which has no priorities."""
+        if not self.gateway_url or base.rstrip("/") != self.gateway_url:
+            return False
+        try:
+            self._request("POST", f"{base}/gateway/jobs/{prompt_id}/priority", json={"priority": priority})
+        except ComfyError as e:
+            if e.status == 400:  # "not in the gateway's queue"
+                return False
+            raise
+        logger.info("comfy prioritized prompt_id=%s priority=%s", prompt_id, priority)
+        return True
+
+    def gateway_job(self, base: str, prompt_id: str) -> dict | None:
+        """The gateway's record of one of this app's jobs -- its status (queued, running, success...)
+        and when it was sent and started -- or None when it went to ComfyUI directly or can't be read."""
+        if not self.gateway_url or base.rstrip("/") != self.gateway_url:
+            return None
+        try:
+            record = self._request("GET", f"{base}/gateway/jobs/{prompt_id}", timeout=(CONNECT_TIMEOUT, 10)).json()
+        except (ComfyError, requests.exceptions.RequestException, ValueError):
+            return None
+        if not isinstance(record, dict):
+            return None
+        return {key: record.get(key) for key in ("status", "submitted_at", "started_at")}
 
     def cancel(self, base: str, prompt_id: str) -> None:
         """Take it off the queue if waiting, and stop it if running."""

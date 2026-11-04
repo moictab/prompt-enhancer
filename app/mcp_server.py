@@ -629,6 +629,13 @@ async def cancel_run(conversation_id: str, run: Annotated[int, Field(ge=1)]) -> 
 
 
 @server.tool(annotations=WRITE)
+async def prioritize_run(conversation_id: str, run: Annotated[int, Field(ge=1)]) -> dict:
+    """Put a pending run's images still waiting in ComfyUI's queue ahead of everything else waiting
+    (other conversations' and other projects'); `raised` says how many moved."""
+    return await _json("POST", f"/api/conversations/{conversation_id}/runs/{run}/prioritize")
+
+
+@server.tool(annotations=WRITE)
 async def stop_autonomy(conversation_id: str) -> dict:
     """Stop the bot working on its own toward a goal (keep_going); runs already launched go on."""
     return await _json("POST", f"/api/conversations/{conversation_id}/autonomy/stop")

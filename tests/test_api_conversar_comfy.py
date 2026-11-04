@@ -1,6 +1,7 @@
 """Conversar with ComfyUI: tool calls within a turn, runs followed to their results,
 the bot's automatic comment, and the bot's changes to existing notes."""
 import json
+import time
 from unittest.mock import patch
 
 import requests
@@ -319,6 +320,47 @@ def test_cancelled_runs_get_no_comment(api_client, auth_headers, tmp_path, fake_
                            auth=auth_headers).status_code == 409
     assert api_client.post(f"/api/conversations/{conversation_id}/runs/7/cancel",
                            auth=auth_headers).status_code == 404
+
+
+def test_a_run_can_go_ahead_of_everything_waiting(api_client, auth_headers, tmp_path, fake_comfy):
+    workflows.ensure_seeded()
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
+    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]))):
+        _send(api_client, auth_headers, conversation_id)
+    fake_comfy.gateway_jobs["prompt-1"] = {"status": "running", "started_at": 1}  # already in ComfyUI
+
+    response = api_client.post(f"/api/conversations/{conversation_id}/runs/1/prioritize", auth=auth_headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["raised"] == 1
+    assert fake_comfy.prioritized == [("prompt-2", "urgent")]
+    run = conversations.get_run(conversation_id, 1)
+    assert run["priority"] == "urgent" and run["prioritized_at"] and run["status"] == "pending"
+    assert api_client.post(f"/api/conversations/{conversation_id}/runs/7/prioritize",
+                           auth=auth_headers).status_code == 404
+    api_client.post(f"/api/conversations/{conversation_id}/runs/1/cancel", auth=auth_headers)
+    assert api_client.post(f"/api/conversations/{conversation_id}/runs/1/prioritize",
+                           auth=auth_headers).status_code == 409
+
+
+def test_a_job_waiting_its_turn_is_not_given_up(api_client, auth_headers, tmp_path, fake_comfy, monkeypatch):
+    """The time limit counts from when a job starts: a long queue is no failure."""
+    workflows.ensure_seeded()
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
+    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]))):
+        _send(api_client, auth_headers, conversation_id)
+    monkeypatch.setattr(runs, "_age_seconds", lambda run: runs.JOB_TIMEOUT_SECONDS + 60)
+    fake_comfy.gateway_jobs["prompt-1"] = {"status": "queued", "started_at": None}
+    fake_comfy.gateway_jobs["prompt-2"] = {"status": "running", "started_at": time.time() - 60}
+
+    runs.tracker.poll_once()
+    assert [j["status"] for j in conversations.get_run(conversation_id, 1)["jobs"]] == ["pending", "pending"]
+
+    fake_comfy.gateway_jobs["prompt-2"]["started_at"] = time.time() - runs.JOB_TIMEOUT_SECONDS - 60
+    runs.tracker.poll_once()
+    jobs = conversations.get_run(conversation_id, 1)["jobs"]
+    assert [j["status"] for j in jobs] == ["pending", "error"] and "No result after 45 minutes" in jobs[1]["error"]
+    api_client.post(f"/api/conversations/{conversation_id}/runs/1/cancel", auth=auth_headers)
 
 
 def test_no_automatic_comment_once_the_user_has_written(api_client, auth_headers, tmp_path, fake_comfy):
