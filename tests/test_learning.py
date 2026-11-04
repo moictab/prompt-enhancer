@@ -71,7 +71,7 @@ def test_use_family_switches_by_name_and_hands_over_the_rules(fake_comfy):
 
 
 def test_the_system_prompt_names_the_current_family_and_the_others():
-    result = chat.build_system_prompt({"name": "Krea 2", "instructions": "rules"}, [],
+    result = chat.build_system_prompt({"name": "Krea 2", "instructions": "rules"},
                                       workflows=[], families=["Krea 2", "Illustrious", "Anima"])
 
     assert "## Model Family Rules: Krea 2\n" in result

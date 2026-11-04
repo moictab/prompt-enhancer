@@ -15,7 +15,6 @@ class Settings:
     admin_password: str
     data_dir: str
     default_llm_model: str
-    default_vision_model: str
     # comfy-gateway, and ComfyUI itself as a fallback; both unset turns ComfyUI runs off.
     comfy_gateway_url: str = ""
     comfy_direct_url: str = ""
@@ -37,7 +36,6 @@ def get_settings() -> Settings:
         admin_password=os.environ.get("ADMIN_PASSWORD", ""),
         data_dir=os.environ.get("DATA_DIR", "data"),
         default_llm_model=os.environ.get("DEFAULT_LLM_MODEL", DEFAULT_MODEL),
-        default_vision_model=os.environ.get("DEFAULT_VISION_MODEL", DEFAULT_MODEL),
         comfy_gateway_url=os.environ.get("COMFY_GATEWAY_URL", "").strip(),
         comfy_direct_url=os.environ.get("COMFY_DIRECT_URL", "").strip(),
         civitai_api_key=os.environ.get("CIVITAI_API_KEY", "").strip(),

@@ -2,7 +2,7 @@ from app import conversations
 
 
 def _create(root, **overrides):
-    fields = dict(family_id="f", llm_model="m", temperature=0.7, character_ids=[], root=root)
+    fields = dict(family_id="f", llm_model="m", temperature=0.7, root=root)
     fields.update(overrides)
     return conversations.create(**fields)
 
@@ -10,13 +10,12 @@ def _create(root, **overrides):
 def test_create_then_get_roundtrips(tmp_path):
     root = str(tmp_path)
 
-    created = _create(root, character_ids=["c1"])
+    created = _create(root)
 
     assert conversations.get(created["id"], root=root) == created
     assert created["messages"] == []
     assert created["title"] == ""
     assert created["cost"] is None
-    assert created["character_ids"] == ["c1"]
 
 
 def test_get_rejects_ids_that_could_escape_the_folder(tmp_path):

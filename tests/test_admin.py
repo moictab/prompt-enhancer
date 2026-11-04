@@ -45,30 +45,8 @@ def test_delete_unknown_family_returns_404(api_client, auth_headers):
     assert response.status_code == 404
 
 
-def test_create_list_update_delete_character(api_client, auth_headers):
-    create_response = api_client.post(
-        "/api/admin/characters",
-        json={"name": "Warrior", "text": "a fierce warrior"},
-        auth=auth_headers,
-    )
-    assert create_response.status_code == 200
-    character_id = create_response.json()["id"]
-
-    update_response = api_client.put(
-        f"/api/admin/characters/{character_id}",
-        json={"name": "Warrior v2", "text": "an even fiercer warrior"},
-        auth=auth_headers,
-    )
-    assert update_response.status_code == 200
-    assert update_response.json()["name"] == "Warrior v2"
-
-    delete_response = api_client.delete(f"/api/admin/characters/{character_id}", auth=auth_headers)
-    assert delete_response.status_code == 200
-    assert api_client.get("/api/admin/characters", auth=auth_headers).json() == []
-
-
-def test_get_and_update_system_prompt_for_each_mode(api_client, auth_headers):
-    for mode in ["generate", "image", "extract_character", "story", "variations", "conversation"]:
+def test_get_and_update_the_bots_personality(api_client, auth_headers):
+    for mode in ["conversation"]:
         get_response = api_client.get(f"/api/admin/system-prompt/{mode}", auth=auth_headers)
         assert get_response.status_code == 200
         assert get_response.json() == {"text": ""}
@@ -85,14 +63,9 @@ def test_get_and_update_system_prompt_for_each_mode(api_client, auth_headers):
         }
 
 
-def test_system_prompt_modes_are_independent(api_client, auth_headers):
-    api_client.put(
-        "/api/admin/system-prompt/generate", json={"text": "generate text"}, auth=auth_headers
-    )
-
-    assert api_client.get("/api/admin/system-prompt/conversation", auth=auth_headers).json() == {
-        "text": ""
-    }
+def test_the_one_shot_modes_system_prompts_are_gone(api_client, auth_headers):
+    for mode in ["generate", "image", "story", "variations", "extract_character"]:
+        assert api_client.get(f"/api/admin/system-prompt/{mode}", auth=auth_headers).status_code == 400
 
 
 def test_retired_iterate_system_prompt_mode_is_rejected(api_client, auth_headers):
@@ -145,18 +118,18 @@ def test_update_system_prompt_rejects_unknown_mode(api_client, auth_headers):
 def test_get_default_system_prompt_returns_seed_text_without_touching_saved_prompt(
     api_client, auth_headers
 ):
-    from app.seed import DEFAULT_VARIATIONS_SYSTEM_PROMPT
+    from app.seed import DEFAULT_CONVERSATION_PERSONALITY
 
     api_client.put(
-        "/api/admin/system-prompt/variations", json={"text": "custom"}, auth=auth_headers
+        "/api/admin/system-prompt/conversation", json={"text": "custom"}, auth=auth_headers
     )
 
-    response = api_client.get("/api/admin/system-prompt/variations/default", auth=auth_headers)
+    response = api_client.get("/api/admin/system-prompt/conversation/default", auth=auth_headers)
 
     assert response.status_code == 200
-    assert response.json() == {"text": DEFAULT_VARIATIONS_SYSTEM_PROMPT}
+    assert response.json() == {"text": DEFAULT_CONVERSATION_PERSONALITY}
     assert api_client.get(
-        "/api/admin/system-prompt/variations", auth=auth_headers
+        "/api/admin/system-prompt/conversation", auth=auth_headers
     ).json() == {"text": "custom"}
 
 

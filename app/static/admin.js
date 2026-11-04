@@ -11,7 +11,7 @@ const prompts = {
   save: $("system-prompt-save"),
   loadDefault: $("system-prompt-default"),
   status: $("system-prompt-state"),
-  mode: "generate",
+  mode: "conversation",
   saved: {},
   drafts: {},
 };
@@ -35,7 +35,6 @@ function showPromptMode(mode) {
     tab.setAttribute("aria-selected", String(selected));
     tab.tabIndex = selected ? 0 : -1;
   });
-  prompts.text.setAttribute("aria-labelledby", `system-prompt-tab-${mode}`);
   // Conversar's text is only the bot's personality; the help says what the app adds.
   prompts.help.hidden = mode !== "conversation";
   prompts.text.value = prompts.drafts[mode] ?? prompts.saved[mode] ?? "";
@@ -217,7 +216,7 @@ function setupMemory() {
     .catch((err) => toast(`No se ha podido cargar la memoria: ${err.message}`, { error: true }));
 }
 
-// ---------- list + editor panels (families, characters) ----------
+// ---------- list + editor panels (families, workflows) ----------
 
 function setupCrud({ endpoint, list, form, title, saveButton, newButton, nouns, fields, describe, toPayload }) {
   let items = [];
@@ -351,39 +350,6 @@ function setupFamilies() {
       has_negative_prompt: hasNegative.checked,
     }),
   });
-}
-
-function setupCharacters() {
-  const name = $("character-name");
-  const text = $("character-text");
-  setupCrud({
-    endpoint: "/api/admin/characters",
-    list: $("characters-list"),
-    form: $("character-form"),
-    title: $("character-form-title"),
-    saveButton: $("character-save"),
-    newButton: $("character-new"),
-    nouns: {
-      newTitle: "Nuevo personaje",
-      create: "Crear personaje",
-      empty: "Aún no hay personajes.",
-      created: "Personaje creado",
-      saved: "Personaje guardado",
-      deleted: "Personaje eliminado",
-    },
-    fields: {
-      fill: (character) => {
-        name.value = character.name || "";
-        text.value = character.text || "";
-      },
-    },
-    describe: (character) => character.text,
-    toPayload: () => ({ name: name.value.trim(), text: text.value.trim() }),
-  });
-}
-
-function isEditorGraph(data) {
-  return data && typeof data === "object" && Array.isArray(data.nodes) && "links" in data;
 }
 
 function setupWorkflows() {
@@ -586,7 +552,6 @@ document.addEventListener("DOMContentLoaded", () => {
   setupSystemPrompts();
   setupMemory();
   setupFamilies();
-  setupCharacters();
   setupWorkflows();
   setupCatalog();
 });

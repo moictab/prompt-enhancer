@@ -36,12 +36,14 @@ def test_index_requires_auth(api_client):
     assert response.status_code == 401
 
 
-def test_index_renders_seeded_families(api_client, auth_headers):
-    response = api_client.get("/", auth=auth_headers)
+def test_the_home_page_is_conversar(api_client, auth_headers):
+    response = api_client.get("/", auth=auth_headers, follow_redirects=False)
 
-    assert response.status_code == 200
-    assert "SDXL" in response.text
-    assert "Z-Image-Turbo" in response.text
+    assert response.status_code == 307 and response.headers["location"] == "/conversar"
+    page = api_client.get("/", auth=auth_headers)
+    assert "SDXL" in page.text and "Z-Image-Turbo" in page.text
+    assert 'list="openrouter-models"' in page.text and 'id="openrouter-models"' in page.text
+    assert ">Crear</a>" not in page.text
 
 
 def test_historial_page_renders(api_client, auth_headers):
@@ -61,27 +63,6 @@ def test_admin_page_renders(api_client, auth_headers):
     response = api_client.get("/admin", auth=auth_headers)
 
     assert response.status_code == 200
-
-
-def test_index_renders_every_mode_in_one_composer(api_client, auth_headers):
-    response = api_client.get("/", auth=auth_headers)
-
-    assert response.status_code == 200
-    assert 'id="composer-form"' in response.text
-    for mode in ["generate", "image", "story", "variations"]:
-        assert f'data-mode="{mode}"' in response.text
-    assert 'id="takes"' in response.text
-    assert 'id="characters-dialog"' in response.text
-
-
-def test_index_renders_every_variation_axis(api_client, auth_headers):
-    from app.prompts import VARIATION_AXES
-
-    response = api_client.get("/", auth=auth_headers)
-
-    for key, label in VARIATION_AXES.items():
-        assert f'data-axis="{key}"' in response.text
-        assert label in response.text
 
 
 def test_conversar_page_renders_with_families_and_default_model(api_client, auth_headers, monkeypatch):
@@ -104,58 +85,16 @@ def test_peticiones_page_renders_under_ajustes(api_client, auth_headers):
     assert '<a href="/admin" aria-current="page">' in response.text
 
 
-def test_index_no_longer_has_a_starting_prompt_field(api_client, auth_headers):
-    response = api_client.get("/", auth=auth_headers)
-
-    assert 'id="previous-prompt"' not in response.text
-    assert '<a href="/conversar"' in response.text
-
-
-def test_index_renders_reference_prompts_field_in_variations(api_client, auth_headers):
-    response = api_client.get("/", auth=auth_headers)
-
-    assert response.status_code == 200
-    assert 'id="references-list"' in response.text
-    assert "Prompts de referencia" in response.text
-
-
-def test_index_prefills_default_models_from_settings(api_client, auth_headers, monkeypatch):
-    monkeypatch.setenv("DEFAULT_LLM_MODEL", "vendor/text-model")
-    monkeypatch.setenv("DEFAULT_VISION_MODEL", "vendor/vision-model")
-
-    response = api_client.get("/", auth=auth_headers)
-
-    assert 'value="vendor/text-model"' in response.text
-    assert 'value="vendor/vision-model"' in response.text
-
-
-def test_index_llm_model_inputs_use_openrouter_models_datalist(api_client, auth_headers):
-    response = api_client.get("/", auth=auth_headers)
-
-    assert response.status_code == 200
-    assert 'id="openrouter-models"' in response.text
-    assert 'list="openrouter-models"' in response.text
-
-
-def test_index_vision_model_input_uses_filtered_vision_datalist(api_client, auth_headers):
-    response = api_client.get("/", auth=auth_headers)
-
-    assert response.status_code == 200
-    assert 'id="openrouter-vision-models"' in response.text
-    assert 'list="openrouter-vision-models"' in response.text
-
-
 def test_admin_page_has_management_sections(api_client, auth_headers):
     response = api_client.get("/admin", auth=auth_headers)
 
     assert response.status_code == 200
     assert 'id="family-form"' in response.text
-    assert 'id="character-form"' in response.text
     assert 'id="system-prompt-text"' in response.text
     assert 'id="memory-list"' in response.text
-    for mode in ["generate", "image", "story", "variations", "conversation", "extract_character"]:
-        assert f'data-mode="{mode}"' in response.text
-    assert 'data-mode="iterate"' not in response.text
+    assert 'data-mode="conversation"' in response.text
+    for mode in ["generate", "image", "story", "variations", "iterate"]:
+        assert f'data-mode="{mode}"' not in response.text
 
 
 def test_nav_marks_the_current_page(api_client, auth_headers):

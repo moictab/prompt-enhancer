@@ -34,7 +34,6 @@ from pathlib import Path
 
 from . import (catalog, chat, chat_tools, claude_code, comfy, conversations, families, history, memory, runs,
                workflows)
-from .characters import list_characters
 from .config import get_settings
 from .openrouter_client import StreamEnd, list_models, stream_chat
 
@@ -253,10 +252,6 @@ def _library_entry(workflow: dict) -> dict:
             "model": ", ".join(graph.base_models()) or None}
 
 
-def _selected_characters(character_ids: list[str]) -> list[dict]:
-    return [c for c in list_characters() if c["id"] in character_ids]
-
-
 def _unanswered(conversation: dict) -> bool:
     return bool(conversation["messages"]) and conversation["messages"][-1]["role"] in ("user", "results")
 
@@ -290,7 +285,6 @@ def _turn(conversation_id: str, automatic: bool):
         yield {"type": "error", "detail": "The conversation's model family no longer exists."}
         return
 
-    characters = _selected_characters(conversation["character_ids"])
     notes = memory.list_notes()
     toolbox = toolbox_for(conversation)
     library = [_library_entry(w) for w in workflows.list_workflows()]
@@ -327,10 +321,10 @@ def _turn(conversation_id: str, automatic: bool):
     extra = None
     if on_claude:
         steps, ends, failure, extra = yield from claude_code.run(
-            conversation, family, characters, toolbox, library, family_names, context_parts, load_image, installed,
+            conversation, family, toolbox, library, family_names, context_parts, load_image, installed,
             automatic=automatic, tools_allowed=not ((automatic and not autonomous) or taking_stock))
     else:
-        system = chat.build_system_prompt(family, characters, workflows=library if toolbox else None,
+        system = chat.build_system_prompt(family, workflows=library if toolbox else None,
                                           families=family_names if toolbox else None)
         steps, ends, failure = yield from _openrouter_steps(
             conversation, system, chat.turn_context(**context_parts), toolbox, load_image, installed,
@@ -352,7 +346,7 @@ def _turn(conversation_id: str, automatic: bool):
     # A run of another family's model may have switched the conversation's family meanwhile:
     # the reply's prompts are written (and kept) by the family it ended in.
     family = families.get_family((conversations.get(conversation_id) or {}).get("family_id", "")) or family
-    updated = _store_reply(conversation_id, family, characters, notes, steps, ends, failure, automatic, extra)
+    updated = _store_reply(conversation_id, family, notes, steps, ends, failure, automatic, extra)
     if updated is None:
         yield {"type": "error", "detail": "The conversation was deleted while replying."}
         return
@@ -482,7 +476,7 @@ def _apply_note_changes(reply_updates, reply_forgets, notes_at_start: list[dict]
     return changes
 
 
-def _store_reply(conversation_id, family, characters, notes_at_start, steps, ends, failure, automatic, extra=None):
+def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, automatic, extra=None):
     """Save the finished reply, its note changes, and (when it proposes prompts) a history entry.
     extra: fields for the message (Claude Code's: which engine wrote it, its estimated cost)."""
     conversation = conversations.get(conversation_id)
@@ -530,7 +524,6 @@ def _store_reply(conversation_id, family, characters, notes_at_start, steps, end
                 "conversation_id": conversation_id,
                 "conversation_title": title or conversations.display_title(conversation),
                 "request_ids": request_ids,
-                **_character_params(characters),
             },
         )
         history_id = entry["id"]
@@ -581,10 +574,6 @@ def _store_reviews(conversation_id: str, conversation: dict, reviews: list[tuple
     if stored:
         catalog.invalidate_stats()
         logger.info("conversation reviews stored conversation_id=%s reviews=%d", conversation_id, stored)
-
-
-def _character_params(characters: list[dict]) -> dict:
-    return {"character_names": [c["name"] for c in characters]} if characters else {}
 
 
 def on_run_finished(conversation_id: str, run: dict) -> None:

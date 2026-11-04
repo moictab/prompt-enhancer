@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from app import families, mcp_server, runs, workflows
-from app.openrouter_client import OpenRouterResult, StreamEnd
+from app.openrouter_client import StreamEnd
 
 from .conftest import message_text, png_bytes
 
@@ -73,28 +73,12 @@ def test_the_endpoint_takes_the_apps_credentials_and_lists_every_feature(api_cli
     assert api_client.post("/mcp", json=body, headers=HEADERS, auth=("admin", "wrong")).status_code == 401
 
     tools = {t["name"]: t for t in agent.rpc("tools/list")["result"]["tools"]}
-    for name in ("generate_prompt", "prompt_from_image", "write_story", "make_variations", "start_conversation",
-                 "send_message", "wait_for_conversation", "get_image", "react_to_image", "search_history",
-                 "save_family", "save_character", "save_note", "set_system_prompt", "save_workflow",
+    for name in ("start_conversation", "send_message", "wait_for_conversation", "get_image", "react_to_image",
+                 "search_history", "save_family", "save_note", "set_personality", "save_workflow",
                  "list_installed_models", "list_requests", "finish_conversation", "get_balance_data"):
         assert name in tools
     assert tools["delete_conversation"]["annotations"]["destructiveHint"] is True
     assert tools["get_conversation"]["annotations"]["readOnlyHint"] is True
-
-
-@patch("app.routes.api.call_openrouter")
-def test_an_agent_writes_a_prompt_for_a_family_named_loosely(mock_call, agent, tmp_path):
-    families.create_family("Krea 2", "rules", False, path=str(tmp_path / "families.json"))
-    mock_call.return_value = OpenRouterResult(content="POSITIVE: a witch at dawn", cost=0.002)
-
-    made = agent.call("generate_prompt", idea="una bruja al amanecer", family="krea-2")
-
-    assert made["prompts"] == [{"positive_prompt": "a witch at dawn", "negative_prompt": ""}]
-    assert made["family_name"] == "Krea 2"
-    assert agent.call("search_history", query="witch")["total"] == 1
-
-    refused = agent.raw("generate_prompt", idea="x", family="Flux")
-    assert refused["isError"] and 'There is no family "Flux". Families: ' in refused["content"][0]["text"]
 
 
 def test_an_agent_converses_launches_and_looks_at_the_images(agent, tmp_path, fake_comfy):
@@ -152,6 +136,16 @@ def test_an_agent_converses_launches_and_looks_at_the_images(agent, tmp_path, fa
     asked, answered = took["messages"]
     assert asked["took_stock"]["images"] == 1 and asked["text"] == "la luz"
     assert answered["text"] == "Lo mejor: #1." and took["finished_at"]
+
+
+def test_an_unknown_family_is_refused_with_the_known_ones(agent, tmp_path):
+    families.create_family("Krea 2", "rules", False, path=str(tmp_path / "families.json"))
+
+    refused = agent.raw("start_conversation", message="hola", family="Flux")
+
+    assert refused["isError"] and 'There is no family "Flux". Families: ' in refused["content"][0]["text"]
+    assert "Krea 2" in refused["content"][0]["text"]
+    assert agent.call("list_conversations") == []
 
 
 def test_a_message_refused_before_anything_is_stored_leaves_no_conversation_behind(agent, tmp_path):

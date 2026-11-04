@@ -2,7 +2,7 @@ import requests
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from .. import catalog, characters, comfy, families, image_metadata, memory, system_prompt, workflows
+from .. import catalog, comfy, families, image_metadata, memory, system_prompt, workflows
 from ..seed import DEFAULT_SYSTEM_PROMPTS
 from .api import read_image
 
@@ -39,36 +39,6 @@ def update_family(family_id: str, payload: FamilyPayload):
 def delete_family(family_id: str):
     if not families.delete_family(family_id):
         raise HTTPException(status_code=404, detail="Unknown family_id")
-    return {"deleted": True}
-
-
-class CharacterPayload(BaseModel):
-    name: str
-    text: str
-
-
-@router.get("/characters")
-def list_characters():
-    return characters.list_characters()
-
-
-@router.post("/characters")
-def create_character(payload: CharacterPayload):
-    return characters.create_character(payload.name, payload.text)
-
-
-@router.put("/characters/{character_id}")
-def update_character(character_id: str, payload: CharacterPayload):
-    updated = characters.update_character(character_id, payload.name, payload.text)
-    if updated is None:
-        raise HTTPException(status_code=404, detail="Unknown character_id")
-    return updated
-
-
-@router.delete("/characters/{character_id}")
-def delete_character(character_id: str):
-    if not characters.delete_character(character_id):
-        raise HTTPException(status_code=404, detail="Unknown character_id")
     return {"deleted": True}
 
 

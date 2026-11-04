@@ -1,7 +1,7 @@
 import json
 from unittest.mock import patch
 
-from app import characters, families, history, memory, system_prompt
+from app import families, history, memory, system_prompt
 from app.openrouter_client import OpenRouterError, StreamEnd
 
 from .conftest import message_text
@@ -156,8 +156,7 @@ def test_reply_notes_go_to_memory(mock_stream, api_client, auth_headers, tmp_pat
 @patch("app.conversation_turn.stream_chat")
 def test_reply_with_prompts_is_logged_to_history(mock_stream, api_client, auth_headers, tmp_path):
     family = _family(tmp_path)
-    character = characters.create_character("Lena", "auburn hair", path=str(tmp_path / "characters.json"))
-    conversation = _create(api_client, auth_headers, family, character_ids=[character["id"]]).json()
+    conversation = _create(api_client, auth_headers, family).json()
     mock_stream.side_effect = _stream(REPLY)
 
     message = _events(_send(api_client, auth_headers, conversation["id"]))[-1]["message"]
@@ -170,7 +169,6 @@ def test_reply_with_prompts_is_logged_to_history(mock_stream, api_client, auth_h
     assert entry["cost"] == 0.003
     assert entry["params"]["conversation_id"] == conversation["id"]
     assert entry["params"]["conversation_title"] == "Lena en la playa"
-    assert entry["params"]["character_names"] == ["Lena"]
     assert entry["params"]["request_ids"] == [REQUEST_ID]
 
 

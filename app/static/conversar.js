@@ -1,20 +1,16 @@
 import {
   CONVERSATION_START_KEY,
-  announceReferences,
   confirmButton,
   copyButton,
   el,
   formatCost,
   frameBody,
-  loadReferences,
-  mergeReferences,
   readStored,
   request,
   requestLink,
   setBusy,
   shortModel,
   spawnFloatingCost,
-  storeReferences,
   toast,
   writeStored,
 } from "./common.js";
@@ -52,7 +48,6 @@ const ui = {
   model: $("chat-model"),
   temperature: $("chat-temperature"),
   temperatureValue: $("chat-temperature-value"),
-  chips: $("chat-chips"),
   autoComment: $("chat-auto-comment"), // only with ComfyUI configured
   engine: $("chat-engine"), // only with Claude Code installed
   claudeModel: $("chat-claude-model"),
@@ -79,7 +74,6 @@ const state = {
   conversation: null, // the open conversation as stored on the server; null for a new one
   draft: null, // the settings of a new conversation, until its first message creates it
   summaries: [],
-  characters: [],
   visionSupport: new Map(), // model id -> accepts images, once the model list has loaded
   toolSupport: new Map(), // model id -> takes tools (can run ComfyUI workflows)
   comfy: document.getElementById("chat-layout").dataset.comfy === "on",
@@ -110,7 +104,6 @@ function settings() {
     family_id: source.family_id,
     llm_model: source.llm_model,
     temperature: source.temperature,
-    character_ids: source.character_ids || [],
     auto_comment: source.auto_comment !== false, // conversations from before the setting comment
     engine: source.engine || "openrouter",
     claude_model: source.claude_model || "",
@@ -302,14 +295,6 @@ function liveParts(raw) {
 }
 
 // ---------- messages ----------
-
-const frameHandlers = {
-  onReference: (entry, prompt) => {
-    const result = mergeReferences(loadReferences(), [prompt.positive_prompt]);
-    if (result.added) storeReferences(result.references);
-    announceReferences(result, " Los tienes en Crear, en Variaciones.");
-  },
-};
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -963,7 +948,7 @@ function proposal(entry, part, number, live) {
           el("span", { class: "proposal-model", title: models.join("\n"), text: models.map(modelName).join(", ") })
       )
     ),
-    frameBody(entry, part, live ? {} : frameHandlers)
+    frameBody(entry, part)
   );
   return el(
     "li",
@@ -1276,7 +1261,6 @@ function applySettingsToForm(values) {
     ui.modelField.hidden = onClaude(values);
     ui.temperatureField.hidden = onClaude(values);
   }
-  renderChips();
   renderComfyStatus();
 }
 
@@ -1311,7 +1295,7 @@ async function changeSettings(changes) {
   }
   try {
     const updated = await request(`/api/conversations/${state.conversation.id}`, { method: "PATCH", json: changes });
-    for (const key of ["family_id", "llm_model", "temperature", "character_ids", "auto_comment", "engine", "claude_model"]) {
+    for (const key of ["family_id", "llm_model", "temperature", "auto_comment", "engine", "claude_model"]) {
       state.conversation[key] = updated[key];
     }
     rememberSettings();
@@ -1325,31 +1309,6 @@ async function changeSettings(changes) {
 function setSettingsOpen(open) {
   ui.settings.hidden = !open;
   ui.settingsToggle.setAttribute("aria-expanded", String(open));
-}
-
-function renderChips() {
-  if (!state.characters.length) {
-    ui.chips.replaceChildren(el("p", { class: "chips-empty", text: "Aún no tienes personajes. Créalos en Crear o en Ajustes." }));
-    return;
-  }
-  const selected = new Set(settings().character_ids);
-  ui.chips.replaceChildren(
-    ...state.characters.map((character) =>
-      el("button", {
-        type: "button",
-        class: "chip",
-        "aria-pressed": String(selected.has(character.id)),
-        title: character.text,
-        text: character.name,
-        onclick: () => {
-          const ids = new Set(settings().character_ids);
-          if (ids.has(character.id)) ids.delete(character.id);
-          else ids.add(character.id);
-          changeSettings({ character_ids: [...ids] }).then(renderChips);
-        },
-      })
-    )
-  );
 }
 
 // What's going on in a conversation, for the list: the bot at work there, or news unseen.
@@ -1508,7 +1467,6 @@ function defaultSettings() {
     family_id: stored.family_id || ui.family.options[0]?.value || "",
     llm_model: stored.llm_model || ui.model.defaultValue,
     temperature: typeof stored.temperature === "number" ? stored.temperature : 0.7,
-    character_ids: Array.isArray(stored.character_ids) ? stored.character_ids : [],
     auto_comment: stored.auto_comment !== false,
     engine: ui.engine && stored.engine === CLAUDE_CODE ? CLAUDE_CODE : "openrouter",
     claude_model: stored.claude_model || "",
@@ -2266,13 +2224,11 @@ function scheduleListPoll() {
 }
 
 async function loadSideData() {
-  const [characters, notes, models] = await Promise.allSettled([
-    request("/api/characters"),
+  const [notes, models] = await Promise.allSettled([
     request("/api/admin/memory"),
     request("/api/openrouter-models"),
     loadSummaries(),
   ]);
-  if (characters.status === "fulfilled") state.characters = characters.value;
   if (notes.status === "fulfilled") {
     state.noteIds = new Set(notes.value.map((n) => n.id));
     state.noteTexts = new Set(notes.value.map((n) => n.text));

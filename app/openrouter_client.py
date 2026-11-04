@@ -10,8 +10,7 @@ from .request_log import RequestRecord
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
-# A 12-prompt story or variation set can take a couple of minutes to generate,
-# and a non-streamed completion only arrives once it is complete.
+# How long to wait for OpenRouter to start answering (or for the next bit of a stream).
 TIMEOUT_SECONDS = 180
 MODELS_TIMEOUT_SECONDS = 30
 MODELS_CACHE_TTL_SECONDS = 3600
@@ -23,14 +22,6 @@ PROVIDER_PREFERENCES = {"data_collection": "deny"}
 logger = logging.getLogger("app.openrouter")
 
 _models_cache: dict = {"models": None, "fetched_at": 0.0}
-
-
-@dataclass
-class OpenRouterResult:
-    content: str
-    cost: float | None
-    truncated: bool = False
-    request_id: str | None = None  # its entry in request_log
 
 
 @dataclass
@@ -103,85 +94,6 @@ def _raise_for_status(response: requests.Response) -> None:
         )
 
 
-def call_openrouter(
-    api_key: str,
-    model: str,
-    system_prompt: str,
-    user_message: str,
-    temperature: float = 0.7,
-    image_data_uri: str | None = None,
-    context: dict | None = None,
-) -> OpenRouterResult:
-    """context ({"mode": ..., plus anything worth linking}) goes to the request log."""
-    if image_data_uri:
-        user_content = [
-            {"type": "text", "text": user_message},
-            {"type": "image_url", "image_url": {"url": image_data_uri}},
-        ]
-    else:
-        user_content = user_message
-
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-        "temperature": temperature,
-        "max_tokens": MAX_TOKENS,
-        "usage": {"include": True},
-        "provider": PROVIDER_PREFERENCES,
-    }
-
-    max_attempts = 2
-    for attempt in range(1, max_attempts + 1):
-        record = RequestRecord(payload, context=context, attempt=attempt)
-        start = time.monotonic()
-        try:
-            response = _post(api_key, model, payload)
-        except RuntimeError as e:
-            record.finish(error=str(e))
-            raise OpenRouterError(str(e), record.id) from e
-        duration_ms = (time.monotonic() - start) * 1000
-        logger.info(
-            "openrouter call model=%s status=%d duration_ms=%.1f attempt=%d request_id=%s",
-            model, response.status_code, duration_ms, attempt, record.id,
-        )
-        try:
-            _raise_for_status(response)
-        except RuntimeError as e:
-            record.finish(status=response.status_code, error=str(e), response_body=response.text)
-            raise OpenRouterError(str(e), record.id) from e
-
-        try:
-            data = response.json()
-            choice = data["choices"][0]
-            content = choice["message"]["content"]
-            if not isinstance(content, str):
-                raise ValueError("content is not a string")
-        # TypeError/AttributeError: a null "choices"/"message" or a non-object body
-        except (ValueError, KeyError, IndexError, TypeError, AttributeError):
-            error = f"Unexpected response format from OpenRouter: {response.text[:300]}"
-            record.finish(status=response.status_code, error=error, response_body=response.text)
-            if attempt < max_attempts:
-                logger.warning(
-                    "openrouter call returned malformed content model=%s attempt=%d, retrying",
-                    model, attempt,
-                )
-                continue
-            raise OpenRouterError(error, record.id)
-
-        record.finish(status=response.status_code, response=data)
-        cost = (data.get("usage") or {}).get("cost")
-        truncated = choice.get("finish_reason") == "length"
-        if truncated:
-            logger.warning(
-                "openrouter call truncated by max_tokens model=%s content_len=%d",
-                model, len(content),
-            )
-        return OpenRouterResult(content=content, cost=cost, truncated=truncated, request_id=record.id)
-
-
 def stream_chat(
     api_key: str,
     model: str,
@@ -194,8 +106,8 @@ def stream_chat(
     """Stream a chat completion: yields each text delta as it arrives, then one StreamEnd.
 
     Raises OpenRouterError (with a user-facing message) for HTTP errors, an error
-    reported mid-stream, or a dropped connection. Unlike call_openrouter there is
-    no retry: part of the reply may already have been shown. However it ends --
+    reported mid-stream, or a dropped connection. There is no retry: part of the
+    reply may already have been shown. However it ends --
     finished, failed, or abandoned by the caller -- the request and whatever text
     arrived go to the request log, with context ({"mode": ...}) attached.
 

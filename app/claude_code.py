@@ -13,9 +13,9 @@ own session (one per conversation; the app picks its id), in an empty folder of 
   dontAsk refuses the rest, --setting-sources "" reads no settings files. A session that starts
   with any other tool is stopped (_check_tools).
 - the bot's system prompt: chat.system_sections, the same personality, family rules,
-  characters, library and mechanics as on OpenRouter, plus CLAUDE_CODE_MECHANICS. Claude Code
-  records it when the session starts and keeps it, so what changes later -- the family, the
-  characters, the library -- comes in the turn's message (a section whose digest differs from
+  library and mechanics as on OpenRouter, plus CLAUDE_CODE_MECHANICS. Claude Code records it
+  when the session starts and keeps it, so what changes later -- the family, the library --
+  comes in the turn's message (a section whose digest differs from
   the session's start). So do the notes and the installed models, sent again only when they
   changed, or every RESEND_EVERY turns: the session keeps what was sent before.
 
@@ -54,7 +54,7 @@ MAX_PARALLEL = 2  # Claude Code processes at once; more wait their turn
 RESEND_EVERY = 8  # turns after which the notes and models are sent again even if unchanged
 TURN_TIMEOUT_SECONDS = 1800
 # Sections of the system prompt that may change during a conversation, and are then sent again.
-CHANGING_SECTIONS = ("family", "characters", "library", "families")
+CHANGING_SECTIONS = ("family", "library", "families")
 # Claude Code ages sessions out after 30 days by default: these are conversations, kept longer.
 SESSION_SETTINGS = {"cleanupPeriodDays": 3650}
 
@@ -264,7 +264,7 @@ def _session_lost(text: str, stderr: str) -> bool:
 
 # --- one turn ---------------------------------------------------------------------------------------
 
-def run(conversation: dict, family: dict, characters: list[dict], toolbox, library: list[dict],
+def run(conversation: dict, family: dict, toolbox, library: list[dict],
         family_names: list[str], parts: dict, load_image, installed, *, automatic: bool,
         tools_allowed: bool, fresh: bool = False):
     """One turn: yields its events ({"type": "delta"}, {"type": "tool"}) and returns
@@ -275,7 +275,7 @@ def run(conversation: dict, family: dict, characters: list[dict], toolbox, libra
     new_session = not state.get("session_id")
     session_id = str(uuid.uuid4()) if new_session else state["session_id"]
     model = model_for(conversation)
-    sections = chat.system_sections(family, characters, workflows=library if toolbox else None,
+    sections = chat.system_sections(family, workflows=library if toolbox else None,
                                     families=family_names if toolbox else None,
                                     extra_mechanics=CLAUDE_CODE_MECHANICS)
     system = "\n\n".join(sections.values())
@@ -389,7 +389,7 @@ def run(conversation: dict, family: dict, characters: list[dict], toolbox, libra
         if not new_session and _session_lost(text, stderr) and not any(s["tool_calls"] for s in steps):
             logger.warning("claude code session lost conversation_id=%s session=%s", conversation_id, session_id)
             record.finish(status=None, error="session lost: starting a new one")
-            return (yield from run(conversation, family, characters, toolbox, library, family_names, parts,
+            return (yield from run(conversation, family, toolbox, library, family_names, parts,
                                    load_image, installed, automatic=automatic, tools_allowed=tools_allowed,
                                    fresh=True))
         failure = {"detail": _failure_text(final, stderr, process.returncode if process else None)}

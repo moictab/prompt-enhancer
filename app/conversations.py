@@ -50,7 +50,6 @@ def create(
     family_id: str,
     llm_model: str,
     temperature: float,
-    character_ids: list[str],
     root: str | None = None,
     auto_comment: bool = True,
     engine: str = "openrouter",
@@ -69,7 +68,6 @@ def create(
         "family_id": family_id,
         "llm_model": llm_model,
         "temperature": temperature,
-        "character_ids": character_ids,
         "auto_comment": auto_comment,
         "engine": engine,
         "claude_model": claude_model,
@@ -141,8 +139,7 @@ def list_summaries(root: str | None = None) -> list[dict]:
 def update_settings(conversation_id: str, changes: dict, root: str | None = None) -> dict | None:
     """Change settings, or the title (the user's: the bot only titles an untitled
     conversation). Neither counts as activity: updated_at, the list's order, stays."""
-    allowed = {"family_id", "llm_model", "temperature", "character_ids", "title", "auto_comment", "engine",
-               "claude_model"}
+    allowed = {"family_id", "llm_model", "temperature", "title", "auto_comment", "engine", "claude_model"}
     with _lock:
         conversation = get(conversation_id, root)
         if conversation is None:

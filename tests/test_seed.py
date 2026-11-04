@@ -16,31 +16,14 @@ def test_ensure_seed_data_creates_families_with_sdxl_and_zit(tmp_path):
     assert zit["has_negative_prompt"] is False
 
 
-def test_ensure_seed_data_creates_empty_characters_file(tmp_path):
-    ensure_seed_data(str(tmp_path))
-
-    characters = json.loads((tmp_path / "characters.json").read_text())
-    assert characters == []
-
-
-def test_ensure_seed_data_creates_every_mode_system_prompt(tmp_path):
+def test_ensure_seed_data_creates_the_bots_personality(tmp_path):
     ensure_seed_data(str(tmp_path))
 
     data = json.loads((tmp_path / "system_prompts.json").read_text())
-    assert set(data.keys()) == {
-        "generate", "image", "extract_character", "story", "variations", "conversation",
-    }
-    assert "POSITIVE:" in data["generate"]
-    assert "POSITIVE:" in data["image"]
+    assert set(data.keys()) == {"conversation"}
     assert "partner in crime" in data["conversation"]
     # The personality alone: the prompt format is appended by app.chat, not editable.
     assert "<prompt>" not in data["conversation"]
-    assert "NAME:" in data["extract_character"]
-    assert "TEXT:" in data["extract_character"]
-    assert "EPISODE 1:" in data["story"]
-    assert "POSITIVE:" in data["story"]
-    assert "VARIATION 1:" in data["variations"]
-    assert "POSITIVE:" in data["variations"]
 
 
 def test_ensure_seed_data_is_idempotent(tmp_path):
@@ -68,7 +51,7 @@ def test_ensure_seed_data_fills_in_modes_missing_from_an_older_data_dir(tmp_path
     ensure_seed_data(str(tmp_path))
 
     data = json.loads((tmp_path / "system_prompts.json").read_text())
+    # The old one-shot modes' texts stay as they were, unused.
     assert data["generate"] == "custom"
     assert data["story"] == ""
-    assert "VARIATION 1:" in data["variations"]
     assert "partner in crime" in data["conversation"]

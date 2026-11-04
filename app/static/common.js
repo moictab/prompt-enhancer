@@ -1,10 +1,9 @@
 // Shared by every page: request helpers, small DOM utilities and the "take"
-// card that renders one generation (a history entry) in both Crear and Historial.
+// card that renders one history entry in Historial.
 
-// Story and Variaciones can ask for up to 12 prompts in one LLM response, which
-// takes a while. Keep this above the server's worst case -- OpenRouter's 180 s
-// timeout, twice when a malformed response is retried -- or the browser would give
-// up on a result the server still finishes, pays for and logs to history.
+// Above the slowest synchronous call the pages make (refreshing the model catalog
+// from ComfyUI, reading a workflow out of an image), so the browser doesn't give up
+// on something the server still finishes.
 const REQUEST_TIMEOUT_MS = 380000;
 
 export async function request(url, { method = "GET", json, form } = {}) {
@@ -189,47 +188,6 @@ export function toast(message, { error = false } = {}) {
   }, error ? 6000 : 2600);
 }
 
-// Variaciones' reference prompts live under their own key so Historial can add to
-// them as well as Crear, which edits them. The limit matches the API's.
-export const REFERENCES_KEY = "reference-prompts";
-export const MAX_REFERENCES = 12;
-
-export function loadReferences() {
-  const stored = readStored(localStorage, REFERENCES_KEY, []);
-  return Array.isArray(stored) ? stored.filter((p) => typeof p === "string" && p.trim()) : [];
-}
-
-export function storeReferences(references) {
-  writeStored(localStorage, REFERENCES_KEY, references);
-}
-
-// Appends prompts to a reference list, skipping duplicates and anything past the limit.
-export function mergeReferences(current, prompts) {
-  const references = [...current];
-  let added = 0;
-  let skipped = 0;
-  for (const text of prompts.map((p) => p.trim()).filter(Boolean)) {
-    if (references.includes(text)) continue;
-    if (references.length >= MAX_REFERENCES) {
-      skipped += 1;
-      continue;
-    }
-    references.push(text);
-    added += 1;
-  }
-  return { references, added, skipped };
-}
-
-export function announceReferences({ references, added, skipped }, hint = "") {
-  if (skipped) {
-    toast(`Ya hay ${MAX_REFERENCES} prompts de referencia, el máximo. Quita alguno para añadir otro.`, { error: true });
-  } else if (!added) {
-    toast("Ese prompt ya está en las referencias.");
-  } else {
-    toast(`Añadido a las referencias (${references.length} de ${MAX_REFERENCES}).${hint}`);
-  }
-}
-
 export function spawnFloatingCost(cost, originEl) {
   const text = formatCost(cost);
   if (!text) return;
@@ -346,21 +304,7 @@ export function frameBody(entry, prompt, handlers = {}) {
     copyButton("Copiar", () => prompt.positive_prompt, "btn-quiet btn-copy"),
     prompt.negative_prompt && copyButton("Copiar negativo", () => prompt.negative_prompt),
     handlers.onIterate &&
-      el("button", { type: "button", class: "btn-quiet", text: "Iterar", onclick: () => handlers.onIterate(entry, prompt) }),
-    handlers.onReference &&
-      el("button", {
-        type: "button",
-        class: "btn-quiet",
-        text: "Añadir a referencias",
-        onclick: () => handlers.onReference(entry, prompt),
-      }),
-    handlers.onExtract &&
-      el("button", {
-        type: "button",
-        class: "btn-quiet",
-        text: "Crear personaje",
-        onclick: (event) => handlers.onExtract(prompt, event.currentTarget),
-      })
+      el("button", { type: "button", class: "btn-quiet", text: "Iterar", onclick: () => handlers.onIterate(entry, prompt) })
   );
 
   return el(
@@ -378,7 +322,8 @@ export function frameBody(entry, prompt, handlers = {}) {
   );
 }
 
-function takeReferences(entry, handlers) {
+// The prompts an old Variaciones request started from, kept with its entry.
+function takeReferences(entry) {
   const references = (entry.params || {}).reference_prompts || [];
   if (!references.length) return null;
   return el(
@@ -387,14 +332,7 @@ function takeReferences(entry, handlers) {
     el("summary", {
       text: references.length === 1 ? "1 prompt de referencia" : `${references.length} prompts de referencia`,
     }),
-    el("ol", { class: "reference-texts" }, references.map((text) => el("li", {}, el("p", { class: "prompt-text", text })))),
-    handlers.onUseReferences &&
-      el("button", {
-        type: "button",
-        class: "btn-quiet",
-        text: "Usar estas referencias",
-        onclick: () => handlers.onUseReferences(entry),
-      })
+    el("ol", { class: "reference-texts" }, references.map((text) => el("li", {}, el("p", { class: "prompt-text", text }))))
   );
 }
 
@@ -441,8 +379,7 @@ function renderFrames(entry, handlers) {
   );
 }
 
-// handlers: { onIterate(entry, prompt), onReference(entry, prompt), onExtract(prompt, button),
-// onUseReferences(entry), onOpenConversation(conversationId), onFavorite(entry, button),
+// handlers: { onIterate(entry, prompt), onOpenConversation(conversationId), onFavorite(entry, button),
 // onDelete(entry, button) }
 // Any handler left out hides its action.
 export function renderTake(entry, handlers = {}, { withDate = false } = {}) {
@@ -479,7 +416,7 @@ export function renderTake(entry, handlers = {}, { withDate = false } = {}) {
     ),
     takeBrief(entry),
     takeLinks(entry, handlers),
-    takeReferences(entry, handlers),
+    takeReferences(entry),
     warnings.map((text) => el("p", { class: "notice is-warning", text })),
     el("ol", { class: "frames" }, renderFrames(entry, handlers)),
     handlers.onDelete &&

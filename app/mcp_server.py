@@ -36,23 +36,22 @@ WAIT_POLL_SECONDS = 3.0
 MAX_WAIT_SECONDS = 1800
 IMAGE_KINDS = {b"\x89PNG": "png", b"\xff\xd8\xff": "jpeg"}
 
-INSTRUCTIONS = """Prompt Enhancer crafts prompts for AI image models and, through Conversar, a chat \
-with a prompt-crafting bot that can also run ComfyUI workflows on the owner's PC and look at the images.
+INSTRUCTIONS = """Prompt Enhancer crafts prompts for AI image models in Conversar, a chat with a \
+prompt-crafting bot that can also run ComfyUI workflows on the owner's PC and look at the images.
 
-- One-shot prompts: generate_prompt (an idea), prompt_from_image (a reference image), write_story \
-(a sequence), make_variations (one subject in several variations). Each takes a model family \
-(list_families); the result is also saved to the history (search_history).
-- Conversar: start_conversation, then send_message. The bot replies with prompts (numbered across \
+- Conversar: start_conversation (with a model family, list_families), then send_message. The bot replies with prompts (numbered across \
 the conversation, each naming the base model it is for) and may launch ComfyUI runs; their images \
 arrive later: call wait_for_conversation, then get_image to see them, react_to_image to tell the \
 bot what worked. Image N of a conversation is written #N in messages. When a conversation is \
 done, finish_conversation ends it, and the bot first looks back over all its runs (what worked, \
 the best recipe) and fixes its notes; get_balance_data gives the same evidence without asking it.
-- Everything else the app's settings page does is here too: families, characters, the bot's notes \
-about the user, system prompts, the ComfyUI workflow library, installed models, and the log of \
+- The prompts proposed in every conversation (and those of the one-shot modes the app had before) are in \
+the history (search_history).
+- Everything else the app's settings page does is here too: families, the bot's notes \
+about the user, its personality, the ComfyUI workflow library, installed models, and the log of \
 every request sent to OpenRouter.
-- Tools that call an LLM (generating, extracting, every conversation message) spend the owner's \
-OpenRouter credit, and runs use the owner's GPU: don't call them in loops without reason."""
+- Every conversation message spends the owner's OpenRouter credit (or their Claude subscription), \
+and runs use the owner's GPU: don't call them in loops without reason."""
 
 READ = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False)
@@ -78,8 +77,6 @@ server = _server()
 _state: dict[str, Any] = {"app": None, "http_app": None}
 
 Family = Annotated[str, Field(description="Model family, by name (e.g. 'Krea 2', 'SDXL') or id: see list_families.")]
-Characters = Annotated[list[str], Field(description="Characters to include, by name or id (list_characters): "
-                                                     "their descriptions go into the prompt verbatim.")]
 ImageData = Annotated[str, Field(description="A PNG, JPEG or WebP image, base64-encoded (a data: URI works too).")]
 Temperature = Annotated[float, Field(ge=0, le=2, description="Sampling temperature.")]
 
@@ -199,20 +196,6 @@ async def _family_id(family: str) -> str:
     return found["id"]
 
 
-async def _character_ids(names: list[str]) -> list[str]:
-    if not names:
-        return []
-    characters = await _json("GET", "/api/admin/characters")
-    ids = []
-    for name in names:
-        found = next((c for c in characters if c["id"] == name or _key(c["name"]) == _key(name)), None)
-        if found is None:
-            known = ", ".join(c["name"] for c in characters) or "none yet"
-            raise ToolError(f'There is no character "{name}". Characters: {known}.')
-        ids.append(found["id"])
-    return ids
-
-
 async def _find(path: str, what: str, name_or_id: str) -> dict:
     items = await _json("GET", path)
     found = next((i for i in items if i["id"] == name_or_id or i.get("name") == name_or_id), None)
@@ -237,9 +220,8 @@ def _image_file(data: str, index: int = 1) -> tuple[str, bytes, str]:
     return f"image-{index}.{'jpg' if kind == 'jpeg' else kind}", raw, f"image/{kind}"
 
 
-def _defaults(llm_model: str | None, vision: bool = False) -> str:
-    settings = get_settings()
-    return llm_model or (settings.default_vision_model if vision else settings.default_llm_model)
+def _defaults(llm_model: str | None) -> str:
+    return llm_model or get_settings().default_llm_model
 
 
 # --- conversations, as an agent reads them ---------------------------------------------------------
@@ -362,107 +344,7 @@ async def _send(conversation_id: str, message: str, images: list[str], path: str
     return view
 
 
-# --- one-shot prompts -----------------------------------------------------------------------------
-
-@server.tool(annotations=LLM)
-async def generate_prompt(
-    idea: Annotated[str, Field(description="What the image should show, in any language.")],
-    family: Family,
-    variants: Annotated[int, Field(ge=1, le=4, description="Independent alternatives to write.")] = 1,
-    characters: Characters = [],
-    example_prompts: Annotated[str, Field(description="Prompts whose style to follow, optional.")] = "",
-    llm_model: Annotated[str | None, Field(description="OpenRouter model id; the app's default if omitted.")] = None,
-    temperature: Temperature = 0.7,
-) -> dict:
-    """Turn an idea into a ready positive/negative prompt pair for a model family. Saved to the history."""
-    return await _json("POST", "/api/generate", json={
-        "user_input": idea, "family_id": await _family_id(family), "llm_model": _defaults(llm_model),
-        "temperature": temperature, "example_prompts": example_prompts,
-        "character_ids": await _character_ids(characters), "variants": variants})
-
-
-@server.tool(annotations=LLM)
-async def prompt_from_image(
-    image: ImageData,
-    family: Family,
-    idea: Annotated[str, Field(description="What to keep or change from the image, optional.")] = "",
-    variants: Annotated[int, Field(ge=1, le=4)] = 1,
-    example_prompts: str = "",
-    vision_model: Annotated[str | None, Field(description="An OpenRouter model that takes images; the app's "
-                                                          "default vision model if omitted.")] = None,
-    temperature: Temperature = 0.7,
-) -> dict:
-    """Write a prompt that reproduces a reference image, for a model family. Saved to the history."""
-    return await _json("POST", "/api/from-image", files=[("image", _image_file(image))], data={
-        "family_id": await _family_id(family), "vision_model": _defaults(vision_model, vision=True),
-        "user_input": idea, "example_prompts": example_prompts, "temperature": str(temperature),
-        "variants": str(variants)})
-
-
-@server.tool(annotations=LLM)
-async def write_story(
-    idea: Annotated[str, Field(description="The story to tell.")],
-    family: Family,
-    episodes: Annotated[int, Field(ge=2, le=12)] = 4,
-    characters: Characters = [],
-    example_prompts: str = "",
-    llm_model: str | None = None,
-    temperature: Temperature = 0.7,
-) -> dict:
-    """Tell a story as a sequence of prompts that keep characters and style consistent. Saved to the history."""
-    return await _json("POST", "/api/story", json={
-        "user_input": idea, "family_id": await _family_id(family), "llm_model": _defaults(llm_model),
-        "temperature": temperature, "example_prompts": example_prompts,
-        "character_ids": await _character_ids(characters), "num_episodes": episodes})
-
-
-@server.tool(annotations=LLM)
-async def make_variations(
-    family: Family,
-    vary: Annotated[dict[str, str], Field(description=(
-        "The aspects that change from prompt to prompt, each with optional hints ('' for none). Aspects: "
-        "outfit, setting, lighting, pose, camera, expression. At least one."))],
-    fixed: Annotated[dict[str, str], Field(description=(
-        "Aspects held the same in every prompt, each with its value ('' lets the model choose one).") )] = {},
-    idea: Annotated[str, Field(description="The base idea held constant, optional.")] = "",
-    aesthetic: Annotated[str, Field(description="The look held constant, optional.")] = "",
-    count: Annotated[int, Field(ge=2, le=12)] = 4,
-    characters: Characters = [],
-    reference_prompts: Annotated[list[str], Field(max_length=12, description=(
-        "Prompts the owner already likes, usually of the same subject: what they share is kept as the "
-        "constant subject."))] = [],
-    example_prompts: str = "",
-    llm_model: str | None = None,
-    temperature: Temperature = 0.7,
-) -> dict:
-    """A photo shoot of one subject: several prompts that keep the subject constant and vary the chosen
-    aspects. Saved to the history."""
-    axes = [{"key": k, "vary": True, "value": v} for k, v in vary.items()]
-    axes += [{"key": k, "vary": False, "value": v} for k, v in fixed.items() if k not in vary]
-    return await _json("POST", "/api/variations", json={
-        "family_id": await _family_id(family), "llm_model": _defaults(llm_model), "axes": axes,
-        "user_input": idea, "aesthetic": aesthetic, "temperature": temperature, "count": count,
-        "example_prompts": example_prompts, "character_ids": await _character_ids(characters),
-        "reference_prompts": reference_prompts})
-
-
-@server.tool(annotations=LLM)
-async def extract_character(
-    prompt_text: Annotated[str | None, Field(description="A prompt describing the character.")] = None,
-    image: Annotated[str | None, Field(description="Or an image of the character, base64-encoded.")] = None,
-    model: Annotated[str | None, Field(description="OpenRouter model (one that takes images, for an image).")] = None,
-    temperature: Temperature = 0.7,
-) -> dict:
-    """Write a reusable character description (name and text) from a prompt or an image. Not saved:
-    pass the result to save_character to keep it."""
-    if bool(prompt_text) == bool(image):
-        raise ToolError("Give either prompt_text or image.")
-    if image:
-        return await _json("POST", "/api/extract-character-from-image", files=[("image", _image_file(image))],
-                           data={"vision_model": _defaults(model, vision=True), "temperature": str(temperature)})
-    return await _json("POST", "/api/extract-character", json={
-        "prompt_text": prompt_text, "llm_model": _defaults(model), "temperature": temperature})
-
+# --- models -------------------------------------------------------------------------------------
 
 @server.tool(annotations=READ)
 async def list_llm_models(
@@ -472,14 +354,13 @@ async def list_llm_models(
                                              "only with one).")] = False,
     limit: Annotated[int, Field(ge=1, le=500)] = 50,
 ) -> dict:
-    """The OpenRouter models the app can use, and the defaults it uses when none is given."""
+    """The OpenRouter models the app can use, and the default it uses when none is given."""
     words = search.lower().split()
     models = [m for m in await _json("GET", "/api/openrouter-models")
               if all(w in f"{m['id']} {m.get('name', '')}".lower() for w in words)
               and (not images or m.get("supports_images")) and (not tools or m.get("supports_tools"))]
     settings = get_settings()
-    return {"default_model": settings.default_llm_model, "default_vision_model": settings.default_vision_model,
-            "total": len(models), "models": models[:limit]}
+    return {"default_model": settings.default_llm_model, "total": len(models), "models": models[:limit]}
 
 
 # --- history --------------------------------------------------------------------------------------
@@ -537,14 +418,13 @@ async def start_conversation(
     llm_model: Annotated[str | None, Field(description="OpenRouter model; it runs ComfyUI only if it calls "
                                                        "tools.")] = None,
     temperature: Temperature = 0.7,
-    characters: Characters = [],
     auto_comment: Annotated[bool, Field(description="Whether the bot looks at a run's images by itself when "
                                                     "they arrive (one request more per run).")] = True,
 ) -> dict:
     """Start a conversation with the prompt-crafting bot and get its first reply."""
     conversation = await _json("POST", "/api/conversations", json={
         "family_id": await _family_id(family), "llm_model": _defaults(llm_model), "temperature": temperature,
-        "character_ids": await _character_ids(characters), "auto_comment": auto_comment})
+        "auto_comment": auto_comment})
     try:
         return await _send(conversation["id"], message, images)
     except ToolError:
@@ -683,7 +563,6 @@ async def update_conversation(
     family: Annotated[str | None, Field(description="Family name or id.")] = None,
     llm_model: str | None = None,
     temperature: Annotated[float | None, Field(ge=0, le=2)] = None,
-    characters: Annotated[list[str] | None, Field(description="Names or ids; replaces the selection.")] = None,
     auto_comment: bool | None = None,
 ) -> dict:
     """Change a conversation's title or settings; what is left out stays as it is."""
@@ -691,8 +570,6 @@ async def update_conversation(
                                "auto_comment": auto_comment}
     if family is not None:
         changes["family_id"] = await _family_id(family)
-    if characters is not None:
-        changes["character_ids"] = await _character_ids(characters)
     await _json("PATCH", f"/api/conversations/{conversation_id}",
                 json={k: v for k, v in changes.items() if v is not None})
     return _conversation_view(await _conversation(conversation_id), last=1)
@@ -732,7 +609,7 @@ async def get_run_workflow(
     return await _json("GET", f"/api/conversations/{conversation_id}/runs/{run}/workflow", params={"job": job})
 
 
-# --- families, characters, notes, system prompts --------------------------------------------------
+# --- families, notes, the bot's personality --------------------------------------------------
 
 @server.tool(annotations=READ)
 async def list_families() -> list[dict]:
@@ -761,31 +638,6 @@ async def delete_family(family: Family) -> dict:
 
 
 @server.tool(annotations=READ)
-async def list_characters() -> list[dict]:
-    """The saved characters: name and the description inlined verbatim into prompts."""
-    return await _json("GET", "/api/admin/characters")
-
-
-@server.tool(annotations=WRITE)
-async def save_character(
-    name: str,
-    text: Annotated[str, Field(description="The description, as it goes into prompts.")],
-    character_id: Annotated[str | None, Field(description="To change an existing one; omit to create.")] = None,
-) -> dict:
-    """Create a character, or change one."""
-    body = {"name": name, "text": text}
-    if character_id:
-        return await _json("PUT", f"/api/admin/characters/{character_id}", json=body)
-    return await _json("POST", "/api/admin/characters", json=body)
-
-
-@server.tool(annotations=DELETE)
-async def delete_character(character: Annotated[str, Field(description="Name or id.")]) -> dict:
-    """Delete a character."""
-    return await _json("DELETE", f"/api/admin/characters/{(await _character_ids([character]))[0]}")
-
-
-@server.tool(annotations=READ)
 async def list_notes() -> list[dict]:
     """The Conversar bot's notes about the owner's tastes and what works with each model."""
     return await _json("GET", "/api/admin/memory")
@@ -808,25 +660,19 @@ async def delete_note(note_id: str) -> dict:
     return await _json("DELETE", f"/api/admin/memory/{note_id}")
 
 
-SystemPromptMode = Annotated[
-    Literal["generate", "image", "story", "variations", "conversation", "extract_character"],
-    Field(description="Which mode's system prompt; 'conversation' is the Conversar bot's personality."),
-]
-
-
 @server.tool(annotations=READ)
-async def get_system_prompt(
-    mode: SystemPromptMode,
+async def get_personality(
     original: Annotated[bool, Field(description="The text the app ships with, instead of the current one.")] = False,
 ) -> dict:
-    """A mode's system prompt."""
-    return await _json("GET", f"/api/admin/system-prompt/{mode}" + ("/default" if original else ""))
+    """The Conversar bot's personality (Ajustes): who it is and how it talks. The rest of its instructions
+    -- how to deliver prompts, notes, tools -- are the app's own."""
+    return await _json("GET", "/api/admin/system-prompt/conversation" + ("/default" if original else ""))
 
 
 @server.tool(annotations=WRITE)
-async def set_system_prompt(mode: SystemPromptMode, text: str) -> dict:
-    """Replace a mode's system prompt."""
-    return await _json("PUT", f"/api/admin/system-prompt/{mode}", json={"text": text})
+async def set_personality(text: str) -> dict:
+    """Replace the Conversar bot's personality, for both engines (OpenRouter and Claude Code). Write it in English."""
+    return await _json("PUT", "/api/admin/system-prompt/conversation", json={"text": text})
 
 
 # --- ComfyUI: workflows and installed models ------------------------------------------------------

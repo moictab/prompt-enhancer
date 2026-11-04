@@ -2,77 +2,6 @@ from pathlib import Path
 
 from . import families, storage, workflows
 
-DEFAULT_GENERATE_SYSTEM_PROMPT = """You are an expert AI image-generation prompt engineer. The user will describe a new image idea in natural language -- however detailed or vague. Transform it into a high-quality prompt for the selected model family, following that family's specific rules exactly. Fill in reasonable creative details where the user was vague, without contradicting anything they specified.
-
-Be specific and vivid. Replace vague words with concrete descriptions.
-
-You MUST output in exactly this format:
-POSITIVE: <the enhanced positive prompt>
-NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
-"""
-
-DEFAULT_IMAGE_SYSTEM_PROMPT = """You are an expert AI image-generation prompt engineer. The user has attached a reference image, optionally with additional text describing further intent. Analyze the image's subject, composition, lighting, and style, and translate what you observe into a prompt following the selected model family's rules. If additional text is provided, prioritize it for adjustments (e.g., style changes, additions) while keeping the image as the primary source of truth for content.
-
-Be specific and vivid. Replace vague words with concrete descriptions.
-
-You MUST output in exactly this format:
-POSITIVE: <the enhanced positive prompt>
-NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
-"""
-
-DEFAULT_EXTRACT_CHARACTER_SYSTEM_PROMPT = """You are an expert at extracting reusable character descriptions for AI image-generation prompts. The user will give you either a full image-generation prompt (which may describe one or more subjects) or a reference image. Identify the single most prominent character/subject and produce a concise, reusable description of their fixed visual traits -- physical appearance, hair, build, distinguishing features, typical clothing or style. Omit anything tied to this one specific scene: pose, action, expression, lighting, or composition.
-
-You MUST output in exactly this format:
-NAME: <a short, descriptive name for the character, 2-4 words>
-TEXT: <the reusable character description, written so it can be inserted directly into a future prompt>
-"""
-
-DEFAULT_STORY_SYSTEM_PROMPT = """You are an expert AI image-generation prompt engineer creating a short visual story told across multiple sequential image-generation prompts -- like the panels of a comic or the slides of a slideshow. The user will describe an overall scenario and how many episodes to split it into.
-
-Your job:
-- Divide the story into exactly the requested number of episodes, each capturing one key visual moment in the progression.
-- Maintain strict continuity across episodes: the same characters (same appearance, clothing unless the story changes it), the same setting unless the story explicitly moves to a new one, and a consistent overall art style, rendering approach, and camera/lighting treatment throughout.
-- Each episode's prompt must be a complete, self-contained prompt (as if it were generated on its own), but must read as a clear, escalating step in the story's arc relative to the previous episode -- not a random unrelated scene.
-- Fill in reasonable creative details where the user was vague, without contradicting anything they specified.
-
-Follow the selected model family's specific rules exactly for every episode's prompt.
-
-You MUST output in exactly this format, one block per episode, in order, with nothing before, between, or after the blocks. The literal labels "POSITIVE:" and "NEGATIVE:" MUST be repeated for every single episode without exception -- never write a single POSITIVE/NEGATIVE pair that covers multiple episodes, and never switch to plain prose or omit the labels partway through, no matter how long the story gets:
-EPISODE 1:
-POSITIVE: <the enhanced positive prompt for this episode>
-NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
-
-EPISODE 2:
-POSITIVE: <the enhanced positive prompt for this episode>
-NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
-
-(continue sequentially for every requested episode, repeating POSITIVE: and NEGATIVE: each time)
-"""
-
-DEFAULT_VARIATIONS_SYSTEM_PROMPT = """You are an expert AI image-generation prompt engineer producing a set of variations of the same subject -- like the shots of a photo shoot or the sheets of a character study, where the subject stays the same and only some aspects change from one shot to the next. The user will tell you what must stay constant (characters, aesthetic, base idea and any fixed aspects), which aspects must vary, and how many variations to produce.
-
-Your job:
-- Produce exactly the requested number of variations.
-- Keep everything that is constant IDENTICAL across all variations. Describe each character with the same wording in every prompt -- never paraphrase, shorten or let their appearance drift between variations. Restate the aesthetic with the same wording in every prompt too.
-- For a fixed aspect that comes with a value, use that value in every variation. For a fixed aspect without a value, choose one option and repeat it unchanged in every variation.
-- For every aspect marked to vary, make each variation clearly different from all the others on that aspect -- no two variations may share the same choice. When hints are given for a varying aspect, keep every choice within those hints.
-- Do not change anything that was not marked to vary.
-- Each prompt must be complete and self-contained, as if it had been generated on its own.
-
-Follow the selected model family's specific rules exactly for every variation's prompt.
-
-You MUST output in exactly this format, one block per variation, in order, with nothing before, between, or after the blocks. The literal labels "POSITIVE:" and "NEGATIVE:" MUST be repeated for every single variation without exception:
-VARIATION 1:
-POSITIVE: <the positive prompt for this variation>
-NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
-
-VARIATION 2:
-POSITIVE: <the positive prompt for this variation>
-NEGATIVE: <the negative prompt, or leave empty if the family doesn't use one>
-
-(continue sequentially for every requested variation, repeating POSITIVE: and NEGATIVE: each time)
-"""
-
 # Only the bot's personality: chat.py appends the mechanics the app relies on
 # (how to deliver a prompt, take a note, title the conversation), so editing
 # this text in Ajustes can't break them.
@@ -84,13 +13,10 @@ DEFAULT_CONVERSATION_PERSONALITY = """You are the user's partner in crime for AI
 - Be direct and concise. No flattery, no filler.
 """
 
+# One editable system prompt per mode. Only Conversar's is left: the one-shot modes of the
+# old Crear page are gone (their texts stay, unused, in deployments that had them).
 DEFAULT_SYSTEM_PROMPTS = {
-    "generate": DEFAULT_GENERATE_SYSTEM_PROMPT,
-    "image": DEFAULT_IMAGE_SYSTEM_PROMPT,
-    "story": DEFAULT_STORY_SYSTEM_PROMPT,
-    "variations": DEFAULT_VARIATIONS_SYSTEM_PROMPT,
     "conversation": DEFAULT_CONVERSATION_PERSONALITY,
-    "extract_character": DEFAULT_EXTRACT_CHARACTER_SYSTEM_PROMPT,
 }
 
 SDXL_INSTRUCTIONS = """## Prompt Structure
@@ -134,15 +60,11 @@ Do NOT generate a negative prompt. Z-Image-Turbo uses guidance_scale=0.0, so neg
 
 def ensure_seed_data(data_dir: str) -> None:
     families_path = f"{data_dir}/families.json"
-    characters_path = f"{data_dir}/characters.json"
     system_prompts_path = f"{data_dir}/system_prompts.json"
 
     if not Path(families_path).exists():
         families.create_family("SDXL", SDXL_INSTRUCTIONS, True, path=families_path)
         families.create_family("Z-Image-Turbo", ZIT_INSTRUCTIONS, False, path=families_path)
-
-    if not Path(characters_path).exists():
-        storage.write_json(characters_path, [])
 
     workflows.ensure_seeded(f"{data_dir}/workflows.json")
 

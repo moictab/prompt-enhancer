@@ -1,21 +1,6 @@
-import {
-  MAX_REFERENCES,
-  announceReferences,
-  el,
-  formatCost,
-  loadReferences,
-  mergeReferences,
-  renderTake,
-  request,
-  startConversationFrom,
-  storeReferences,
-  toast,
-  toggleFavorite,
-  writeStored,
-} from "./common.js";
+import { el, formatCost, renderTake, request, startConversationFrom, toast, toggleFavorite } from "./common.js";
 
 const PAGE_SIZE = 25;
-const REUSE_KEY = "reuse-prompt";
 
 const $ = (id) => document.getElementById(id);
 
@@ -65,25 +50,6 @@ function filteredEntries() {
   });
 }
 
-// Stays on the page so several prompts can be collected; Crear picks them up
-// from storage, even if it is already open in another tab.
-function addToReferences(entry, prompt) {
-  const result = mergeReferences(loadReferences(), [prompt.positive_prompt]);
-  if (result.added) storeReferences(result.references);
-  announceReferences(result, " Los tienes en Crear, en Variaciones.");
-}
-
-function useReferencesInVariaciones(entry) {
-  storeReferences(entry.params.reference_prompts.slice(0, MAX_REFERENCES));
-  writeStored(sessionStorage, REUSE_KEY, {
-    mode: "variations",
-    family_id: entry.family_id,
-    llm_model: entry.llm_model,
-    temperature: entry.temperature,
-  });
-  window.location.href = "/";
-}
-
 async function deleteEntry(entry) {
   try {
     await request(`/api/history/${entry.id}`, { method: "DELETE" });
@@ -99,8 +65,6 @@ async function deleteEntry(entry) {
 
 const handlers = {
   onIterate: startConversationFrom,
-  onReference: addToReferences,
-  onUseReferences: useReferencesInVariaciones,
   onOpenConversation: (conversationId) => {
     window.location.href = `/conversar?id=${encodeURIComponent(conversationId)}`;
   },
@@ -117,8 +81,8 @@ function emptyMessage() {
     return el(
       "div",
       { class: "sheet-empty" },
-      el("p", { text: "Todavía no has generado nada." }),
-      el("p", {}, "Empieza en ", el("a", { href: "/", text: "Crear" }), ": cada prompt que generes quedará guardado aquí.")
+      el("p", { text: "Todavía no hay prompts." }),
+      el("p", {}, "Empieza en ", el("a", { href: "/conversar", text: "Conversar" }), ": cada prompt que te proponga el bot quedará guardado aquí.")
     );
   }
   return el(

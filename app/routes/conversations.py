@@ -35,7 +35,6 @@ class ConversationSettings(BaseModel):
     family_id: str
     llm_model: str
     temperature: float = Field(default=0.7, ge=0, le=2)
-    character_ids: list[str] = []
     auto_comment: bool = True
     engine: Engine = "openrouter"
     claude_model: str = Field(default="", max_length=80)
@@ -45,7 +44,6 @@ class ConversationSettingsUpdate(BaseModel):
     family_id: str | None = None
     llm_model: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
-    character_ids: list[str] | None = None
     title: str | None = Field(default=None, max_length=MAX_TITLE_LENGTH)
     auto_comment: bool | None = None
     engine: Engine | None = None
@@ -79,7 +77,7 @@ def create_conversation(req: ConversationSettings):
     _require_family(req.family_id)
     _require_engine(req.engine)
     return conversations.create(
-        req.family_id, _require_model(req.llm_model), req.temperature, req.character_ids,
+        req.family_id, _require_model(req.llm_model), req.temperature,
         auto_comment=req.auto_comment, engine=req.engine, claude_model=req.claude_model.strip(),
     )
 

@@ -1,34 +1,17 @@
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from .. import claude_code, comfy, families
 from ..config import get_settings
-from ..prompts import VARIATION_AXES
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
-# Which axes the Variaciones form starts with set to "varies"; the rest start fixed.
-DEFAULT_VARYING_AXES = {"outfit", "setting", "lighting", "pose"}
-
-
-@router.get("/", response_class=HTMLResponse)
-def index(request: Request):
-    settings = get_settings()
-    return templates.TemplateResponse(
-        request,
-        "index.html",
-        {
-            "families": families.list_families(),
-            "variation_axes": [
-                {"key": key, "label": label, "vary": key in DEFAULT_VARYING_AXES}
-                for key, label in VARIATION_AXES.items()
-            ],
-            "default_llm_model": settings.default_llm_model,
-            "default_vision_model": settings.default_vision_model,
-        },
-    )
+@router.get("/")
+def index():
+    # Conversar is the app's home since the one-shot Crear page went.
+    return RedirectResponse("/conversar")
 
 
 @router.get("/conversar", response_class=HTMLResponse)

@@ -1,7 +1,7 @@
 """What the Conversar bot is told, and how its replies are read.
 
 The system prompt is the user's editable personality (the "conversation" system
-prompt), then the family rules, characters, numbered notes and (when ComfyUI is
+prompt), then the family rules, numbered notes and (when ComfyUI is
 available) the workflow library, and last the fixed mechanics the app depends on --
 how to deliver a prompt, how to keep notes, how to title the conversation, how to
 run workflows -- placed last and declared to win, so neither the personality nor a
@@ -88,12 +88,6 @@ COMMENTS_OFF_RULE = (
     "Otherwise, don't say you'll comment on them when they arrive."
 )
 
-CHARACTERS_INSTRUCTION = (
-    "The user is working with these characters. Whenever one appears in a prompt you "
-    "propose, describe them exactly as written below, without modifying or paraphrasing "
-    "the text, and fill in any unspecified detail consistently."
-)
-
 LOOKING_RULE = (
     "- This turn is your look at a run's results: nothing can be launched on it (your tools are off). Say "
     "what you'd try next and let the user decide; don't say you're launching it."
@@ -133,30 +127,28 @@ CODE_FENCE_LINE = re.compile(r"^[ \t]*```[\w-]*[ \t]*$\n?", re.MULTILINE)
 
 def build_system_prompt(
     family: dict,
-    characters: list[dict],
     workflows: list[dict] | None = None,
     families: list[str] | None = None,
 ) -> str:
     """What stays the same from turn to turn (so the provider's prompt cache serves it):
-    the personality, the family's rules, the characters, the library and the mechanics.
+    the personality, the family's rules, the library and the mechanics.
     What changes -- the notes, the installed models with their stats, whether a title is
     still wanted -- goes at the end of the latest message instead (turn_context).
 
     workflows: the library ({name, description}) when the bot can run ComfyUI
     workflows (None when it can't: no ComfyUI configured, or a model without tools);
     families: the names of the families it can switch to (with use_family)."""
-    return "\n\n".join(system_sections(family, characters, workflows, families).values())
+    return "\n\n".join(system_sections(family, workflows, families).values())
 
 
 def system_sections(
     family: dict,
-    characters: list[dict],
     workflows: list[dict] | None = None,
     families: list[str] | None = None,
     extra_mechanics: str = "",
 ) -> dict[str, str]:
-    """The system prompt's sections, in order, by name (personality, family, characters,
-    library, families, mechanics; the optional ones only when they apply). Claude Code
+    """The system prompt's sections, in order, by name (personality, family, library,
+    families, mechanics; the optional ones only when they apply). Claude Code
     (claude_code.py) records its system prompt when a session starts, so it is told
     later which of them changed. extra_mechanics: lines added to the mechanics."""
     sections = {}
@@ -165,9 +157,6 @@ def system_sections(
         sections["personality"] = personality
     heading = f"## Model Family Rules: {family['name']}" if family.get("name") else "## Model Family Rules"
     sections["family"] = f"{heading}\n{FAMILY_RULES_INTRO}\n\n{family['instructions'].strip()}"
-    if characters:
-        lines = "\n".join(f"- {c['name']}: {c['text']}" for c in characters)
-        sections["characters"] = f"## Characters\n{CHARACTERS_INSTRUCTION}\n\n{lines}"
     if workflows is not None:
         lines = "\n".join(
             f"- {w['name']}" + (f" [{w['family']}]" if w.get("family") else "")

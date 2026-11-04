@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from app import characters, history
+from app import history
 
 
 def test_get_history_requires_auth(api_client):
@@ -31,21 +31,6 @@ def test_get_history_returns_entries_newest_first(api_client, auth_headers, tmp_
     assert response.status_code == 200
     body = response.json()
     assert [e["prompts"][0]["positive_prompt"] for e in body] == ["second result", "first result"]
-
-
-def test_get_characters_requires_auth(api_client):
-    response = api_client.get("/api/characters")
-
-    assert response.status_code == 401
-
-
-def test_get_characters_returns_list(api_client, auth_headers, tmp_path):
-    characters.create_character("Warrior", "a fierce warrior", path=str(tmp_path / "characters.json"))
-
-    response = api_client.get("/api/characters", auth=auth_headers)
-
-    assert response.status_code == 200
-    assert response.json()[0]["name"] == "Warrior"
 
 
 def test_get_openrouter_models_requires_auth(api_client):

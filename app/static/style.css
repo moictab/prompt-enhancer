@@ -1348,7 +1348,7 @@ a.btn-quiet { text-decoration: none; }
   .memory-form { flex-direction: column; align-items: stretch; }
 }
 
-/* Four sections don't fit beside the brand on a phone; "Crear" already leads home. */
+/* On a phone the sections need the width: the brand gives way (it only leads to Conversar, the first section). */
 @media (max-width: 480px) {
   .brand { display: none; }
   .topnav { margin-left: 0; }

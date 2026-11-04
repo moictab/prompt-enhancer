@@ -55,10 +55,6 @@
         <label for="chat-temperature">Creatividad <output id="chat-temperature-value" for="chat-temperature">0.7</output></label>
         <input id="chat-temperature" type="range" min="0" max="1" step="0.05" value="0.7">
       </div>
-      <div class="field chat-characters">
-        <span class="label" id="chat-characters-label">Personajes</span>
-        <div class="chips" id="chat-chips" role="group" aria-labelledby="chat-characters-label"></div>
-      </div>
       {% if comfy_configured %}
       <div class="chat-auto-comment">
         <label class="checkbox"><input type="checkbox" id="chat-auto-comment" checked aria-describedby="chat-auto-comment-hint"> Comentar las imágenes cuando lleguen</label>

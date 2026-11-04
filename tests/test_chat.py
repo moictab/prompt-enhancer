@@ -21,7 +21,7 @@ def _assistant(content):
 def test_system_prompt_puts_personality_first_family_rules_next_and_mechanics_last(mock_read):
     mock_read.return_value = "You are a grumpy art director."
 
-    result = chat.build_system_prompt(FAMILY, [])
+    result = chat.build_system_prompt(FAMILY)
 
     mock_read.assert_called_once_with("conversation")
     assert result.startswith(
@@ -39,7 +39,7 @@ def test_system_prompt_puts_personality_first_family_rules_next_and_mechanics_la
 
 @patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
 def test_system_prompt_tells_the_bot_to_keep_terse_notes_and_change_them_without_asking(mock_read):
-    result = chat.build_system_prompt(FAMILY, [])
+    result = chat.build_system_prompt(FAMILY)
 
     assert "Change them in your reply, right away and without asking" in result
     assert "telegraphic" in result
@@ -53,7 +53,7 @@ def test_system_prompt_tells_the_bot_to_keep_terse_notes_and_change_them_without
 @patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
 def test_system_prompt_lists_the_workflow_library_and_how_to_run_when_comfy_is_available(mock_read):
     result = chat.build_system_prompt(
-        FAMILY, [],
+        FAMILY,
         workflows=[{"name": "krea-2/txt2img", "description": "Text to image.", "model": "krea-2\\k.safetensors"},
                    {"name": "bare", "description": ""}],
     )
@@ -64,14 +64,14 @@ def test_system_prompt_lists_the_workflow_library_and_how_to_run_when_comfy_is_a
 
 @patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
 def test_system_prompt_shows_an_empty_library(mock_read):
-    result = chat.build_system_prompt(FAMILY, [], workflows=[])
+    result = chat.build_system_prompt(FAMILY, workflows=[])
 
     assert "## Workflow Library\n(empty)" in result
 
 
 @patch("app.chat.system_prompt.read_system_prompt", return_value="")
 def test_system_prompt_starts_with_the_family_rules_when_the_personality_is_empty(mock_read):
-    result = chat.build_system_prompt(FAMILY, [])
+    result = chat.build_system_prompt(FAMILY)
 
     assert result.startswith("## Model Family Rules: SDXL\n")
     assert "## How This Conversation Works\n" in result
@@ -80,17 +80,15 @@ def test_system_prompt_starts_with_the_family_rules_when_the_personality_is_empt
 @patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
 def test_a_title_is_asked_for_only_while_there_is_none_and_not_in_the_system_prompt(mock_read):
     # Asked in the turn's context: the system prompt stays the same once the title is there.
-    assert "<title>" not in chat.build_system_prompt(FAMILY, [])
+    assert "<title>" not in chat.build_system_prompt(FAMILY)
     assert chat.turn_context([], None, needs_title=True) == f"{chat.CONTEXT_HEADING}\n\n{chat.TITLE_RULE}"
     assert chat.turn_context([], None, needs_title=False) is None
 
 
 @patch("app.chat.system_prompt.read_system_prompt", return_value="persona")
-def test_system_prompt_lists_characters_and_the_notes_go_with_the_latest_message(mock_read):
-    result = chat.build_system_prompt(FAMILY, [{"name": "Lena", "text": "auburn hair, freckles"}])
+def test_the_notes_go_with_the_latest_message_not_the_system_prompt(mock_read):
+    result = chat.build_system_prompt(FAMILY)
 
-    assert "## Characters\n" in result
-    assert "- Lena: auburn hair, freckles" in result
     # The notes and the installed models change every turn: not in the (cached) system prompt.
     assert "## Your Notes" not in result
     context = chat.turn_context([{"text": "Likes hard light"}, {"text": "Hates lens flare"}], models="LoRAs:\n- x")
