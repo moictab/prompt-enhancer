@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 from app import chat
@@ -268,6 +269,78 @@ def test_llm_messages_summarize_tool_calls_when_tools_are_off():
 
     assert [m["role"] for m in messages] == ["user", "assistant", "assistant"]
     assert messages[1]["content"].startswith("Voy.\n\n[Tools used: inspect_workflow(")
+
+
+def _long_conversation(rounds):
+    """Rounds of: the user asks, the bot answers with a long block and launches it, the run's results."""
+    messages, runs = [], []
+    for n in range(1, rounds + 1):
+        positive = f"Photograph {n}: " + "a witch in a misty forest at dusk, " * 60
+        messages += [
+            _user(f"ronda {n}"),
+            {"role": "assistant", "content": f"Exploro la ronda {n}. " + "Razono mucho. " * 80
+                + f"\n\n<prompt>POSITIVE: {positive}</prompt>",
+             "parts": [{"type": "prompt", "positive_prompt": positive, "negative_prompt": ""}],
+             "steps": [{"content": f"Exploro la ronda {n}. " + "Razono mucho. " * 80
+                        + f"\n\n<prompt>POSITIVE: {positive}</prompt>",
+                        "tool_calls": [{"id": f"c{n}", "name": "run_workflow", "arguments": json.dumps(
+                            {"workflow": "krea-2/txt2img", "changes": {"positive": positive, "aspect": "2:3"}})}],
+                        "results": [json.dumps({"run": n})]}]},
+            {"role": "results", "run": n, "content": "", "images": [{"id": f"r{n}", "content_type": "image/png"}]},
+        ]
+        runs.append({"n": n, "workflow": "krea-2/txt2img", "status": "done",
+                     "jobs": [{"status": "success", "seed": n, "images": [f"r{n}"]}]})
+    return {**_conversation(*messages), "runs": runs}
+
+
+def test_a_call_summarized_in_text_names_the_prompt_it_runs_instead_of_repeating_it():
+    messages = chat.build_llm_messages(_long_conversation(1), load_image=lambda image: None, tools=False)
+    reply = messages[1]["content"]
+    assert '[Tools used: run_workflow({"workflow": "krea-2/txt2img", "changes": {"positive": "(prompt 1)", ' \
+           '"aspect": "2:3"}})]' in reply
+    assert reply.count("a witch in a misty forest") == 60  # once: in the block
+
+
+def test_a_long_conversations_older_part_goes_in_brief_and_stays_put_between_moves():
+    load = lambda image: None  # noqa: E731
+    short = chat.build_llm_messages(_long_conversation(10), load)
+    assert chat.compacted_until(_long_conversation(10)["messages"]) == 0
+    assert chat.COMPACTED_NOTE not in short[0]["content"]
+
+    conversation = _long_conversation(40)
+    cut = chat.compacted_until(conversation["messages"])
+    assert 0 < cut <= len(conversation["messages"]) - chat.COMPACT_MIN_MESSAGES
+    messages = chat.build_llm_messages(conversation, load)
+    assert messages[0]["content"].startswith(chat.COMPACTED_NOTE) and "ronda 1" in messages[0]["content"]
+    first_reply = messages[1]["content"]
+    assert first_reply.startswith("Exploro la ronda 1.") and len(first_reply) < 700
+    assert '<prompt id="1">Photograph 1: a witch' in first_reply and "…</prompt>" in first_reply
+    assert '"positive": "(prompt 1)"' in first_reply
+    assert "[Run 1 (krea-2/txt2img) finished: image 1 (seed 1).]" in messages[2]["content"]
+    assert "no longer attached" not in messages[2]["content"]  # a results line names its images already
+    # The latest messages go in full.
+    assert messages[-2]["content"].count("Razono mucho.") == 80
+    size = lambda replay: sum(len(m["content"]) for m in replay if isinstance(m["content"], str))  # noqa: E731
+    with patch.object(chat, "COMPACT_ABOVE", 10**9):
+        whole = chat.build_llm_messages(conversation, load)
+    assert size(messages) < size(whole) / 2
+
+    # The boundary decided for earlier messages never changes, and moves only now and then: what was
+    # sent stays the same from turn to turn (the prompt cache) until it does.
+    cuts = [chat.compacted_until(_long_conversation(n)["messages"]) for n in range(1, 41)]
+    assert cuts == sorted(cuts) and len(set(cuts)) < 10
+    stable = [n for n in range(2, 41) if cuts[n - 1] == cuts[n - 2]]
+    for n in stable[-3:]:
+        before = chat.build_llm_messages(_long_conversation(n - 1), load)
+        after = chat.build_llm_messages(_long_conversation(n), load)
+        assert list(after[:len(before) - 1]) == list(before[:-1])
+
+
+def test_get_prompt_gives_an_earlier_block_in_full():
+    conversation = _long_conversation(3)
+    found = chat.prompt_by_number(conversation, 2)
+    assert found["number"] == 2 and found["positive"].startswith("Photograph 2: a witch")
+    assert chat.prompt_by_number(conversation, 9) is None
 
 
 def test_llm_messages_append_the_current_turns_steps_in_full():

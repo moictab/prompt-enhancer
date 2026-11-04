@@ -1215,6 +1215,8 @@ function toolLine(part) {
       : `Sigue por su cuenta hasta conseguirlo: «${part.goal}» (como mucho ${part.max_images} imágenes y ${dollars(part.max_cost)})`;
   } else if (part.tool === "use_family") {
     text = `Ya trabajaba con la familia ${part.family}`;
+  } else if (part.tool === "get_prompt") {
+    text = `Ha releído la propuesta ${part.number}`;
   } else {
     text = `Ha usado ${part.tool}`;
   }

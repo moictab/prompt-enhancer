@@ -316,6 +316,12 @@ def test_the_seat_serves_one_turns_tools_and_closes_with_it(api_client, auth_hea
                                    driven=False, tools_allowed=False)
         refused = rpc(quiet.token, "tools/call", {"name": "run_workflow", "arguments": RUN_INPUT}, number=4).json()
         assert refused["result"]["isError"] and len(fake_comfy.submitted) == 1
+        # Looking up an earlier prompt in full works on any turn.
+        assert "get_prompt" in names
+        conversations.append_message(conversation_id, {"role": "assistant", "content": "x", "parts": [
+            {"type": "prompt", "positive_prompt": "a witch at dusk", "negative_prompt": ""}]})
+        found = rpc(quiet.token, "tools/call", {"name": "get_prompt", "arguments": {"number": 1}}, number=5).json()
+        assert json.loads(found["result"]["content"][0]["text"])["positive"] == "a witch at dusk"
 
         bot_seat.close_seat(seat)
         bot_seat.close_seat(quiet)

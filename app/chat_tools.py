@@ -321,6 +321,19 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_prompt",
+            "description": "One of your earlier prompt blocks in full, by its number: a long conversation's "
+                           "older part shows only their opening.",
+            "parameters": {
+                "type": "object",
+                "properties": {"number": {"type": "integer", "minimum": 1}},
+                "required": ["number"],
+            },
+        },
+    },
 ]
 
 
@@ -911,6 +924,12 @@ class ToolBox:
             result["note"] = f"Only the first {MAX_LISTED_MODELS}: search to narrow it down."
         return result, {"type": "tool", "tool": "list_comfy_models", "folder": folder, "search": search or "",
                         "found": len(matches)}
+
+    def _tool_get_prompt(self, number) -> tuple[dict, dict]:
+        found = chat.prompt_by_number(self._conversation(), number) if isinstance(number, int) else None
+        if found is None:
+            raise ToolError(f"There is no prompt {number} in this conversation.")
+        return found, {"type": "tool", "tool": "get_prompt", "number": number}
 
     def _tool_save_workflow(self, name: str, description: str, workflow: str | None = None,
                             changes: dict | None = None, replace: bool = False,

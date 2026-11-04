@@ -425,21 +425,148 @@ def reactions_text(reactions: list[dict], numbers: dict[str, int]) -> str:
 
 def _images_content(
     message: dict, numbers: dict[str, int], recent: set[str], load_image, with_metadata: bool,
-    installed: dict | None = None,
+    installed: dict | None = None, labels: bool = True, metadata_chars: int | None = None,
 ) -> tuple[list[dict], bool]:
-    """Text and image parts for a message's images; whether any image is attached."""
+    """Text and image parts for a message's images; whether any image is attached. labels=False:
+    no line for an image no longer attached (a run's results line already names it).
+    metadata_chars: each image's metadata cut to that many characters (a compacted message)."""
     content, attached_any = [], False
     for image in message.get("images") or []:
         number = numbers[image["id"]]
         uri = load_image(image) if image["id"] in recent else None
+        if not uri and not labels:
+            continue
         label = f"Image {number}" if uri else f"Image {number} (shared earlier, no longer attached)"
         metadata = image.get("metadata") if with_metadata else None
         text = image_metadata.describe(metadata, number, installed) if metadata else ""
+        if metadata_chars is not None and len(text) > metadata_chars:
+            text = text[:metadata_chars].rstrip() + "…"
         content.append({"type": "text", "text": f"{label}:\n{text}" if text else f"{label}:"})
         if uri:
             content.append({"type": "image_url", "image_url": {"url": uri}})
             attached_any = True
     return content, attached_any
+
+
+# --- compaction: a long conversation's older part, in brief ---------------------------------------
+#
+# Every turn re-sends the whole conversation, and on Claude Code every call of a turn re-reads its
+# session; a long conversation's replay grows past 100k tokens, most of it the bot's old replies and
+# the calls that launched them. So once the part replayed in full passes COMPACT_ABOVE characters, the
+# older messages go in brief, leaving about the latest COMPACT_KEEP in full: each of the bot's replies
+# as its first words and the opening of each prompt block (get_prompt gives one in full) and the
+# runs it launched; the user's messages, results and reactions as they were (images' metadata cut).
+# The boundary moves only then -- decided message by message from the start, so stored messages
+# always give the same one -- and the replay stays the same from turn to turn in between, as the
+# prompt cache needs (it is rewritten once each time it moves).
+COMPACT_ABOVE = 80_000
+COMPACT_KEEP = 30_000
+COMPACT_MIN_MESSAGES = 8  # the latest messages are never compacted
+PROMPT_GIST = 120
+PROSE_GIST = 200
+USER_GIST = 1500
+METADATA_GIST = 300
+COMPACTED_NOTE = (
+    "[This conversation is long, so its earlier part comes in brief: your replies as their first words, "
+    "the opening of each prompt block (get_prompt gives one in full) and the runs they launched; the user's "
+    "messages, the runs' results and the reactions as they were. What you learned is in your notes.]"
+)
+NUMBERED_BLOCK = re.compile(r'(<prompt id="(\d+)"[^>]*>)(.*?)(?:</prompt>|\Z)', re.DOTALL)
+
+
+def _replay_size(message: dict) -> int:
+    """About how many characters a stored message takes in the replay (what decides compaction)."""
+    if message["role"] == "assistant":
+        steps = message.get("steps") or [{"content": message.get("content")}]
+        return sum(len(s.get("content") or "") + sum(len(c.get("arguments") or "") for c in s.get("tool_calls") or [])
+                   for s in steps)
+    size = len(message.get("content") or "") + (120 if message["role"] == "results" else 0)
+    return size + sum(40 + len(json.dumps(i.get("metadata") or {}, ensure_ascii=False))
+                      for i in message.get("images") or [])
+
+
+def compacted_until(messages: list[dict]) -> int:
+    """How many of the first messages go in brief (see COMPACT_ABOVE)."""
+    sizes = [_replay_size(m) for m in messages]
+    start, full = 0, 0
+    for index, size in enumerate(sizes):
+        full += size
+        if full > COMPACT_ABOVE:
+            while start <= index - COMPACT_MIN_MESSAGES and full > COMPACT_KEEP:
+                full -= sizes[start]
+                start += 1
+    return start
+
+
+def _normalized(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
+def _block_positive(body: str) -> str:
+    """A prompt block's positive text (what run_workflow's changes.positive repeats)."""
+    positive = re.split(r"\n\s*NEGATIVE:", body, maxsplit=1)[0]
+    return re.sub(r"^\s*POSITIVE:\s*", "", positive).strip()
+
+
+def _learn_blocks(content: str, known: dict[str, int]) -> None:
+    """Remember each numbered block's positive by its number, for the calls that run it."""
+    for match in NUMBERED_BLOCK.finditer(content):
+        positive = _block_positive(match.group(3))
+        if positive:
+            known.setdefault(_normalized(positive), int(match.group(2)))
+
+
+def _call_text(call: dict, known: dict[str, int], brief: bool = False) -> str:
+    """A tool call in the text replay: a prompt it runs named by its block's number instead of
+    repeated (else cut), a whole workflow by its size. brief: only what says what it ran."""
+    name, raw = call["name"], call.get("arguments") or ""
+    try:
+        args = json.loads(raw or "{}")
+    except ValueError:
+        args = None
+    if not isinstance(args, dict):
+        return f"{name}({raw[:200]}{'…' if len(raw) > 200 else ''})"
+
+    def shorten(holder: dict) -> None:
+        for key in ("positive", "negative", "prompt"):
+            value = holder.get(key)
+            if isinstance(value, str) and len(value) > 80:
+                number = known.get(_normalized(value))
+                holder[key] = f"(prompt {number})" if number else value[:80].rstrip() + "…"
+
+    shorten(args)
+    changes = args.get("changes") if isinstance(args.get("changes"), dict) else None
+    if changes:
+        shorten(changes)
+    if isinstance(args.get("graph"), dict):
+        args["graph"] = f"(a workflow of {len(args['graph'])} nodes)"
+    if brief:
+        kept = {k: args[k] for k in ("workflow", "graph", "count", "lora", "prompt", "name", "run") if k in args}
+        if changes:
+            kept.update({k: changes[k] for k in ("positive", "model", "aspect") if k in changes})
+        args = kept
+    return f"{name}({json.dumps(args, ensure_ascii=False)})"
+
+
+def _brief_reply(steps: list[dict], numbered, known: dict[str, int]) -> str:
+    """An old reply of the bot, compacted: its first words, its blocks' openings, its calls."""
+    pieces, prose_left = [], PROSE_GIST
+    for step in steps:
+        content = PROMPT_OPEN_PATTERN.sub(numbered, step.get("content") or "")
+        _learn_blocks(content, known)
+        prose = " ".join(NUMBERED_BLOCK.sub(" ", content).split())
+        if prose and prose_left > 0:
+            gist = prose[:prose_left]
+            prose_left -= len(gist)
+            pieces.append(gist + ("…" if len(gist) < len(prose) else ""))
+        for match in NUMBERED_BLOCK.finditer(content):
+            positive = " ".join(_block_positive(match.group(3)).split())
+            gist = positive[:PROMPT_GIST] + ("…" if len(positive) > PROMPT_GIST else "")
+            pieces.append(f"{match.group(1)}{gist}</prompt>")
+        calls = step.get("tool_calls") or []
+        if calls:
+            pieces.append(f"[Tools used: {'; '.join(_call_text(c, known, brief=True) for c in calls)}]")
+    return "\n".join(pieces)
 
 
 def _flatten(content: list[dict]) -> str | list[dict]:
@@ -455,11 +582,16 @@ def _tool_message_content(name: str, result_text: str, current: bool) -> str:
     return json.dumps(OMITTED_RESULT)
 
 
-def _steps_messages(steps: list[dict], numbered, structured: bool, current: bool) -> list[dict]:
-    """An assistant reply made in steps (text, tool calls, their results) as chat messages."""
+def _steps_messages(steps: list[dict], numbered, structured: bool, current: bool,
+                    known: dict[str, int] | None = None) -> list[dict]:
+    """An assistant reply made in steps (text, tool calls, their results) as chat messages.
+    known: the prompt blocks' positives so far, by number (filled here), so a call summarized in
+    text names the block it runs instead of repeating it."""
+    known = {} if known is None else known
     out = []
     for step in steps:
         content = PROMPT_OPEN_PATTERN.sub(numbered, step.get("content") or "")
+        _learn_blocks(content, known)
         calls = step.get("tool_calls") or []
         if structured and calls:
             out.append({
@@ -478,7 +610,7 @@ def _steps_messages(steps: list[dict], numbered, structured: bool, current: bool
                 })
         else:
             if calls:
-                done = "; ".join(f"{c['name']}({c['arguments']})" for c in calls)
+                done = "; ".join(_call_text(c, known) for c in calls)
                 content = f"{content}\n\n[Tools used: {done}]".strip()
             if content:
                 out.append({"role": "assistant", "content": content})
@@ -513,7 +645,9 @@ def build_llm_messages(
     runs = {r["n"]: r for r in conversation.get("runs") or []}
     tail: list[dict] = []
     proposal = 0
+    known: dict[str, int] = {}  # the prompt blocks' positives so far, by number
     last_answer = max((i for i, m in enumerate(all_messages) if m["role"] == "assistant"), default=-1)
+    brief_until = compacted_until(all_messages)
 
     def number_block(match: re.Match) -> str:
         nonlocal proposal
@@ -531,19 +665,29 @@ def build_llm_messages(
             messages.append({"role": "user", "content": _flatten(content)})
 
     for index, message in enumerate(all_messages):
+        brief = index < brief_until
         if message["role"] == "assistant":
             steps = message.get("steps") or [{"content": message["content"]}]
-            messages += _steps_messages(steps, number_block, tools, current=False)
+            if brief:
+                text = _brief_reply(steps, number_block, known)
+                if text:
+                    messages.append({"role": "assistant", "content": text})
+            else:
+                messages += _steps_messages(steps, number_block, tools, current=False, known=known)
             continue
         if message["role"] == "results":
             # Automatic: the bot looks (or looked) at it before the user wrote anything.
             following = all_messages[index + 1] if index + 1 < len(all_messages) else None
             automatic = following is None or following["role"] == "assistant"
             text = results_text(runs.get(message.get("run")), numbers, automatic=automatic)
-            images, _ = _images_content(message, numbers, recent, load_image, with_metadata=False)
+            images, _ = _images_content(message, numbers, recent, load_image, with_metadata=False, labels=False)
             add_user([{"type": "text", "text": text}, *images])
             continue
         text = message["content"].strip()
+        if brief and len(text) > USER_GIST:
+            text = text[:USER_GIST].rstrip() + "…"
+        if index == 0 and brief_until:
+            text = f"{COMPACTED_NOTE}\n\n{text}" if text else COMPACTED_NOTE
         if message.get("continue"):
             text = f"{CONTINUE_NOTE}\n\n{text}" if text else CONTINUE_NOTE
         if message.get("balance"):
@@ -563,7 +707,7 @@ def build_llm_messages(
             line = reactions_text(message["reactions"], numbers)
             text = f"{text}\n\n{line}" if text else line
         images, attached = _images_content(message, numbers, recent, load_image, with_metadata=True,
-                                           installed=installed)
+                                           installed=installed, metadata_chars=METADATA_GIST if brief else None)
         if message is all_messages[-1]:  # the message being answered
             tail += _referenced_images(message, all_messages, numbers, recent, load_image, installed)
         parts = ([{"type": "text", "text": text}] if text else []) + images
@@ -578,8 +722,24 @@ def build_llm_messages(
         messages[-1]["content"] = [*latest, *tail]
         messages.volatile_tail = len(tail)
     if current_steps:
-        messages += _steps_messages(current_steps, number_block, tools, current=True)
+        messages += _steps_messages(current_steps, number_block, tools, current=True, known=known)
     return messages
+
+
+def prompt_by_number(conversation: dict, number: int) -> dict | None:
+    """The bot's prompt block number N (as numbered in the replay and the chat), in full."""
+    count = 0
+    for message in conversation["messages"]:
+        if message["role"] != "assistant":
+            continue
+        for part in message.get("parts") or []:
+            if part["type"] == "prompt":
+                count += 1
+                if count == number:
+                    return {"number": number, "positive": part.get("positive_prompt", ""),
+                            "negative": part.get("negative_prompt", ""),
+                            **({"model": part["model"]} if part.get("model") else {})}
+    return None
 
 
 class ChatMessages(list):

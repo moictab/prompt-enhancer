@@ -39,7 +39,7 @@ SEEN_WAIT_SECONDS = 5
 DONE_WAIT_SECONDS = 5
 # Tools that only look: not part of the reply as stored (nor replayed on OpenRouter, which
 # doesn't have them).
-LOOKUPS = ("get_image", "get_balance_data")
+LOOKUPS = ("get_image", "get_balance_data", "get_prompt")
 
 LOOKUP_TOOLS = [
     types.Tool(
@@ -58,6 +58,9 @@ LOOKUP_TOOLS = [
                     "review and the user's reaction, then counts per ingredient.",
         input_schema={"type": "object", "properties": {}},
     ),
+    *[types.Tool(name=t["function"]["name"], description=t["function"]["description"],
+                 input_schema=t["function"]["parameters"]) for t in chat_tools.TOOLS
+      if t["function"]["name"] == "get_prompt"],
 ]
 
 
@@ -171,6 +174,8 @@ def _tool_definitions(seat: Seat) -> list[types.Tool]:
     if seat.toolbox is not None:
         for tool in chat_tools.TOOLS:
             function = tool["function"]
+            if function["name"] in LOOKUPS:  # listed with the lookups, with or without ComfyUI
+                continue
             tools.append(types.Tool(name=function["name"], description=function["description"],
                                     input_schema=function["parameters"]))
     return tools + LOOKUP_TOOLS
@@ -221,6 +226,11 @@ async def _call_tool(ctx, params) -> types.CallToolResult:
         found = balance.ledger(conversations.get(seat.conversation_id) or {"id": seat.conversation_id,
                                                                            "messages": [], "runs": []})
         return _text(found.text if found else "The runs here have made no images yet.")
+    if name == "get_prompt":
+        conversation = conversations.get(seat.conversation_id) or {"messages": []}
+        number = arguments.get("number")
+        found = chat.prompt_by_number(conversation, number) if isinstance(number, int) else None
+        return _text(found or {"error": f"There is no prompt {number} in this conversation."}, error=not found)
     if not any(t["function"]["name"] == name for t in chat_tools.TOOLS):
         return _text({"error": f"There is no tool {name}."}, error=True)
     result, _ = await anyio.to_thread.run_sync(seat.run, name, arguments)
