@@ -131,6 +131,8 @@ def summary(conversation: dict) -> dict:
                      if (working := autonomy(conversation)) else None),
         # The user ended it (Terminar: the bot's balance, when runs made images); writing reopens it.
         "finished_at": conversation.get("finished_at"),
+        # Claude Code's limit was reached: the last message is answered again then (retry_later).
+        "retry_at": conversation.get("retry_at"),
     }
 
 
@@ -187,6 +189,39 @@ def set_claude_code(conversation_id: str, state: dict | None, root: str | None =
         return conversation
 
 
+def set_retry(conversation_id: str, at: int | None, root: str | None = None) -> dict | None:
+    """When to answer the last message again by itself (retry_later.py: Claude Code's limit was
+    reached, epoch seconds), or None for never. A reply, or a message from the user, clears it."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return None
+        if at is None:
+            conversation.pop("retry_at", None)
+        else:
+            conversation["retry_at"] = at
+        storage.write_json(_path(conversation_id, root), conversation)
+        return conversation
+
+
+def discard_last_reply(conversation_id: str, root: str | None = None) -> tuple[dict, dict] | None:
+    """Take the bot's last reply off the conversation (to have it answer again: "Rehacer"),
+    marking the message it answered as answered again (redo: how many times). Returns the
+    reply taken and the conversation, or None when the last message isn't a reply. Its cost stays
+    in the conversation's: it was spent."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None or not conversation["messages"] or conversation["messages"][-1]["role"] != "assistant":
+            return None
+        reply = conversation["messages"].pop()
+        if conversation["messages"]:
+            answered = conversation["messages"][-1]
+            answered["redo"] = answered.get("redo", 0) + 1
+        conversation["updated_at"] = _now()
+        storage.write_json(_path(conversation_id, root), conversation)
+        return reply, conversation
+
+
 def append_message(
     conversation_id: str, message: dict, title: str | None = None, root: str | None = None
 ) -> dict | None:
@@ -207,6 +242,8 @@ def append_message(
                 conversation["finished_at"] = now
             else:
                 conversation.pop("finished_at", None)
+        if message.get("role") in ("user", "assistant"):
+            conversation.pop("retry_at", None)  # answered, or the user's next message will be
         conversation["messages"].append({"id": str(uuid.uuid4()), "timestamp": now, **message})
         if message.get("cost") is not None:
             conversation["cost"] = (conversation["cost"] or 0) + message["cost"]

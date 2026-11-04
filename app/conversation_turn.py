@@ -32,8 +32,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import (catalog, chat, chat_tools, claude_code, comfy, conversations, families, history, memory, runs,
-               workflows)
+from . import (catalog, chat, chat_tools, claude_code, comfy, conversations, families, history, memory,
+               retry_later, runs, workflows)
 from .config import get_settings
 from .openrouter_client import StreamEnd, list_models, stream_chat
 
@@ -310,6 +310,8 @@ def _turn(conversation_id: str, automatic: bool):
         "comments_off": bool(toolbox) and not conversations.comments_on_results(conversation),
         # Its look at a run's results launches nothing: it shouldn't say it will.
         "looking": bool(toolbox) and automatic and not autonomous,
+        # The user discarded its reply to this message ("Rehacer") and wants another.
+        "redo": bool(last.get("redo")),
     }
     load_image = _image_loader(conversation_id)
     on_claude = claude_code.engine(conversation)
@@ -335,6 +337,9 @@ def _turn(conversation_id: str, automatic: bool):
     used_tools = any(s["tool_calls"] for s in steps)
     if failure and not used_tools:
         _settle_autonomy(conversation_id)
+        if failure.get("retry_at"):  # Claude Code's limit: answered again once it resets
+            conversations.set_retry(conversation_id, failure["retry_at"])
+            retry_later.schedule(conversation_id, failure["retry_at"])
         yield {"type": "error", **failure}
         return
     if not used_tools and not "".join(s["text"] for s in steps).strip():
@@ -583,6 +588,9 @@ def on_run_finished(conversation_id: str, run: dict) -> None:
     in one hold of the lock, and flagged as commenting before the images appear, so the
     chat never sees results with no comment coming (and stop checking back). With the
     conversation's automatic comments off, the images wait for the user's next message."""
+    # A run of a reply the user discarded ("Rehacer"): its images don't come into the chat.
+    if run.get("discarded"):
+        return
     # A retried download: its images go into the results message already in the chat.
     if conversations.set_results_images(conversation_id, run["n"], run["images"]):
         return

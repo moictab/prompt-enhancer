@@ -113,6 +113,8 @@ function settings() {
 }
 
 const CLAUDE_CODE = "claude-code";
+// A reply stopped by Claude Code's usage limit is retried this long after it resets (retry_later.MARGIN_SECONDS).
+const RETRY_MARGIN_S = 60;
 // Images the bot may make on its own after each message, by default (conversations.INITIATIVE_IMAGES).
 const INITIATIVE_IMAGES = 24;
 
@@ -138,6 +140,47 @@ function formatWhen(timestamp) {
   return today
     ? date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })
     : date.toLocaleDateString("es-ES", { day: "numeric", month: "short" });
+}
+
+// When a moment given in epoch seconds comes: "a las 17:30" today, "el jueves 6 a las 6:00" otherwise.
+function whenItComes(epochSeconds) {
+  const date = new Date(epochSeconds * 1000);
+  if (Number.isNaN(date.getTime())) return "";
+  const time = `a las ${date.toLocaleTimeString("es-ES", { hour: "numeric", minute: "2-digit" })}`;
+  if (new Date().toDateString() === date.toDateString()) return time;
+  return `el ${date.toLocaleDateString("es-ES", { weekday: "long", day: "numeric" })} ${time}`;
+}
+
+// What Claude Code's subscription has used, as its latest turn reported it (the account's, from any
+// conversation): "Uso: 13 % de las 5 h, 1 % de la semana", amber from 80 %, red once it ran out.
+const USAGE_WINDOWS = {
+  five_hour: "las 5 h",
+  seven_day: "la semana",
+  seven_day_opus: "la semana con Opus",
+  seven_day_sonnet: "la semana con Sonnet",
+};
+
+function usageLabel(limits) {
+  const windows = Object.entries(limits?.windows || {}).filter(
+    ([name, w]) => USAGE_WINDOWS[name] && typeof w?.used === "number"
+  );
+  if (!windows.length) return null;
+  const percent = (w) => `${Math.round(w.used * 100)} %`;
+  const out = windows.find(([, w]) => w.status === "rejected");
+  const high = windows.some(([, w]) => w.used >= 0.8);
+  const checked = formatWhen(limits.checked_at);
+  return el("span", {
+    class: `engine-usage${out ? " is-out" : high ? " is-high" : ""}`,
+    title: [
+      ...windows.map(([name, w]) => `${percent(w)} de ${USAGE_WINDOWS[name]}: se renueva ${whenItComes(w.resets_at)}`),
+      checked && `Según la última respuesta de Claude Code (${checked}).`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    text: out
+      ? `Claude Code agotado hasta ${whenItComes(out[1].resets_at)}`
+      : `Uso: ${windows.map(([name, w]) => `${percent(w)} de ${USAGE_WINDOWS[name]}`).join(", ")}`,
+  });
 }
 
 function proposalCount(messages) {
@@ -1182,11 +1225,17 @@ function renderLog() {
     })
   );
   const last = messages.at(-1);
+  const tasked = conversation?.autonomy?.active && conversation.autonomy.kind !== "initiative";
+  if (last?.role === "assistant" && !live && !isBusy(conversation) && !tasked) {
+    ui.log.lastElementChild?.append(redoBar(last));
+  }
   if (live) {
     renderLive(live);
     ui.log.append(live.node);
   } else if (conversation.commenting || conversation.replying) {
     ui.log.append(pendingReply(conversation.commenting)); // until the chat picks the reply up
+  } else if (conversation.retry_at && ["user", "results"].includes(last.role)) {
+    ui.log.append(limitWait(conversation.retry_at));
   } else if (last.role === "user") {
     const failure = state.failures.get(conversation.id);
     ui.log.append(failedReply(failure?.detail || null, failure?.requestId || null));
@@ -1235,12 +1284,17 @@ function schedulePoll() {
   state.pollTimer = 0;
   const conversation = state.conversation;
   if (!conversation || state.live.has(conversation.id)) return;
-  if (!(conversation.commenting || conversation.replying || hasPendingRuns())) return;
+  let wait = POLL_MS;
+  if (!(conversation.commenting || conversation.replying || hasPendingRuns())) {
+    if (!conversation.retry_at) return;
+    // Waiting for Claude Code's limit to reset: look again when the server retries the reply.
+    wait = Math.min(Math.max((conversation.retry_at + RETRY_MARGIN_S) * 1000 - Date.now(), POLL_MS), 10 * 60_000);
+  }
   state.pollTimer = setTimeout(async () => {
     state.pollTimer = 0;
     if (document.visibilityState === "visible") await refreshFromServer();
     schedulePoll();
-  }, POLL_MS);
+  }, wait);
 }
 
 // ---------- header, settings, thread list ----------
@@ -1256,6 +1310,7 @@ function renderHead() {
     ...[
       el("span", { text: familyName(current.family_id) }),
       el("span", { title: onClaude(current) ? "Responde Claude Code con tu suscripción" : current.llm_model, text: engineLabel(current) }),
+      onClaude(current) && usageLabel(conversation?.claude_code_limits),
       conversation?.cost && el("span", { text: formatCost(conversation.cost) }),
     ].filter(Boolean)
   );
@@ -1798,6 +1853,65 @@ async function settle(live, outcome, { picked, onRejected }) {
     if (stick) scrollToBottom();
     schedulePoll(); // a reply still under way on the server is picked up again from there
   }
+}
+
+// Claude Code ran out of the subscription's usage: the server answers again once the limit resets.
+function limitWait(retryAt) {
+  return el(
+    "div",
+    { class: "msg-failed" },
+    el("p", {
+      class: "notice",
+      text: `Claude Code ha agotado el uso de tu suscripción. Lo reintentará solo ${whenItComes(retryAt + RETRY_MARGIN_S)}.`,
+    }),
+    el("button", { type: "button", class: "btn-secondary", text: "Reintentar ahora", onclick: retryReply }),
+    el("button", { type: "button", class: "btn-quiet", text: "No reintentar", onclick: cancelRetry })
+  );
+}
+
+async function cancelRetry(event) {
+  const conversation = state.conversation;
+  if (!conversation) return;
+  setBusy(event.currentTarget, true);
+  try {
+    await request(`/api/conversations/${conversation.id}/retry`, { method: "DELETE" });
+    conversation.retry_at = null;
+  } catch (err) {
+    toast(err.message, { error: true });
+  }
+  renderLog();
+  schedulePoll();
+}
+
+// Rehacer: discard the bot's last reply and have it answer again, differently. The server cancels
+// the runs it launched that are still pending and undoes its notes; a second press confirms that.
+function redoBar(message) {
+  const pending = (message.parts || []).filter(
+    (p) => p.type === "run" && runByNumber(p.run)?.status === "pending"
+  ).length;
+  const notes = (message.notes || []).length + (message.note_changes || []).length;
+  const label = "Rehacer la respuesta";
+  const title = "Descarta esta respuesta y pide otra distinta";
+  const confirmLabel = pending
+    ? `Cancela ${pending === 1 ? "1 ejecución" : `${pending} ejecuciones`}: ¿seguir?`
+    : "Deshace sus notas: ¿seguir?";
+  return el(
+    "div",
+    { class: "msg-redo" },
+    pending || notes
+      ? confirmButton(label, redoReply, { confirmLabel, className: "btn-quiet", title })
+      : el("button", { type: "button", class: "btn-quiet", title, onclick: redoReply }, label)
+  );
+}
+
+async function redoReply() {
+  const conversation = state.conversation;
+  if (!conversation || isBusy(conversation) || conversation.messages.at(-1)?.role !== "assistant") return;
+  state.failures.delete(conversation.id);
+  conversation.messages.pop(); // the server takes it off too; the stream brings the new one
+  follow(conversation.id, `/api/conversations/${conversation.id}/redo`, { onRejected: () => refreshFromServer() });
+  renderLog();
+  scrollToBottom();
 }
 
 async function retryReply(event) {

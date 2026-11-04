@@ -944,6 +944,9 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .chat-heading { flex: 1; min-width: 0; }
 .chat-head h1 { overflow: hidden; font-size: var(--step-1); font-stretch: 112%; text-overflow: ellipsis; white-space: nowrap; }
 .chat-meta { display: flex; flex-wrap: wrap; gap: 0.1rem 0.9rem; margin-top: 0.1rem; color: var(--paper-dim); font-size: var(--step--1); font-variant-numeric: tabular-nums; }
+.engine-usage.is-high { color: var(--safelight); }
+.engine-usage.is-out { color: var(--stop); }
+.msg-redo { margin-top: 0.35rem; }
 .threads-toggle { display: none; }
 
 .chat-settings {

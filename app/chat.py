@@ -214,8 +214,15 @@ def autonomy_text(working: dict, automatic: bool, spent: bool) -> str:
             "with stop: true.")
 
 
+# The user discarded the bot's reply to this message ("Rehacer") and asked for another.
+REDO_RULE = ("The user discarded your previous reply to this message and asked you to answer it again: whatever "
+             "it launched was cancelled and the notes it took or changed were undone. Answer again, differently: "
+             "a different take, not the same reply reworded.")
+
+
 def turn_context(notes: list[dict], models: str | None = None, needs_title: bool = False,
-                 autonomy: str | None = None, comments_off: bool = False, looking: bool = False) -> str | None:
+                 autonomy: str | None = None, comments_off: bool = False, looking: bool = False,
+                 redo: bool = False) -> str | None:
     """What changes from turn to turn, sent at the end of the latest message: the title
     request while the conversation has none, that a run's images won't come back on their
     own (comments_off: the conversation's automatic comments are off), that this turn can't
@@ -224,6 +231,8 @@ def turn_context(notes: list[dict], models: str | None = None, needs_title: bool
     one) and the installed models, as catalog.prompt_section() writes them (with how the
     images made with each went)."""
     sections = [TITLE_RULE] if needs_title else []
+    if redo:
+        sections.append(REDO_RULE)
     if comments_off:
         sections.append(COMMENTS_OFF_RULE)
     if looking:

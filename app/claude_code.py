@@ -32,14 +32,16 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
 import threading
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
-from . import bot_seat, chat, conversations, request_log
+from . import bot_seat, chat, conversations, request_log, storage
 from .config import get_settings
 from .openrouter_client import StreamEnd
 
@@ -158,7 +160,8 @@ def _context(conversation: dict, state: dict, sections: dict[str, str], parts: d
               or state.get("turns_since_context", 0) + 1 >= RESEND_EVERY)
     text = chat.turn_context(parts["notes"] if resend else [], parts.get("models") if resend else None,
                              needs_title=parts["needs_title"], autonomy=parts.get("autonomy"),
-                             comments_off=parts.get("comments_off", False), looking=parts.get("looking", False))
+                             comments_off=parts.get("comments_off", False), looking=parts.get("looking", False),
+                             redo=parts.get("redo", False))
     extra = []
     if not new_session:
         started = state.get("sections") or {}
@@ -257,6 +260,51 @@ def _failure_text(result: dict | None, stderr: str, code: int | None) -> str:
         return f"Claude Code: {text}"[:600]
     tail = " ".join(stderr.split())[-400:]
     return f"Claude Code stopped (exit code {code}){': ' + tail if tail else ''}."
+
+
+def limits_path() -> Path:
+    return Path(get_settings().data_dir, "claude-code", "limits.json")
+
+
+def save_limits(info: dict) -> None:
+    """The subscription's usage, as the latest turn reported it (the account's, whichever
+    conversation it came from): each window's share used and when it resets."""
+    windows = {name: {"used": w.get("utilization"), "resets_at": w.get("resetsAt"), "status": w.get("status")}
+               for name, w in (info.get("unifiedWindows") or {}).items() if isinstance(w, dict)}
+    if not windows and info.get("rateLimitType"):
+        windows[info["rateLimitType"]] = {"used": info.get("utilization"), "resets_at": info.get("resetsAt"),
+                                          "status": info.get("status")}
+    try:
+        storage.write_json(str(limits_path()), {
+            "checked_at": datetime.now(timezone.utc).isoformat(), "status": info.get("status"),
+            "resets_at": info.get("resetsAt"), "windows": windows})
+    except OSError as e:
+        logger.warning("claude code limits not saved: %r", e)
+
+
+def limits() -> dict | None:
+    return storage.read_json(str(limits_path()), default=None)
+
+
+LIMIT_WORDS = re.compile(r"usage limit|limit reached|hit your limit|out of usage", re.IGNORECASE)
+
+
+def limit_resets(result: dict | None, rate_limit: dict | None, stderr: str) -> int | None:
+    """When a turn failed because the subscription's limit was reached: when it resets (epoch
+    seconds), if known."""
+    info = rate_limit or {}
+    windows = [w for w in (info.get("unifiedWindows") or {}).values() if isinstance(w, dict)]
+    if info.get("status") == "rejected":
+        blocked = [w.get("resetsAt") for w in windows if w.get("status") == "rejected" and w.get("resetsAt")]
+        resets = max(blocked) if blocked else info.get("resetsAt")
+        return int(resets) if resets else None
+    text = f"{(result or {}).get('result') or ''} {stderr}"
+    if not LIMIT_WORDS.search(text):
+        return None
+    stamp = re.search(r"\|(\d{10})\b", text)  # "Claude AI usage limit reached|1793809800"
+    if stamp:
+        return int(stamp.group(1))
+    return int(info["resetsAt"]) if info.get("resetsAt") else None
 
 
 def _session_lost(text: str, stderr: str) -> bool:
@@ -398,6 +446,11 @@ def run(conversation: dict, family: dict, toolbox, library: list[dict],
                                    load_image, installed, automatic=automatic, tools_allowed=tools_allowed,
                                    fresh=True))
         failure = {"detail": _failure_text(final, stderr, process.returncode if process else None)}
+        resets = limit_resets(final, rate_limit, stderr)
+        if resets:  # the subscription's limit: answered again once it resets (retry_later)
+            failure["retry_at"] = resets
+    if rate_limit:
+        save_limits(rate_limit)
     if failure:
         failure["request_id"] = record.id
         logger.warning("claude code turn failed conversation_id=%s detail=%s", conversation_id, failure["detail"])

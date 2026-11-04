@@ -560,6 +560,16 @@ async def retry_reply(conversation_id: str) -> dict:
     return _conversation_view(await _conversation(conversation_id), since=before)
 
 
+@server.tool(annotations=LLM)
+async def redo_reply(conversation_id: str) -> dict:
+    """Discard the bot's last reply and have it answer again, differently: the runs that reply
+    launched and are still pending are cancelled, the notes it took or changed are undone, its
+    history entry goes. Returns the new reply."""
+    before = len((await _conversation(conversation_id))["messages"]) - 1
+    _reply(await _call("POST", f"/api/conversations/{conversation_id}/redo"))
+    return _conversation_view(await _conversation(conversation_id), since=before)
+
+
 @server.tool(annotations=WRITE)
 async def update_conversation(
     conversation_id: str,

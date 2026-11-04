@@ -43,7 +43,7 @@ def test_after_a_message_the_bot_goes_on_alone_until_the_budget_is_spent(api_cli
     assert last_look["tool_choice"] == "none"
     assert "The budget is spent" in message_text(last_look["messages"][-1])
     # What it launched by itself waits behind what someone asked for.
-    assert fake_comfy.priorities == ["high", "high", "normal"]
+    assert fake_comfy.priorities == ["high", "high", "low"]
     ended = conversations.get(conversation_id)["autonomy"]
     assert ended["active"] is False and ended["end_reason"] == "images" and ended["images"] == 3
 
@@ -103,3 +103,16 @@ def test_the_budget_is_a_setting_of_each_conversation(api_client, auth_headers, 
     assert too_many.status_code == 422
     # Conversations from before the setting get the default.
     assert conversations.initiative({"messages": []}) == 24
+
+
+def test_of_a_big_batch_only_the_first_images_go_ahead_of_other_conversations(api_client, auth_headers, tmp_path,
+                                                                             fake_comfy):
+    """In comfy-gateway's queue a project's jobs of one level go in the order sent: an exploring batch
+    at high would hold up a couple of images another conversation asked for."""
+    workflows.ensure_seeded()
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path), initiative_images=0)["id"]
+    script = Script(("Exploro tres direcciones:", [_launch(2), _launch(2, "call-2", "a witch at noon"),
+                                                    _launch(1, "call-3", "a witch at night")]))
+    with patch("app.conversation_turn.stream_chat", script):
+        _send(api_client, auth_headers, conversation_id, "explora")
+    assert fake_comfy.priorities == ["high", "high", "normal", "normal", "normal"]

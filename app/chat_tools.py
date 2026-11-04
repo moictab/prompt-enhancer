@@ -33,6 +33,9 @@ MODEL_FOLDERS = list(comfy.MODEL_FOLDERS)
 MAX_SEED = 2 ** 48
 CALIBRATION_WEIGHTS = [0, 0.25, 0.5, 0.75, 1.0]
 MAX_CALIBRATION_WEIGHTS = 6
+# Of a reply the user asked for, how many images go to ComfyUI at high priority (they are waiting
+# for them); the rest of its batch, at normal.
+WAITED_FOR_IMAGES = 2
 # Calibrations run at idle priority: only when nothing else wants the GPU, so they may wait long.
 CALIBRATION_TIMEOUT_SECONDS = 12 * 3600
 
@@ -386,6 +389,9 @@ class ToolBox:
         # A turn the bot takes by itself (its look at a run's results): what it launches then goes behind
         # what someone asked for in ComfyUI's queue.
         self.automatic = False
+        # In a turn someone asked for, the images they are waiting for go first; the rest of a big
+        # batch goes behind other conversations' few (comfy.PRIORITY_REST).
+        self.waited_for = WAITED_FOR_IMAGES
 
     definitions = TOOLS
 
@@ -660,23 +666,33 @@ class ToolBox:
             job_graph.set_output_prefix(comfy.output_prefix(folder, number, seed))
             variants.append((job_graph, seed, {}))
         size = graph.shape()
-        run = self._submit_run(label, changes, base, folder, variants, run_fields={"size": size} if size else None,
-                               priority=comfy.PRIORITY_ON_ITS_OWN if self.automatic else comfy.PRIORITY)
+        run = self._submit_run(label, changes, base, folder, variants, run_fields={"size": size} if size else None)
         result = {"run": run["n"], "status": "queued", "images": run["count"], "seeds": seeds[:run["count"]],
                   "model": ", ".join(run["base_models"]), "applied": done}
         if size:
             result["size"] = size
         return result, {"type": "run", "run": run["n"], "workflow": label, "count": run["count"]}
 
+    def _priority(self) -> str:
+        """The next image's place in ComfyUI's queue, unless the run sets its own."""
+        if self.automatic:
+            return comfy.PRIORITY_ON_ITS_OWN
+        if self.waited_for > 0:
+            self.waited_for -= 1
+            return comfy.PRIORITY
+        return comfy.PRIORITY_REST
+
     def _submit_run(self, label: str, changes: dict, base: str, folder: str, variants: list,
-                    priority: str = comfy.PRIORITY, run_fields: dict | None = None) -> dict:
-        """Send one job per (graph, seed, job fields) and record the run."""
+                    priority: str | None = None, run_fields: dict | None = None) -> dict:
+        """Send one job per (graph, seed, job fields) and record the run. priority: every job's, or
+        by default each one's by who is waiting for it (_priority)."""
         self._check_budget(len(variants))
-        jobs, sent = [], []
+        jobs, sent, priorities = [], [], []
         for job_graph, seed, fields in variants:
             payload = job_graph.to_api()
+            job_priority = priority or self._priority()
             try:
-                prompt_id = self.client.submit(base, payload, priority=priority)
+                prompt_id = self.client.submit(base, payload, priority=job_priority)
             except comfy.ComfyError:
                 if not jobs:
                     raise
@@ -686,6 +702,7 @@ class ToolBox:
                          "loras": [{"name": lora["name"], "strength": lora.get("strength")}
                                    for lora in job_graph.loras()], **fields})
             sent.append(payload)
+            priorities.append(job_priority)
         run = conversations.add_run(
             self.conversation_id,
             {"workflow": label, "changes": changes, "count": len(jobs), "status": "pending", "jobs": jobs,
@@ -698,7 +715,7 @@ class ToolBox:
         conversations.add_autonomy_usage(self.conversation_id, images=len(jobs))
         runs.tracker.watch(self.conversation_id, run["n"])
         logger.info("run launched conversation_id=%s run=%s workflow=%s jobs=%d priority=%s base=%s",
-                    self.conversation_id, run["n"], label, len(jobs), priority, base)
+                    self.conversation_id, run["n"], label, len(jobs), ",".join(dict.fromkeys(priorities)), base)
         return run
 
     def _tool_use_family(self, family: str) -> tuple[dict, dict]:

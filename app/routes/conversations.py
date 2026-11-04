@@ -6,7 +6,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .. import balance, catalog, chat_tools, civitai, claude_code, comfy, conversation_turn, conversations, runs
+from .. import (balance, catalog, chat_tools, civitai, claude_code, comfy, conversation_turn, conversations, history,
+               memory, retry_later, runs)
 from .api import _require_family, read_image
 
 router = APIRouter(prefix="/api/conversations")
@@ -93,6 +94,9 @@ def get_conversation(conversation_id: str):
     run is under way): GET …/balance has it."""
     conversation = _require_conversation(conversation_id)
     conversation["messages"] = [{**m, "balance": True} if m.get("balance") else m for m in conversation["messages"]]
+    if claude_code.engine(conversation):
+        # The subscription's usage as the latest turn reported it (any conversation's: it's the account's).
+        conversation["claude_code_limits"] = claude_code.limits()
     return _with_activity(conversation)
 
 
@@ -218,6 +222,58 @@ def retry_reply(conversation_id: str):
         raise HTTPException(status_code=409, detail="The last message already has a reply")
     _require_idle(conversation_id)
     _require_family(conversation["family_id"])
+    return _reply(conversation_id)
+
+
+@router.delete("/{conversation_id}/retry")
+def cancel_retry(conversation_id: str):
+    """Don't answer the last message again by itself when Claude Code's limit resets."""
+    _require_conversation(conversation_id)
+    retry_later.cancel(conversation_id)
+    conversations.set_retry(conversation_id, None)
+    return {"retry_at": None}
+
+
+@router.post("/{conversation_id}/redo")
+def redo_reply(conversation_id: str):
+    """Discard the bot's last reply and have it answer again ("Rehacer"), told it is answering
+    again: the runs it launched that are still pending are cancelled and their images won't
+    come, the notes it took are forgotten and those it changed or forgot restored, and its
+    history entry goes. The budget to carry on alone starts again, as after a message."""
+    conversation = _require_conversation(conversation_id)
+    if not conversation["messages"] or conversation["messages"][-1]["role"] != "assistant":
+        raise HTTPException(status_code=409, detail="The last message isn't the bot's reply")
+    _require_idle(conversation_id)
+    working = conversations.autonomy(conversation)
+    if working and working.get("active") and working.get("kind") != "initiative":
+        raise HTTPException(status_code=409, detail="The bot is working on its own here: stop it first")
+    _require_family(conversation["family_id"])
+    try:
+        # Held so that none of its runs can put its images in the chat in between.
+        with conversation_turn.turn_lock(conversation_id):
+            taken = conversations.discard_last_reply(conversation_id)
+            if taken is None:
+                raise HTTPException(status_code=409, detail="The last message isn't the bot's reply")
+            reply = taken[0]
+            launched = [p["run"] for p in reply.get("parts") or [] if p.get("type") == "run"]
+            for n in launched:
+                conversations.update_run(conversation_id, n, lambda run: run.update(discarded=True))
+    except conversation_turn.Busy as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    for n in launched:
+        if (conversations.get_run(conversation_id, n) or {}).get("status") == "pending":
+            runs.cancel(conversation_id, n)
+    for note in reply.get("notes") or []:
+        memory.delete_note(note["id"])
+    for change in reversed(reply.get("note_changes") or []):
+        if change["action"] == "update":
+            memory.update_note(change["id"], change["previous"])
+        elif change["action"] == "forget":
+            memory.create_note(change["text"], conversation_id)
+    if reply.get("history_id"):
+        history.delete_entry(reply["history_id"])
+    if not (working and working.get("active") and working.get("kind") != "initiative"):
+        _start_initiative(conversation_id)
     return _reply(conversation_id)
 
 

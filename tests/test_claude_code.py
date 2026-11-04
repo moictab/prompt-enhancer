@@ -321,3 +321,66 @@ def test_the_seat_serves_one_turns_tools_and_closes_with_it(api_client, auth_hea
         bot_seat.close_seat(quiet)
         assert rpc(seat.token, "tools/list").status_code == 404
         assert rpc("not-a-turn", "tools/list").status_code == 404
+
+
+LIMITED = {"type": "rate_limit_event", "rate_limit_info": {
+    "status": "rejected", "resetsAt": 1793809800, "rateLimitType": "five_hour", "unifiedWindows": {
+        "five_hour": {"utilization": 1.0, "resetsAt": 1793809800, "status": "rejected"},
+        "seven_day": {"utilization": 0.4, "resetsAt": 1793941200, "status": "allowed"}}}}
+
+
+def test_the_subscriptions_usage_comes_with_a_claude_code_conversation(api_client, auth_headers, tmp_path,
+                                                                       fake_comfy, claude):
+    conversation = _claude_conversation(api_client, auth_headers, _family(tmp_path))
+    claude([init(), RATE_LIMIT, text("Hola."), result()])
+    _send(api_client, auth_headers, conversation["id"], "hola")
+
+    limits = api_client.get(f"/api/conversations/{conversation['id']}", auth=auth_headers).json()["claude_code_limits"]
+    assert limits["status"] == "allowed" and limits["checked_at"]
+    assert limits["windows"]["five_hour"]["used"] == 0.07 and limits["windows"]["seven_day"]["used"] == 0.18
+    other = api_client.post("/api/conversations", auth=auth_headers, json={
+        "family_id": conversation["family_id"], "llm_model": "vendor/model"}).json()
+    assert "claude_code_limits" not in api_client.get(f"/api/conversations/{other['id']}", auth=auth_headers).json()
+
+
+def test_a_reply_stopped_by_the_limit_is_answered_again_once_it_resets(api_client, auth_headers, tmp_path,
+                                                                     fake_comfy, claude, monkeypatch):
+    import time
+
+    from app import retry_later
+    conversation = _claude_conversation(api_client, auth_headers, _family(tmp_path))
+    resets = int(time.time()) - 120  # already past: the retry fires at once
+    monkeypatch.setattr(retry_later, "BUSY_DELAY_SECONDS", 0.05)
+    fake = claude([init(), {**LIMITED, "rate_limit_info": {**LIMITED["rate_limit_info"], "resetsAt": resets,
+                                                           "unifiedWindows": {"five_hour": {
+                                                               "utilization": 1.0, "resetsAt": resets,
+                                                               "status": "rejected"}}}},
+                   result(error=f"Claude AI usage limit reached|{resets}")],
+                  [init(), text("Ya estoy."), result()])
+
+    failed = _events(_send(api_client, auth_headers, conversation["id"], "hola"))[-1]
+    assert failed["type"] == "error" and failed["retry_at"] == resets
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        stored = conversations.get(conversation["id"])
+        if stored["messages"][-1]["role"] == "assistant":
+            break
+        time.sleep(0.02)
+    assert [m["role"] for m in stored["messages"]] == ["user", "assistant"]
+    assert "retry_at" not in stored and len(fake.launches) == 2
+
+
+def test_a_retry_waiting_for_the_limit_can_be_called_off(api_client, auth_headers, tmp_path, fake_comfy, claude):
+    from app import retry_later
+    conversation = _claude_conversation(api_client, auth_headers, _family(tmp_path))
+    claude([init(), LIMITED, result(error="Claude AI usage limit reached|1793809800")])
+    try:
+        _send(api_client, auth_headers, conversation["id"], "hola")
+        summary = next(s for s in api_client.get("/api/conversations", auth=auth_headers).json()
+                       if s["id"] == conversation["id"])
+        assert summary["retry_at"] == 1793809800 and conversation["id"] in retry_later.pending()
+        assert api_client.delete(f"/api/conversations/{conversation['id']}/retry", auth=auth_headers).status_code == 200
+        assert "retry_at" not in conversations.get(conversation["id"])
+        assert conversation["id"] not in retry_later.pending()
+    finally:
+        retry_later.cancel(conversation["id"])
