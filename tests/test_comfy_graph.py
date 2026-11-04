@@ -63,6 +63,36 @@ def test_set_loras_replaces_the_stack_and_rewires_its_users():
     assert graph.nodes["53"]["inputs"]["model"] == ["55", 0]
 
 
+def _weighted(graph):
+    """krea-2/txt2img as in the library since Krea2PromptWeight: it encodes the prompt and patches the model."""
+    encoder = graph.nodes.pop("51")["inputs"]
+    graph.nodes["149"] = {"class_type": "Krea2PromptWeight", "inputs": {
+        "clip": encoder["clip"], "model": ["147", 0], "text": encoder["text"], "strength": 1.0}}
+    graph.nodes["53"]["inputs"].update(model=["149", 0], positive=["149", 1])
+    graph.nodes["58"]["inputs"]["conditioning"] = ["149", 1]
+    return graph
+
+
+def test_a_prompt_weighting_node_keeps_the_prompt_and_the_loras_before_it():
+    graph = _weighted(_seed("krea-2_txt2img.json"))
+    assert graph.prompt_slots()["positive"] == [("63", "value")]
+
+    created = graph.set_loras([{"name": "a.safetensors", "strength": 0.4}])
+    assert graph.nodes["149"]["inputs"]["model"] == [created[0], 0]
+    assert graph.nodes["149"]["inputs"]["clip"] == [created[0], 1]
+    assert graph.nodes["53"]["inputs"]["model"] == ["149", 0]
+
+    # No LoRAs left, then some again: they go between the loaders and the weighting, not after it.
+    graph.set_loras([])
+    assert graph.nodes["149"]["inputs"]["model"] == ["55", 0]
+    created = graph.set_loras([{"name": "b.safetensors", "strength": 1}])
+    assert graph.nodes[created[0]]["inputs"]["model"] == ["55", 0]
+    assert graph.nodes[created[0]]["inputs"]["clip"] == ["56", 0]
+    assert graph.nodes["149"]["inputs"]["model"] == [created[0], 0]
+    assert graph.nodes["53"]["inputs"]["model"] == ["149", 0]
+    assert graph.broken_links() == []
+
+
 def test_set_size_replaces_the_resolution_selector_and_seed_reaches_every_sampler():
     graph = _seed("krea-2_txt2img-detailer-upscale.json")
 

@@ -18,6 +18,8 @@ LORA_LOADERS = ("LoraLoader", "LoraLoaderModelOnly")
 SAMPLERS = ("KSampler", "KSamplerAdvanced", "FaceDetailer", "SamplerCustom", "SamplerCustomAdvanced")
 MAIN_SAMPLERS = ("KSampler", "KSamplerAdvanced", "SamplerCustom")
 TEXT_NODES = ("PrimitiveStringMultiline", "PrimitiveString")
+# Encode the prompt (its text input) and patch the model with it: (clip, model, text) -> (model, conditioning).
+PROMPT_WEIGHT_NODES = ("Krea2PromptWeight",)
 SAMPLER_SETTINGS = ("steps", "cfg", "sampler_name", "scheduler", "denoise")
 # Inputs that name the model files a workflow loads.
 MODEL_INPUTS = ("ckpt_name", "unet_name", "model_name", "clip_name", "clip_name1", "clip_name2", "vae_name")
@@ -386,7 +388,13 @@ class Graph:
         if not samplers:
             raise GraphError("there is no KSampler to take the model from")
         model = self.nodes[samplers[0]]["inputs"]["model"]
-        encoders = [i for i in self.find("CLIPTextEncode") if is_link(self.nodes[i]["inputs"].get("clip"))]
+        weighting = self.nodes.get(model[0], {})
+        if weighting.get("class_type") in PROMPT_WEIGHT_NODES and is_link(weighting["inputs"].get("model")):
+            # The prompt patches the model: LoRAs go before it, on what it takes.
+            clip = weighting["inputs"].get("clip")
+            return weighting["inputs"]["model"], clip if is_link(clip) else None
+        encoders = [i for i in self.find("CLIPTextEncode", *PROMPT_WEIGHT_NODES)
+                    if is_link(self.nodes[i]["inputs"].get("clip"))]
         clip = self.nodes[encoders[0]]["inputs"]["clip"] if encoders else None
         return model, clip
 
