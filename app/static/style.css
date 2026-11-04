@@ -959,6 +959,8 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .usage-bar { position: relative; width: 4.5rem; height: 0.4rem; border-radius: 999px; background: var(--line); overflow: hidden; }
 .usage-fill { display: block; height: 100%; border-radius: inherit; transition: width 0.6s ease, background-color 0.6s ease; }
 .usage-value { min-width: 2.6rem; color: var(--paper-dim); font-variant-numeric: tabular-nums; }
+.usage-reset { color: var(--paper-faint); font-variant-numeric: tabular-nums; }
+.usage-window.is-out .usage-reset { color: var(--stop-text); }
 .usage-window.is-high .usage-value { color: var(--safelight); font-weight: 600; }
 .usage-window.is-out .usage-value { color: var(--stop); font-weight: 650; }
 @media (prefers-reduced-motion: reduce) { .usage-fill { transition: none; } }

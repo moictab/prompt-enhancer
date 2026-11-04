@@ -173,6 +173,18 @@ function usageColor(used) {
   return `color-mix(in oklab, var(--stop) ${Math.round(Math.min(1, (used - 0.5) * 2) * 100)}%, var(--safelight))`;
 }
 
+// A reset time, short enough to sit by its bar: "17:30" today, "mañana 6:00", "vie 6 6:00" later.
+function shortWhen(epochSeconds) {
+  const date = new Date(epochSeconds * 1000);
+  if (Number.isNaN(date.getTime())) return "";
+  const time = date.toLocaleTimeString("es-ES", { hour: "numeric", minute: "2-digit" });
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  if (date.toDateString() === today.toDateString()) return time;
+  if (date.toDateString() === tomorrow.toDateString()) return `mañana ${time}`;
+  return `${date.toLocaleDateString("es-ES", { weekday: "short", day: "numeric" })} ${time}`;
+}
+
 function usageMeter(limits) {
   const now = Date.now() / 1000;
   const windows = Object.entries(limits?.windows || {})
@@ -208,7 +220,8 @@ function usageMeter(limits) {
           },
           el("span", { class: "usage-fill", style: `width: ${Math.max(share, 2)}%; background: ${usageColor(w.used)}` })
         ),
-        el("span", { class: "usage-value", text: w.out ? "agotado" : `${share} %` })
+        el("span", { class: "usage-value", text: w.out ? "agotado" : `${share} %` }),
+        w.resets && el("span", { class: "usage-reset", text: w.renewed ? "renovado" : `${w.out ? "hasta" : "renueva"} ${shortWhen(w.resets)}` })
       );
     })
   );
