@@ -977,6 +977,8 @@ class ToolBox:
         finish: dict = {"input_images": [{"node": inputs[0], "image": image}]}
         if info.get("positive"):
             finish["positive"] = info["positive"]
+        if info.get("negative") and Graph(entry["workflow"]).prompt_slots()["negative"]:
+            finish["negative"] = info["negative"]
         if made.base_models() and made.base_models()[0] not in Graph(entry["workflow"]).base_models():
             finish["model"] = made.base_models()[0]  # the model it was made with, where the workflow loads another
         finish["loras"] = [
