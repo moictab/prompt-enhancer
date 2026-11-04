@@ -158,35 +158,60 @@ function whenItComes(epochSeconds) {
 }
 
 // What Claude Code's subscription has used, as its latest turn reported it (the account's, from any
-// conversation): "Uso: 13 % de las 5 h, 1 % de la semana", amber from 80 %, red once it ran out.
+// conversation): a bar per window that fills and turns from green to amber to red, its share, and
+// on hover when it renews. A window past its reset time shows empty: it has renewed since.
 const USAGE_WINDOWS = {
-  five_hour: "las 5 h",
-  seven_day: "la semana",
-  seven_day_opus: "la semana con Opus",
-  seven_day_sonnet: "la semana con Sonnet",
+  five_hour: { short: "5 h", long: "las 5 horas" },
+  seven_day: { short: "Semana", long: "la semana" },
+  seven_day_opus: { short: "Semana Opus", long: "la semana con Opus" },
+  seven_day_sonnet: { short: "Semana Sonnet", long: "la semana con Sonnet" },
 };
 
-function usageLabel(limits) {
-  const windows = Object.entries(limits?.windows || {}).filter(
-    ([name, w]) => USAGE_WINDOWS[name] && typeof w?.used === "number"
-  );
+// Green when empty, amber at half, red when full, mixed in between: the bar warms as it fills.
+function usageColor(used) {
+  if (used <= 0.5) return `color-mix(in oklab, var(--safelight) ${Math.round(used * 200)}%, var(--go))`;
+  return `color-mix(in oklab, var(--stop) ${Math.round(Math.min(1, (used - 0.5) * 2) * 100)}%, var(--safelight))`;
+}
+
+function usageMeter(limits) {
+  const now = Date.now() / 1000;
+  const windows = Object.entries(limits?.windows || {})
+    .filter(([name, w]) => USAGE_WINDOWS[name] && typeof w?.used === "number")
+    .map(([name, w]) => {
+      const renewed = w.resets_at && now >= w.resets_at;
+      return { name, ...USAGE_WINDOWS[name], used: renewed ? 0 : w.used, out: !renewed && w.status === "rejected", renewed, resets: w.resets_at };
+    });
   if (!windows.length) return null;
-  const percent = (w) => `${Math.round(w.used * 100)} %`;
-  const out = windows.find(([, w]) => w.status === "rejected");
-  const high = windows.some(([, w]) => w.used >= 0.8);
   const checked = formatWhen(limits.checked_at);
-  return el("span", {
-    class: `engine-usage${out ? " is-out" : high ? " is-high" : ""}`,
-    title: [
-      ...windows.map(([name, w]) => `${percent(w)} de ${USAGE_WINDOWS[name]}: se renueva ${whenItComes(w.resets_at)}`),
-      checked && `Según la última respuesta de Claude Code (${checked}).`,
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    text: out
-      ? `Claude Code agotado hasta ${whenItComes(out[1].resets_at)}`
-      : `Uso: ${windows.map(([name, w]) => `${percent(w)} de ${USAGE_WINDOWS[name]}`).join(", ")}`,
-  });
+  return el(
+    "span",
+    { class: "usage-meter", title: checked ? `Uso de tu suscripción según la última respuesta de Claude Code (${checked}).` : "" },
+    windows.map((w) => {
+      const share = Math.round(Math.min(1, w.used) * 100);
+      const when = w.renewed ? `se renovó ${whenItComes(w.resets)}` : `se renueva ${whenItComes(w.resets)}`;
+      return el(
+        "span",
+        {
+          class: `usage-window${w.out ? " is-out" : w.used >= 0.8 ? " is-high" : ""}`,
+          title: `${share} % de ${w.long}: ${when}${w.out ? ". Agotado: Claude Code no responde hasta entonces." : ""}`,
+        },
+        el("span", { class: "usage-name", text: w.short }),
+        el(
+          "span",
+          {
+            class: "usage-bar",
+            role: "meter",
+            "aria-label": `Uso de ${w.long}`,
+            "aria-valuemin": 0,
+            "aria-valuemax": 100,
+            "aria-valuenow": share,
+          },
+          el("span", { class: "usage-fill", style: `width: ${Math.max(share, 2)}%; background: ${usageColor(w.used)}` })
+        ),
+        el("span", { class: "usage-value", text: w.out ? "agotado" : `${share} %` })
+      );
+    })
+  );
 }
 
 function proposalCount(messages) {
@@ -1458,7 +1483,7 @@ function renderHead() {
     ...[
       el("span", { text: familyName(current.family_id) }),
       el("span", { title: onClaude(current) ? "Responde Claude Code con tu suscripción" : current.llm_model, text: engineLabel(current) }),
-      onClaude(current) && usageLabel(conversation?.claude_code_limits),
+      onClaude(current) && usageMeter(conversation?.claude_code_limits),
       conversation?.cost && el("span", { text: formatCost(conversation.cost) }),
     ].filter(Boolean)
   );

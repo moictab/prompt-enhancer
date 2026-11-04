@@ -25,6 +25,7 @@
   --safelight-ink: #2a1a05;
   --safelight-soft: rgba(242, 165, 65, 0.13);
   --stop: #e0685c;
+  --go: #7fae86; /* a usage bar with room left (Claude Code's limits) */
   --stop-soft: rgba(224, 104, 92, 0.13);
   --stop-text: #f5cdc8;
 
@@ -952,8 +953,15 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .chat-heading { flex: 1; min-width: 0; }
 .chat-head h1 { overflow: hidden; font-size: var(--step-1); font-stretch: 112%; text-overflow: ellipsis; white-space: nowrap; }
 .chat-meta { display: flex; flex-wrap: wrap; gap: 0.1rem 0.9rem; margin-top: 0.1rem; color: var(--paper-dim); font-size: var(--step--1); font-variant-numeric: tabular-nums; }
-.engine-usage.is-high { color: var(--safelight); }
-.engine-usage.is-out { color: var(--stop); }
+.usage-meter { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.9rem; }
+.usage-window { display: inline-flex; align-items: center; gap: 0.4rem; white-space: nowrap; }
+.usage-name { color: var(--paper-faint); }
+.usage-bar { position: relative; width: 4.5rem; height: 0.4rem; border-radius: 999px; background: var(--line); overflow: hidden; }
+.usage-fill { display: block; height: 100%; border-radius: inherit; transition: width 0.6s ease, background-color 0.6s ease; }
+.usage-value { min-width: 2.6rem; color: var(--paper-dim); font-variant-numeric: tabular-nums; }
+.usage-window.is-high .usage-value { color: var(--safelight); font-weight: 600; }
+.usage-window.is-out .usage-value { color: var(--stop); font-weight: 650; }
+@media (prefers-reduced-motion: reduce) { .usage-fill { transition: none; } }
 .msg-redo { margin-top: 0.35rem; }
 .threads-toggle { display: none; }
 
