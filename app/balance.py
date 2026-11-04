@@ -51,6 +51,7 @@ class Ledger:
     images: int = 0
     runs: int = 0
     liked: int = 0
+    loved: int = 0  # of the liked, the favorites
     disliked: int = 0
     unrated: int = 0
     reviewed: int = 0
@@ -60,7 +61,7 @@ class Ledger:
     @property
     def counts(self) -> dict:
         return {key: getattr(self, key) for key in
-                ("images", "runs", "liked", "disliked", "unrated", "reviewed", "flawed")}
+                ("images", "runs", "liked", "loved", "disliked", "unrated", "reviewed", "flawed")}
 
 
 def _short(file: str) -> str:
@@ -152,6 +153,7 @@ def _rows(conversation: dict) -> tuple[list[dict], int]:
                     "size": _size(run.get("size") or settings.get("size")),
                     "seed": job.get("seed") if job.get("seed") is not None else settings.get("seed"),
                     "rating": reaction.get("rating"),
+                    "reasons": reaction.get("reasons") or [],
                     "in_words": bool(reaction.get("inferred")),  # said in a message, not a thumb
                     "comment": " ".join((reaction.get("comment") or "").split()),
                     "verdict": review.get("verdict"),
@@ -196,7 +198,10 @@ def _settings(row: dict) -> str:
 
 
 def _verdicts(row: dict) -> str:
-    user = "user " + {"up": "liked", "down": "disliked"}.get(row["rating"], "no reaction")
+    from .chat import RATING_WORDS, reasons_text
+    user = "user " + RATING_WORDS.get(row["rating"], "no reaction")
+    if row["rating"] == "down" and row.get("reasons"):
+        user += f" ({reasons_text(row['reasons'])})"
     if row["rating"] and row.get("in_words"):
         user += " (said so in a message)"
     if row["comment"]:
@@ -251,10 +256,12 @@ def _tally(rows: list[dict]) -> str:
     count = Counter()
     for row in rows:
         count["images"] += 1
-        count[{"up": "liked", "down": "disliked"}.get(row["rating"], "unrated")] += 1
+        count[{"up": "liked", "love": "liked", "down": "disliked"}.get(row["rating"], "unrated")] += 1
+        count["loved"] += row["rating"] == "love"
         if row["verdict"] == "flawed":
             count["flawed"] += 1
-    text = f"{count['images']} image{'s' if count['images'] != 1 else ''}: {count['liked']} liked, " \
+    loved = f" ({count['loved']} a favorite)" if count["loved"] else ""
+    text = f"{count['images']} image{'s' if count['images'] != 1 else ''}: {count['liked']} liked{loved}, " \
            f"{count['disliked']} disliked, {count['unrated']} unrated"
     if count["flawed"]:
         text += f"; {count['flawed']} flawed in your reviews"
@@ -296,14 +303,16 @@ def ledger(conversation: dict) -> Ledger | None:
         text="",
         images=len(rows),
         runs=len({row["run"] for row in rows}),
-        liked=rated["up"],
+        liked=rated["up"] + rated["love"],
+        loved=rated["love"],
         disliked=rated["down"],
-        unrated=len(rows) - rated["up"] - rated["down"],
+        unrated=len(rows) - rated["up"] - rated["love"] - rated["down"],
         reviewed=sum(1 for row in rows if row["verdict"]),
         flawed=sum(1 for row in rows if row["verdict"] == "flawed"),
         rows=rows,
     )
-    head = (f"{found.images} images from {found.runs} runs: the user liked {found.liked}, disliked {found.disliked} "
+    head = (f"{found.images} images from {found.runs} runs: the user liked {found.liked}"
+            f"{f' ({found.loved} of them favorites)' if found.loved else ''}, disliked {found.disliked} "
             f"and didn't react to {found.unrated}; you reviewed {found.reviewed} ({found.flawed} flawed).")
     if left_out:
         head += f" The first {left_out} runs that made images are left out; only the latest {MAX_RUNS} are here."

@@ -1103,6 +1103,22 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .react[aria-pressed="true"] { color: var(--safelight); background: var(--safelight-soft); border-color: var(--safelight); }
 .react-comment { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--step--1); }
 .react-input { flex: 1 1 8rem; min-width: 0; padding: 0.3rem 0.5rem; font-size: var(--step--1); }
+.react.is-love[aria-pressed="true"] { color: var(--stop); background: var(--stop-soft); border-color: var(--stop); }
+.react.is-love[aria-pressed="true"] .heart { fill: currentColor; }
+.react-reasons { display: flex; flex-wrap: wrap; gap: 0.25rem; flex-basis: 100%; }
+.react-reason {
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--paper-dim);
+  background: none;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.react-reason:hover { color: var(--paper); border-color: var(--paper-faint); }
+.react-reason[aria-pressed="true"] { color: var(--stop-text); background: var(--stop-soft); border-color: var(--stop); }
+.msg-reactions .heart { color: var(--stop); fill: currentColor; }
+.msg-reactions-reasons { color: var(--paper-faint); }
 
 /* What the bot did between its words: a run it launched, a tool it used. */
 .run-card {
@@ -1223,7 +1239,8 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .proposal-item { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); }
 .proposal > summary {
   display: grid;
-  grid-template-columns: 0.4rem 1.3rem minmax(0, 1fr);
+  /* The number's column grows with it: a long conversation reaches proposal 100 and beyond. */
+  grid-template-columns: 0.4rem minmax(1.3rem, max-content) minmax(0, 1fr);
   align-items: center;
   gap: 0.65rem;
   padding: 0.5rem 5.5rem 0.5rem 0.85rem;

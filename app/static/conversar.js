@@ -594,22 +594,49 @@ function openViewer(imageId) {
 
 // A thumbs up is one click; a thumbs down asks why -- a dislike is only worth learning from
 // with its reason. The comment is the reason when the image is disliked.
-function reactionControls(image, number) {
+// What failed, for a thumbs down: one tap each (a comment can add to them, or stand in for them).
+const REASONS = [
+  ["hands", "Manos"],
+  ["face", "Cara"],
+  ["anatomy", "Anatomía"],
+  ["style", "Estilo"],
+  ["composition", "Composición"],
+  ["not_asked", "No es lo que pedí"],
+];
+const REASON_LABELS = Object.fromEntries(REASONS);
+
+function heartIcon() {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("class", "thumb heart");
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", "M12 20.5 4.4 13a4.8 4.8 0 0 1 6.8-6.8l.8.8.8-.8A4.8 4.8 0 0 1 19.6 13Z");
+  svg.append(path);
+  return svg;
+}
+
+// An image's reaction: like, favorite (the strongest like: "this is it"), or dislike with what failed --
+// a tap on its reasons, and/or a comment. choosing: the dislike pressed, its reasons not picked yet.
+function reactionControls(image, number, { choosing = false } = {}) {
   const reaction = image.reaction || {};
+  const reasons = reaction.reasons || [];
+  const disliked = reaction.rating === "down";
   const wrap = el("figcaption", { class: "reactions" });
-  const save = async (rating, comment, button) => {
+  const redraw = (options) => wrap.replaceWith(reactionControls(image, number, options));
+  const save = async (rating, comment, picked, button) => {
     if (button) setBusy(button, true, "…");
     try {
       const updated = await request(`/api/conversations/${state.conversation.id}/images/${image.id}/reaction`, {
         method: "PUT",
-        json: { rating, comment },
+        json: { rating, comment, reasons: rating === "down" ? picked : [] },
       });
       if (updated.reaction) image.reaction = updated.reaction;
       else delete image.reaction;
     } catch (err) {
       toast(err.message, { error: true });
     }
-    wrap.replaceWith(reactionControls(image, number));
+    redraw();
     renderReactionHint();
   };
   // Swaps the comment button for a text field; done(text) with the text, or done(null) if dropped.
@@ -638,73 +665,93 @@ function reactionControls(image, number) {
     commentButton.replaceWith(input);
     input.focus();
   };
-  const restore = () => wrap.replaceWith(reactionControls(image, number));
-  const disliked = reaction.rating === "down";
 
-  const up = el(
-    "button",
-    {
-      type: "button",
-      class: "btn-icon react",
-      "aria-pressed": String(reaction.rating === "up"),
-      "aria-label": `Me gusta la imagen ${number}`,
-      title: "Me gusta",
-    },
-    thumbIcon(false)
-  );
-  up.addEventListener("click", () => save(reaction.rating === "up" ? null : "up", reaction.comment || "", up));
+  const toggle = (rating, { label, title, icon, extra = "" }) => {
+    const on = reaction.rating === rating;
+    const button = el(
+      "button",
+      { type: "button", class: `btn-icon react${extra}`, "aria-pressed": String(on), "aria-label": label, title },
+      icon
+    );
+    button.addEventListener("click", () => save(on ? null : rating, reaction.comment || "", [], button));
+    return button;
+  };
+  const up = toggle("up", { label: `Me gusta la imagen ${number}`, title: "Me gusta", icon: thumbIcon(false) });
+  const love = toggle("love", {
+    label: `La imagen ${number} es de mis favoritas`,
+    title: "Favorita: es justo lo que busco",
+    icon: heartIcon(),
+    extra: " is-love",
+  });
 
   const down = el(
     "button",
     {
       type: "button",
       class: "btn-icon react",
-      "aria-pressed": String(disliked),
+      "aria-pressed": String(disliked || choosing),
       "aria-label": disliked ? `Quitar el no me gusta de la imagen ${number}` : `No me gusta la imagen ${number}`,
       title: disliked ? "Quitar el no me gusta" : "No me gusta: di qué ha fallado",
     },
     thumbIcon(true)
   );
   down.addEventListener("click", () => {
-    if (disliked) {
-      save(null, reaction.comment || "", down); // the reason stays, as a plain comment
-      return;
-    }
-    down.setAttribute("aria-pressed", "true");
-    ask({
-      placeholder: "¿Qué ha fallado?",
-      label: `Qué ha fallado en la imagen ${number}`,
-      done: (text) => (text ? save("down", text) : restore()),
-    });
+    if (disliked) save(null, reaction.comment || "", [], down); // a comment stays, as a plain one
+    else redraw(choosing ? {} : { choosing: true }); // the reasons to pick from, or put away again
   });
 
   const commentButton = el("button", {
     type: "button",
     class: "btn-quiet react-comment",
-    text: reaction.comment ? `«${reaction.comment}»` : "Comentar",
+    text: reaction.comment ? `«${reaction.comment}»` : choosing ? "Otro motivo" : "Comentar",
     title: reaction.comment ? "Cambiar el comentario" : `Comentar la imagen ${number}`,
   });
   commentButton.addEventListener("click", () =>
     ask({
-      placeholder: disliked ? "¿Qué ha fallado?" : "Qué cambiarías",
+      placeholder: disliked || choosing ? "¿Qué ha fallado?" : "Qué cambiarías",
       label: `Comentario sobre la imagen ${number}`,
       done: (text) => {
-        if (text === null || text === (reaction.comment || "")) return restore();
-        if (disliked && !text) {
+        if (choosing) return text ? save("down", text, []) : redraw({ choosing: true });
+        if (text === null || text === (reaction.comment || "")) return redraw();
+        if (disliked && !text && !reasons.length) {
           toast("Un «no me gusta» necesita su motivo: quítalo o di qué ha fallado.", { error: true });
-          return restore();
+          return redraw();
         }
-        save(reaction.rating ?? null, text);
+        save(reaction.rating ?? null, text, reasons);
       },
     })
   );
-  wrap.append(up, down, commentButton);
+  wrap.append(up, love, down, commentButton);
+
+  if (disliked || choosing) {
+    wrap.append(
+      el(
+        "span",
+        { class: "react-reasons", role: "group", "aria-label": `Qué ha fallado en la imagen ${number}` },
+        REASONS.map(([key, label]) => {
+          const on = reasons.includes(key);
+          const chip = el("button", { type: "button", class: "react-reason", "aria-pressed": String(on), text: label });
+          chip.addEventListener("click", () => {
+            const picked = on ? reasons.filter((r) => r !== key) : [...reasons, key];
+            if (!picked.length && !reaction.comment) {
+              toast("Un «no me gusta» necesita su motivo: deja alguno, escribe qué ha fallado o quítalo.", { error: true });
+              return;
+            }
+            save("down", reaction.comment || "", picked, chip);
+          });
+          return chip;
+        })
+      )
+    );
+  }
   if (reaction.inferred && reaction.rating) {
-    wrap.append(el("span", {
-      class: "react-inferred",
-      text: "por lo que dijiste",
-      title: "El bot la ha valorado a partir de lo que escribiste. Pulsa los pulgares para cambiarla.",
-    }));
+    wrap.append(
+      el("span", {
+        class: "react-inferred",
+        text: "por lo que dijiste",
+        title: "El bot la ha valorado a partir de lo que escribiste. Pulsa los botones para cambiarla.",
+      })
+    );
   }
   return wrap;
 }
@@ -773,8 +820,9 @@ function reactionsSummary(reactions, numbers) {
       el(
         "li",
         {},
-        r.rating && thumbIcon(r.rating === "down"),
+        r.rating && (r.rating === "love" ? heartIcon() : thumbIcon(r.rating === "down")),
         ...withImageRefs(`#${numbers.get(r.image_id)}`),
+        r.reasons?.length > 0 && el("span", { class: "msg-reactions-reasons", text: r.reasons.map((k) => REASON_LABELS[k] || k).join(", ") }),
         r.comment && el("span", { class: "msg-reactions-comment", text: `«${r.comment}»` })
       )
     )
@@ -797,8 +845,10 @@ function ratingsLine(ratings) {
     return refs.length > 1 ? `${refs.slice(0, -1).join(", ")} y ${refs.at(-1)}` : refs[0];
   };
   const liked = ratings.filter((r) => r.rating === "up");
+  const loved = ratings.filter((r) => r.rating === "love");
   const disliked = ratings.filter((r) => r.rating === "down");
   const said = [
+    loved.length && `${loved.length === 1 ? "es tu favorita" : "son tus favoritas"} ${list(loved)}`,
     liked.length && `te ${liked.length === 1 ? "gusta" : "gustan"} ${list(liked)}`,
     disliked.length && `no te ${disliked.length === 1 ? "gusta" : "gustan"} ${list(disliked)}`,
   ].filter(Boolean).join("; ");
@@ -1274,7 +1324,8 @@ function balanceCounts(counts) {
   if (!counts || typeof counts !== "object") return "";
   const liked = (n) => `${n} ${n === 1 ? "te gustó" : "te gustaron"}`;
   const disliked = (n) => `${n} no ${n === 1 ? "te gustó" : "te gustaron"}`;
-  return `${counts.images} ${counts.images === 1 ? "imagen" : "imágenes"}: ${liked(counts.liked)}, ${disliked(counts.disliked)}, ${counts.unrated} sin valorar`;
+  const loved = counts.loved ? ` (${counts.loved} ${counts.loved === 1 ? "favorita" : "favoritas"})` : "";
+  return `${counts.images} ${counts.images === 1 ? "imagen" : "imágenes"}: ${liked(counts.liked)}${loved}, ${disliked(counts.disliked)}, ${counts.unrated} sin valorar`;
 }
 
 // The user ended the conversation, asking the bot for its balance: what it got is the app's evidence, so the chat

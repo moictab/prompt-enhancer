@@ -342,10 +342,23 @@ def set_review(conversation_id: str, image_id: str, verdict: str, note: str, roo
         return image
 
 
+# Why an image was disliked, picked with a tap (the chat's chips; a comment can add to them).
+REACTION_REASONS = ("hands", "face", "anatomy", "style", "composition", "not_asked")
+# The same, as the bot reads them.
+REASON_WORDS = {"hands": "hands", "face": "face", "anatomy": "anatomy", "style": "style",
+                "composition": "composition", "not_asked": "not what was asked"}
+
+
+def reasons_text(reasons: list[str] | None) -> str:
+    return ", ".join(REASON_WORDS.get(r, r) for r in reasons or [])
+
+
 def set_reaction(
-    conversation_id: str, image_id: str, rating: str | None, comment: str, root: str | None = None
+    conversation_id: str, image_id: str, rating: str | None, comment: str, root: str | None = None,
+    reasons: list[str] | None = None,
 ) -> dict | None:
-    """Set (or, with no rating and no comment, clear) the reaction to an image. It stays
+    """Set (or, with no rating and no comment, clear) the reaction to an image: "up", "love" (a
+    favorite: the strongest like) or "down" (with its reasons and/or a comment). It stays
     unsent until the user's next message carries it to the bot. Returns the image."""
     with _lock:
         conversation = get(conversation_id, root)
@@ -360,6 +373,9 @@ def set_reaction(
             image.pop("reaction", None)
         else:
             image["reaction"] = {"rating": rating, "comment": comment, "at": _now(), "sent": False}
+            picked = [r for r in dict.fromkeys(reasons or []) if r in REACTION_REASONS]
+            if rating == "down" and picked:
+                image["reaction"]["reasons"] = picked
         storage.write_json(_path(conversation_id, root), conversation)
         return image
 
@@ -389,7 +405,8 @@ def set_inferred_reaction(conversation_id: str, image_id: str, rating: str, comm
 
 def unsent_reactions(conversation: dict) -> list[dict]:
     return [
-        {"image_id": img["id"], "rating": img["reaction"].get("rating"), "comment": img["reaction"].get("comment", "")}
+        {"image_id": img["id"], "rating": img["reaction"].get("rating"), "comment": img["reaction"].get("comment", ""),
+         **({"reasons": img["reaction"]["reasons"]} if img["reaction"].get("reasons") else {})}
         for m in conversation["messages"] for img in m.get("images") or []
         if img.get("reaction") and not img["reaction"].get("sent")
     ]

@@ -537,8 +537,11 @@ async def get_image(
 async def react_to_image(
     conversation_id: str,
     number: Annotated[int, Field(ge=1, description="The image's number (#N).")],
-    rating: Annotated[Literal["up", "down"] | None, Field(description="Liked, disliked, or None to clear.")],
-    comment: Annotated[str, Field(description="Why; required for a thumbs down.")] = "",
+    rating: Annotated[Literal["up", "love", "down"] | None, Field(
+        description="Liked, loved (a favorite: the strongest like), disliked, or None to clear.")],
+    comment: Annotated[str, Field(description="Why; a thumbs down needs this or reasons.")] = "",
+    reasons: Annotated[list[Literal["hands", "face", "anatomy", "style", "composition", "not_asked"]], Field(
+        description="For a thumbs down: what failed.")] = [],
 ) -> dict:
     """React to an image a run made. Reactions reach the bot with the next message (send_message, which may
     then be empty)."""
@@ -547,7 +550,7 @@ async def react_to_image(
     if image is None:
         raise ToolError(f"There is no image {number} in this conversation.")
     stored = await _json("PUT", f"/api/conversations/{conversation_id}/images/{image['id']}/reaction",
-                         json={"rating": rating, "comment": comment})
+                         json={"rating": rating, "comment": comment, "reasons": reasons})
     return _image_view(stored, chat.image_numbers(messages))
 
 

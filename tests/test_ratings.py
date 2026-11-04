@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from app import balance, catalog, chat, conversations, runs, workflows
 
+from .conftest import message_text
 from .test_api_conversar_comfy import Script, _call, _conversation, _family, _send
 
 LAUNCH = _call("run_workflow", workflow="krea-2/txt2img", changes={"positive": "a witch at dawn"}, count=3)
@@ -65,3 +66,41 @@ def test_only_run_images_take_a_rating_and_a_thumb_replaces_it(api_client, auth_
     changed = api_client.put(f"/api/conversations/{conversation_id}/images/{first['id']}/reaction",
                              auth=auth_headers, json={"rating": "up", "comment": ""}).json()
     assert changed["reaction"]["rating"] == "up" and not changed["reaction"].get("inferred")
+
+
+def test_a_favorite_is_the_strongest_like_and_a_dislike_can_be_a_tap(api_client, auth_headers, tmp_path, fake_comfy):
+    workflows.ensure_seeded()
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path), auto_comment=False)["id"]
+    script = Script(("Van tres:", [LAUNCH]), ("Me centro en la 1.", []),
+                    ('<rating images="3" value="love">¡esta es perfecta!</rating>Anotado.', []))
+    put = f"/api/conversations/{conversation_id}/images"
+    with patch("app.conversation_turn.stream_chat", script):
+        _send(api_client, auth_headers, conversation_id, "hazme una bruja")
+        _deliver(fake_comfy, "prompt-1", "prompt-2", "prompt-3")
+        images = next(m for m in conversations.get(conversation_id)["messages"] if m["role"] == "results")["images"]
+        assert api_client.put(f"{put}/{images[0]['id']}/reaction", auth=auth_headers,
+                              json={"rating": "love"}).status_code == 200
+        # A dislike with a tap on what failed, no words needed; without either, refused.
+        assert api_client.put(f"{put}/{images[1]['id']}/reaction", auth=auth_headers,
+                              json={"rating": "down"}).status_code == 400
+        tapped = api_client.put(f"{put}/{images[1]['id']}/reaction", auth=auth_headers,
+                                json={"rating": "down", "reasons": ["hands", "face", "hands"]})
+        assert tapped.json()["reaction"]["reasons"] == ["hands", "face"]
+        assert api_client.put(f"{put}/{images[1]['id']}/reaction", auth=auth_headers,
+                              json={"rating": "down", "reasons": ["vibes"]}).status_code == 422
+        _send(api_client, auth_headers, conversation_id, "")  # just the reactions
+        _send(api_client, auth_headers, conversation_id, "¡la tercera es perfecta!")
+
+    sent = message_text(script.calls[1]["messages"][-1])
+    assert "image 1 loved (a favorite)" in sent and "image 2 disliked (hands, face)" in sent
+    stored = conversations.get(conversation_id)
+    third = next(m for m in stored["messages"] if m["role"] == "results")["images"][2]
+    assert third["reaction"]["rating"] == "love" and third["reaction"]["inferred"]
+    model = next(record for record in catalog.stats().values() if record.get("images"))
+    assert (model["liked"], model["loved"], model["disliked"]) == (2, 2, 1)
+    assert model["dislike_reasons"] == {"hands": 1, "face": 1}
+    assert "2 liked (2 a favorite)" in catalog._record_text(model) and "1 disliked (hands 1, face 1)" in \
+        catalog._record_text(model)
+    ledger = balance.ledger(stored)
+    assert (ledger.counts["liked"], ledger.counts["loved"], ledger.counts["unrated"]) == (2, 2, 0)
+    assert "user disliked (hands, face)" in ledger.text and "user loved (a favorite)" in ledger.text

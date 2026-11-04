@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import storage
+from .conversations import reasons_text as chat_reasons
 from .config import get_settings
 
 logger = logging.getLogger("app.catalog")
@@ -303,18 +304,23 @@ def stats() -> dict[str, dict]:
                     image = images.get(image_id) or {}
                     reaction, review = image.get("reaction") or {}, image.get("review") or {}
                     rating = reaction.get("rating")
-                    flawed = review.get("verdict") == "flawed" and rating != "up"
+                    flawed = review.get("verdict") == "flawed" and rating not in ("up", "love")
                     for file in set(strengths) | set(job.get("models") or []):
-                        record = totals.setdefault(file, {"images": 0, "liked": 0, "disliked": 0, "flawed": 0,
-                                                          "weights": [], "flaws": [], "reasons": []})
+                        record = totals.setdefault(file, {"images": 0, "liked": 0, "loved": 0, "disliked": 0,
+                                                          "flawed": 0, "weights": [], "flaws": [], "reasons": [],
+                                                          "why": Counter()})
                         weight = strengths.get(file)
                         at = f"at {weight:g}: " if isinstance(weight, (int, float)) else ""
                         record["images"] += 1
-                        if rating == "up":
+                        if rating in ("up", "love"):  # a favorite is a like too, the strongest
                             record["liked"] += 1
+                            record["loved"] += rating == "love"
                         elif rating == "down":
                             record["disliked"] += 1
-                            record["reasons"].append((reaction.get("at") or "", at + (reaction.get("comment") or "")))
+                            picked = reaction.get("reasons") or []
+                            record["why"].update(picked)
+                            said = "; ".join(filter(None, [chat_reasons(picked), reaction.get("comment") or ""]))
+                            record["reasons"].append((reaction.get("at") or "", at + said))
                         if flawed:
                             record["flawed"] += 1
                             if isinstance(weight, (int, float)):
@@ -329,7 +335,9 @@ def stats() -> dict[str, dict]:
                 calibrations[calibrated] = (run.get("created_at", ""), verdicts)
     result = {}
     for file, record in totals.items():
-        out = {k: record[k] for k in ("images", "liked", "disliked", "flawed") if record[k] or k == "images"}
+        out = {k: record[k] for k in ("images", "liked", "loved", "disliked", "flawed") if record[k] or k == "images"}
+        if record["why"]:
+            out["dislike_reasons"] = dict(record["why"].most_common())
         if record["weights"]:
             out["flawed_weights"] = [min(record["weights"]), max(record["weights"])]
         for key, label in (("flaws", "latest_flaws"), ("reasons", "latest_dislike_reasons")):
@@ -387,7 +395,13 @@ def _record_text(record: dict | None) -> str:
     parts = []
     if record.get("images"):
         parts.append(f"{record['images']} image{'s' if record['images'] != 1 else ''}")
-        parts += [f"{record[k]} {k}" for k in ("liked", "disliked") if record.get(k)]
+        if record.get("liked"):
+            loved = f" ({record['loved']} a favorite)" if record.get("loved") else ""
+            parts.append(f"{record['liked']} liked{loved}")
+        if record.get("disliked"):
+            why = record.get("dislike_reasons") or {}
+            detail = f" ({', '.join(f'{chat_reasons([k])} {n}' for k, n in why.items())})" if why else ""
+            parts.append(f"{record['disliked']} disliked{detail}")
         if record.get("flawed"):
             low, high = record.get("flawed_weights") or (None, None)
             where = "" if low is None else (f" at {low:g}" if low == high else f" at {low:g}-{high:g}")

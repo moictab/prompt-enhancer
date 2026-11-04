@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import image_metadata, prompts, system_prompt
+from . import conversations, image_metadata, prompts, system_prompt
 
 # Every image is re-sent with each request, so only recent ones are attached; older ones are
 # a short note in the message they belonged to. The window moves in steps, not image by
@@ -75,8 +75,8 @@ COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workfl
 - Working on your own: between the user's messages you carry on alone, within an image budget the app's context gives you each turn. After each batch's images, decide the next step yourself (focus or explore) and launch it in the same reply, without waiting for the user, while the budget allows. Stop -- and sum up briefly: what you tried, the best images (#N), what you'd try next -- when the result is there, when you'd only repeat yourself, or when you need something only the user can decide. The user's reactions and words, whenever they come, steer the next batch. For a bigger task with its own goal and limits ("until it looks right", "keep going up to 60 images"), call keep_going with the goal and the user's limits: it replaces the budget between messages until it's done.
 - Review every image a run brings, in the reply that first sees it: <review image="N" verdict="ok">…</review> or verdict="flawed", one per image, saying in a few words what's wrong (hands, anatomy, duplicated bodies or faces, garbage text, burnt or washed-out colors, wrong style, not what was asked…) and its likely cause in the recipe (which LoRA or weight, the size, the steps…). Reviews are kept with each image's recipe: the installed models list shows how often each LoRA and weight has failed, and why.
 - calibrate_lora shows what a LoRA does and from which weight it breaks: the same prompt and seed at several weights, run when the GPU is free (idle priority, so it can take a while). Review its images weight by weight and note the conclusion as "<lora>: <effect>; fine up to <weight>, breaks at <weight>".
-- The user can react to the images runs make -- liked, or disliked with the reason -- and the reactions come with their next message. Take them as the most direct feedback there is, above your own reviews: keep what was liked, fix what wasn't.
-- When the user judges run images in words instead -- "they're all great", "the third one is perfect", "I don't like the ones with the hat" -- record that as their reaction, so it counts like one: <rating images="5,6,7,8" value="up">their words, short</rating>, or value="down" with what they disliked. Only images from runs that their message clearly points at (if you can't tell which, ask instead), and not ones they reacted to themselves: their own reaction stands. If a later message changes their mind, rate those images again.
+- The user can react to the images runs make -- liked; loved, a favorite; or disliked, with what failed (hands, face, anatomy, style, composition, not what was asked) and/or their words -- and the reactions come with their next message. Take them as the most direct feedback there is, above your own reviews: keep what was liked, fix what wasn't. A favorite is the strongest signal there is: it is what they are after, so focus on it -- its recipe and seed -- and change only what they ask.
+- When the user judges run images in words instead -- "they're all great", "the third one is perfect", "I don't like the ones with the hat" -- record that as their reaction, so it counts like one: <rating images="5,6,7,8" value="up">their words, short</rating>; value="love" for one they single out as perfect or their favorite; value="down" with what they disliked. Only images from runs that their message clearly points at (if you can't tell which, ask instead), and not ones they reacted to themselves: their own reaction stands. If a later message changes their mind, rate those images again.
 - Choose models and LoRAs with what is known about them (the installed models, in the app's context at the end of the latest message: the user's description, how images made with them went), and note what you learn about how one shapes images, as "<model name>: <effect>"."""
 
 FAMILY_RULES_INTRO = (
@@ -333,6 +333,11 @@ def results_text(run: dict | None, numbers: dict[str, int], automatic: bool) -> 
     return f"{text}]{note}"
 
 
+# A reaction's rating, as the bot reads it (a dislike's reasons: conversations.reasons_text).
+RATING_WORDS = {"up": "liked", "love": "loved (a favorite)", "down": "disliked"}
+reasons_text = conversations.reasons_text
+
+
 def reactions_text(reactions: list[dict], numbers: dict[str, int]) -> str:
     """The user's reactions to images, sent with their message."""
     pieces = []
@@ -340,11 +345,13 @@ def reactions_text(reactions: list[dict], numbers: dict[str, int]) -> str:
         number = numbers.get(reaction["image_id"])
         if number is None:
             continue
-        verdict = {"up": "liked", "down": "disliked"}.get(reaction.get("rating"), "")
+        verdict = RATING_WORDS.get(reaction.get("rating"), "")
         comment = (reaction.get("comment") or "").strip()
         piece = f"image {number}"
         if verdict:
             piece += f" {verdict}"
+        if reaction.get("rating") == "down" and reaction.get("reasons"):
+            piece += f" ({reasons_text(reaction['reasons'])})"
         if comment:
             piece += f': "{comment}"'
         pieces.append(piece)
@@ -598,7 +605,7 @@ def parse_reply(text: str, has_negative_prompt: bool) -> Reply:
     for numbers, value, words in RATING_PATTERN.findall(text):
         value = (value or "").lower()
         found = list(dict.fromkeys(int(n) for n in re.findall(r"\d+", numbers)))
-        if value in ("up", "down") and found:
+        if value in ("up", "love", "down") and found:
             ratings.append((found, value, _note_text(words)))
 
     content = TITLE_PATTERN.sub("", text)

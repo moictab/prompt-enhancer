@@ -80,7 +80,7 @@ def test_taking_stock_hands_the_bot_the_whole_record_and_its_notes_follow(api_cl
 
     stored = conversations.get(conversation_id)["messages"][-2]
     assert stored["role"] == "user" and stored["content"] == "sobre todo las manos"
-    assert stored["balance_counts"] == {"images": 2, "runs": 1, "liked": 1, "disliked": 1, "unrated": 0,
+    assert stored["balance_counts"] == {"images": 2, "runs": 1, "liked": 1, "loved": 0, "disliked": 1, "unrated": 0,
                                         "reviewed": 1, "flawed": 1}
     # The chat gets the request without the evidence; GET …/balance has it.
     shown = api_client.get(f"/api/conversations/{conversation_id}", auth=auth_headers).json()["messages"][-2]
@@ -160,7 +160,7 @@ def test_the_record_spells_each_recipe_once_and_counts_side_by_side():
     found = balance.ledger(conversation)
     text = found.text
 
-    assert found.counts == {"images": 5, "runs": 3, "liked": 1, "disliked": 0, "unrated": 4, "reviewed": 1,
+    assert found.counts == {"images": 5, "runs": 3, "liked": 1, "loved": 0, "disliked": 0, "unrated": 4, "reviewed": 1,
                             "flawed": 1}
     # The prompt a run ran, matched to the proposal that has it (ignoring case and spacing).
     assert "Run 1: workflow krea-2/txt2img, proposal 2; " in text
