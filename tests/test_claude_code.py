@@ -240,6 +240,24 @@ def test_failures_say_what_to_do_and_store_nothing(api_client, auth_headers, tmp
     assert any("mustn't have (Bash)" in (r.get("error") or "") for r in log["items"])
 
 
+def test_the_files_it_is_given_are_found_from_its_own_folder(tmp_path, monkeypatch):
+    """DATA_DIR is relative by default ("data"), and the CLI runs in the workspace folder: the paths
+    it is given must not depend on where it runs."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_DIR", "data")
+    seat = bot_seat.open_seat("c", None, tools_allowed=False)
+    try:
+        files = claude_code._write_files(claude_code._folder("turns", seat.token), "system", seat)
+        args = claude_code.args_for("opus", "s", False, files)
+    finally:
+        bot_seat.close_seat(seat)
+    workspace = claude_code._folder("workspace")
+    assert workspace.is_absolute()
+    for flag in ("--mcp-config", "--settings", "--system-prompt-file"):
+        given = args[args.index(flag) + 1]
+        assert (workspace / given).is_file(), flag  # an absolute path joined to the workspace is itself
+
+
 def test_a_cli_that_quits_before_reading_says_why(api_client, auth_headers, tmp_path, monkeypatch):
     """The message is written while the CLI starts up; if it ends first, the write fails (a broken
     pipe), and the reason is what it said, not that it couldn't start."""

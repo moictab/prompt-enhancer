@@ -96,7 +96,9 @@ def _digest(text: str | None) -> str:
 
 
 def _folder(*parts: str) -> Path:
-    folder = Path(get_settings().data_dir, "claude-code", *parts)
+    # Absolute: the CLI runs in the workspace folder, where a path relative to the app's (DATA_DIR
+    # is "data" by default) would point elsewhere.
+    folder = Path(get_settings().data_dir, "claude-code", *parts).resolve()
     folder.mkdir(parents=True, exist_ok=True)
     return folder
 
