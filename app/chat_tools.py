@@ -331,10 +331,11 @@ TOOLS = [
                 "Finish an image: run its family's finishing workflow (the library's \"<model folder>/"
                 f"{FINISH_WORKFLOW}\": a model upscale and detail passes) on the image itself, with the prompt, base "
                 "model and LoRAs it was made with, so its composition stays and the detail comes. changes adjusts "
-                "that run (a LoRA weight, a detailer's denoise with set...). Its hands pass (node 184) is gentle: "
-                "it adds detail and keeps good hands. Only for a hand that is already wrong (fingers missing, "
-                "extra or fused) raise it -- set node 184 denoise to about 0.55 -- since a strong pass can break "
-                "a good hand, above all two hands that overlap."),
+                "that run (a LoRA weight, a detailer's denoise with set...). It sharpens what is right but doesn't "
+                "fix anatomy: a hand that is already wrong (fingers missing, extra or fused) stays wrong, and a "
+                "stronger hands pass made it worse in tests (an extra finger across the palm) and broke good "
+                "hands. When the image to finish has such a flaw, finish it anyway if asked or loved, say that "
+                "finishing won't fix it, and offer variations (same prompt, other seeds) to pick a sound one."),
             "parameters": {
                 "type": "object",
                 "properties": {
