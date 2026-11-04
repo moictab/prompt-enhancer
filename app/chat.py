@@ -333,6 +333,11 @@ def results_text(run: dict | None, numbers: dict[str, int], automatic: bool) -> 
     return f"{text}]{note}"
 
 
+# What the app says for the user when Claude Code's usage limit cut the bot's reply off midway
+# and the limit has reset (retry_later): a message of its own, so the bot answers it.
+CONTINUE_NOTE = ("[Your previous reply was cut off midway: Claude Code's usage limit ran out. It has reset. Carry "
+                 "on from where you stopped -- what you launched is in the conversation -- without starting over.]")
+
 # A reaction's rating, as the bot reads it (a dislike's reasons: conversations.reasons_text).
 RATING_WORDS = {"up": "liked", "love": "loved (a favorite)", "down": "disliked"}
 reasons_text = conversations.reasons_text
@@ -479,6 +484,8 @@ def build_llm_messages(
             add_user([{"type": "text", "text": text}, *images])
             continue
         text = message["content"].strip()
+        if message.get("continue"):
+            text = f"{CONTINUE_NOTE}\n\n{text}" if text else CONTINUE_NOTE
         if message.get("balance"):
             # Taking stock (balance.py): the evidence as it was when asked, while it waits for the bot's
             # balance; once answered, a line (tens of KB less in every later turn: the balance follows).

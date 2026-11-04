@@ -1,4 +1,4 @@
-import { confirmButton, el, request, setBusy, toast } from "./common.js";
+import { confirmButton, el, request, setBusy, TIME_ZONE, toast } from "./common.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -117,7 +117,7 @@ function setupMemory() {
     const date = new Date(timestamp);
     return Number.isNaN(date.getTime())
       ? ""
-      : date.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" });
+      : date.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric", timeZone: TIME_ZONE });
   };
 
   function render() {
@@ -587,7 +587,7 @@ function setupCatalog() {
         ? ` Uso pasado: ${number(source.jobs)} trabajos del gateway, del ${source.from} al ${source.to} (solo cifras).`
         : "";
       stateLine.textContent = catalog.refreshed_at
-        ? `${catalog.items.length} archivos. Actualizado el ${new Date(catalog.refreshed_at).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}.${history}`
+        ? `${catalog.items.length} archivos. Actualizado el ${new Date(catalog.refreshed_at).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short", timeZone: TIME_ZONE })}.${history}`
         : "Aún no se ha leído: actualízalo para que el bot sepa qué tienes.";
     }
     if (!items.length) {

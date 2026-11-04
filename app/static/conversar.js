@@ -2,9 +2,11 @@ import {
   CONVERSATION_START_KEY,
   confirmButton,
   copyButton,
+  dayOf,
   el,
   formatCost,
   frameBody,
+  TIME_ZONE,
   readStored,
   request,
   requestLink,
@@ -142,19 +144,19 @@ function familyName(familyId) {
 function formatWhen(timestamp) {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return "";
-  const today = new Date().toDateString() === date.toDateString();
+  const today = dayOf(new Date()) === dayOf(date);
   return today
-    ? date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })
-    : date.toLocaleDateString("es-ES", { day: "numeric", month: "short" });
+    ? date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", timeZone: TIME_ZONE })
+    : date.toLocaleDateString("es-ES", { day: "numeric", month: "short", timeZone: TIME_ZONE });
 }
 
 // When a moment given in epoch seconds comes: "a las 17:30" today, "el jueves 6 a las 6:00" otherwise.
 function whenItComes(epochSeconds) {
   const date = new Date(epochSeconds * 1000);
   if (Number.isNaN(date.getTime())) return "";
-  const time = `a las ${date.toLocaleTimeString("es-ES", { hour: "numeric", minute: "2-digit" })}`;
-  if (new Date().toDateString() === date.toDateString()) return time;
-  return `el ${date.toLocaleDateString("es-ES", { weekday: "long", day: "numeric" })} ${time}`;
+  const time = `a las ${date.toLocaleTimeString("es-ES", { hour: "numeric", minute: "2-digit", timeZone: TIME_ZONE })}`;
+  if (dayOf(new Date()) === dayOf(date)) return time;
+  return `el ${date.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", timeZone: TIME_ZONE })} ${time}`;
 }
 
 // What Claude Code's subscription has used, as its latest turn reported it (the account's, from any
@@ -177,12 +179,11 @@ function usageColor(used) {
 function shortWhen(epochSeconds) {
   const date = new Date(epochSeconds * 1000);
   if (Number.isNaN(date.getTime())) return "";
-  const time = date.toLocaleTimeString("es-ES", { hour: "numeric", minute: "2-digit" });
-  const today = new Date();
-  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-  if (date.toDateString() === today.toDateString()) return time;
-  if (date.toDateString() === tomorrow.toDateString()) return `mañana ${time}`;
-  return `${date.toLocaleDateString("es-ES", { weekday: "short", day: "numeric" })} ${time}`;
+  const time = date.toLocaleTimeString("es-ES", { hour: "numeric", minute: "2-digit", timeZone: TIME_ZONE });
+  const now = new Date();
+  if (dayOf(date) === dayOf(now)) return time;
+  if (dayOf(date) === dayOf(new Date(now.getTime() + 86_400_000))) return `mañana ${time}`;
+  return `${date.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", timeZone: TIME_ZONE })} ${time}`;
 }
 
 function usageMeter(limits) {
@@ -1356,6 +1357,9 @@ function referenceNote(counts) {
 
 function userMessage(message, previews = null) {
   if (message.balance) return balanceMessage(message);
+  if (message.continue && !message.content) {
+    return el("p", { class: "chat-finished", text: "Se renovó el límite de Claude Code: el bot sigue con su respuesta." });
+  }
   const numbers = state.conversation ? imageNumbers() : new Map();
   const images = message.images || [];
   const shots = previews
@@ -1524,6 +1528,7 @@ function renderLog() {
   const tasked = conversation?.autonomy?.active && conversation.autonomy.kind !== "initiative";
   if (last?.role === "assistant" && !live && !isBusy(conversation) && !tasked) {
     ui.log.lastElementChild?.append(redoBar(last));
+    if (conversation.retry_at && last.error) ui.log.append(limitWait(conversation.retry_at, { continuing: true }));
   }
   if (live) {
     renderLive(live);
@@ -2155,17 +2160,21 @@ async function settle(live, outcome, { picked, onRejected }) {
   }
 }
 
-// Claude Code ran out of the subscription's usage: the server answers again once the limit resets.
-function limitWait(retryAt) {
+// Claude Code ran out of the subscription's usage: the server answers again once the limit resets --
+// or, for a reply it cut off midway (continuing), carries that reply on.
+function limitWait(retryAt, { continuing = false } = {}) {
+  const when = whenItComes(retryAt + RETRY_MARGIN_S);
   return el(
     "div",
     { class: "msg-failed" },
     el("p", {
       class: "notice",
-      text: `Claude Code ha agotado el uso de tu suscripción. Lo reintentará solo ${whenItComes(retryAt + RETRY_MARGIN_S)}.`,
+      text: continuing
+        ? `Claude Code ha agotado el uso de tu suscripción a mitad de la respuesta. La continuará solo ${when}.`
+        : `Claude Code ha agotado el uso de tu suscripción. Lo reintentará solo ${when}.`,
     }),
-    el("button", { type: "button", class: "btn-secondary", text: "Reintentar ahora", onclick: retryReply }),
-    el("button", { type: "button", class: "btn-quiet", text: "No reintentar", onclick: cancelRetry })
+    !continuing && el("button", { type: "button", class: "btn-secondary", text: "Reintentar ahora", onclick: retryReply }),
+    el("button", { type: "button", class: "btn-quiet", text: continuing ? "No continuar" : "No reintentar", onclick: cancelRetry })
   );
 }
 

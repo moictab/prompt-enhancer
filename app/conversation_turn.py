@@ -360,6 +360,11 @@ def _turn(conversation_id: str, automatic: bool):
     if updated is None:
         yield {"type": "error", "detail": "The conversation was deleted while replying."}
         return
+    if failure and failure.get("retry_at"):
+        # Claude Code's limit cut the reply off after it did something: it carries on once the
+        # limit resets (retry_later), unless what it launched brings it back first.
+        updated = conversations.set_retry(conversation_id, failure["retry_at"]) or updated
+        retry_later.schedule(conversation_id, failure["retry_at"])
     for record in news:  # it has been told now
         conversations.update_download(conversation_id, record["n"], lambda d: d.update(told=True))
     if _settle_autonomy(conversation_id):

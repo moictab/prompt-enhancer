@@ -30,6 +30,8 @@ class Settings:
     # ComfyUI's models folder (its loras, checkpoints and diffusion_models): where downloads from
     # Civitai go, each one accepted by the user (downloads.py). Unset, downloads are off.
     comfy_models_dir: str = ""
+    # The time zone the pages show times in (the PC's; a browser may report another, or UTC).
+    time_zone: str = "Europe/Madrid"
 
 
 def get_settings() -> Settings:
@@ -48,4 +50,5 @@ def get_settings() -> Settings:
         claude_code_model=os.environ.get("CLAUDE_CODE_MODEL", "").strip() or "opus",
         self_url=(os.environ.get("SELF_URL", "").strip() or "http://127.0.0.1:8090").rstrip("/"),
         comfy_models_dir=os.environ.get("COMFY_MODELS_DIR", "").strip(),
+        time_zone=os.environ.get("TIME_ZONE", "").strip() or "Europe/Madrid",
     )

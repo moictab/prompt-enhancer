@@ -7,6 +7,8 @@ from ..config import get_settings
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+# Every page shows times in the app's zone (base.html: <html data-time-zone>, common.TIME_ZONE).
+templates.env.globals["time_zone"] = lambda: get_settings().time_zone
 
 @router.get("/")
 def index():

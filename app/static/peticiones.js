@@ -1,4 +1,4 @@
-import { copyButton, el, formatCost, request, shortModel, toast } from "./common.js";
+import { copyButton, el, formatCost, request, shortModel, TIME_ZONE, toast } from "./common.js";
 
 const PAGE_SIZE = 50;
 const IMAGE_MARKER = "logged-image:";
@@ -40,7 +40,7 @@ const state = {
 function formatWhen(timestamp) {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return date.toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: TIME_ZONE });
 }
 
 function formatDuration(ms) {

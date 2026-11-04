@@ -42,6 +42,15 @@ export async function request(url, { method = "GET", json, form } = {}) {
   return data;
 }
 
+// Times show in the app's zone (the PC's, TIME_ZONE on the server), not whatever the browser reports:
+// some report UTC.
+export const TIME_ZONE = document.documentElement.dataset.timeZone || undefined;
+
+// The calendar day of a date in that zone, to tell today and tomorrow apart: "2026-11-04".
+export function dayOf(date) {
+  return date.toLocaleDateString("en-CA", { timeZone: TIME_ZONE });
+}
+
 export function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
@@ -280,8 +289,8 @@ function formatWhen(timestamp, withDate) {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return "";
   return withDate
-    ? date.toLocaleString("es-ES", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
-    : date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+    ? date.toLocaleString("es-ES", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: TIME_ZONE })
+    : date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", timeZone: TIME_ZONE });
 }
 
 // One prompt as a frame: its text, its negative, and the actions whose handlers

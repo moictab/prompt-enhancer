@@ -3,7 +3,10 @@ by themselves once the limit resets.
 
 A Claude Code turn that fails that way (claude_code.limit_resets) leaves the conversation's
 `retry_at` (conversations.set_retry), when the limit resets; a timer here starts the turn
-again MARGIN_SECONDS after that, as "Reintentar" would. The time is stored, so a restart
+again MARGIN_SECONDS after that, as "Reintentar" would. A reply the limit cut off midway (it
+had already run tools, so it was stored, with its error) is carried on instead: the app adds a
+`continue` message (chat.CONTINUE_NOTE) and the bot answers it -- unless runs it launched are
+still pending, whose results bring it back anyway. The time is stored, so a restart
 schedules it again (resume). It doesn't fire if the last message has been answered meanwhile,
 or the user wrote (both clear `retry_at`), or the user turned it off (DELETE …/retry); a
 conversation still busy then is tried again a minute later.
@@ -58,13 +61,17 @@ def _fire(conversation_id: str) -> None:
     if conversation is None or not conversation.get("retry_at"):
         return
     messages = conversation["messages"]
-    if not messages or messages[-1]["role"] not in ("user", "results"):
-        conversations.set_retry(conversation_id, None)
+    cut_off = bool(messages) and messages[-1]["role"] == "assistant" and bool(messages[-1].get("error"))
+    pending = any(run["status"] == "pending" for run in conversation.get("runs") or [])
+    if not messages or not (messages[-1]["role"] in ("user", "results") or (cut_off and not pending)):
+        conversations.set_retry(conversation_id, None)  # answered, or its runs' results will bring it back
         return
     if conversation_turn.is_busy(conversation_id):
         schedule(conversation_id, time.time() - MARGIN_SECONDS + BUSY_DELAY_SECONDS)
         return
     conversations.set_retry(conversation_id, None)
+    if cut_off:
+        conversations.append_message(conversation_id, {"role": "user", "content": "", "images": [], "continue": True})
     try:
         conversation_turn.start_turn(conversation_id)
     except conversation_turn.Busy:

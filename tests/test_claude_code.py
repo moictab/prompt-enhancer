@@ -400,3 +400,34 @@ def test_the_effort_is_the_conversations_or_the_models_own(api_client, auth_head
     assert conversations.get(chosen["id"])["messages"][-1]["claude_code"]["effort"] == "xhigh"
     assert api_client.patch(f"/api/conversations/{chosen['id']}", auth=auth_headers,
                             json={"claude_effort": "turbo"}).status_code == 422
+
+
+def test_a_reply_the_limit_cut_off_midway_carries_on_once_it_resets(api_client, auth_headers, tmp_path,
+                                                                    fake_comfy, claude, monkeypatch):
+    import time
+
+    from app import chat, retry_later, workflows
+    workflows.ensure_seeded()
+    conversation = _claude_conversation(api_client, auth_headers, _family(tmp_path))
+    resets = int(time.time()) - 120
+    monkeypatch.setattr(retry_later, "BUSY_DELAY_SECONDS", 0.05)
+    limited = {**LIMITED, "rate_limit_info": {**LIMITED["rate_limit_info"], "resetsAt": resets, "unifiedWindows": {
+        "five_hour": {"utilization": 1.0, "resetsAt": resets, "status": "rejected"}}}}
+    fake = claude([init(), text("Miro el workflow:"), tool("c1", "inspect_workflow", {"workflow": "krea-2/txt2img"}),
+                   limited, result(error="You've hit your 5-hour limit · resets 5:30pm (Europe/Madrid)")],
+                  [init(), text("Sigo donde lo dejé."), result()])
+
+    _events(_send(api_client, auth_headers, conversation["id"], "hola"))
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        stored = conversations.get(conversation["id"])
+        if stored["messages"][-1]["role"] == "assistant" and not stored["messages"][-1].get("error"):
+            break
+        time.sleep(0.02)
+    roles = [(m["role"], bool(m.get("error")), bool(m.get("continue"))) for m in stored["messages"]]
+    assert roles == [("user", False, False), ("assistant", True, False), ("user", False, True), ("assistant", False, False)]
+    assert chat.CONTINUE_NOTE in fake.sent(1) and "retry_at" not in stored
+
+
+def test_pages_show_times_in_the_apps_zone(api_client, auth_headers):
+    assert 'data-time-zone="Europe/Madrid"' in api_client.get("/conversar", auth=auth_headers).text
