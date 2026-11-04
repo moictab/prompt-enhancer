@@ -494,7 +494,7 @@ def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, 
     conversation = conversations.get(conversation_id)
     if conversation is None:
         return None
-    parts, new_notes, updates, forgets, title, contents, reviews = [], [], [], [], "", [], []
+    parts, new_notes, updates, forgets, title, contents, reviews, ratings = [], [], [], [], "", [], [], []
     stored_steps = []
     for step in steps:
         reply = chat.parse_reply(step["text"], family["has_negative_prompt"])
@@ -504,12 +504,14 @@ def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, 
         updates += reply.note_updates
         forgets += reply.note_forgets
         reviews += reply.reviews
+        ratings += reply.ratings
         if reply.content:
             contents.append(reply.content)
         stored_steps.append({"content": reply.content, "tool_calls": step["tool_calls"], "results": step["results"]})
 
     created = [memory.create_note(note, conversation_id) for note in new_notes]
     _store_reviews(conversation_id, conversation, reviews)
+    rated = _store_ratings(conversation_id, conversation, ratings)
     note_changes = _apply_note_changes(updates, forgets, notes_at_start, conversation_id)
     costs = [e.cost for e in ends if e.cost is not None]
     cost = sum(costs) if costs else None
@@ -554,6 +556,8 @@ def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, 
         message["request_ids"] = request_ids
     if note_changes:
         message["note_changes"] = note_changes
+    if rated:
+        message["ratings"] = rated
     if any(s["tool_calls"] for s in stored_steps):
         message["steps"] = stored_steps
     if automatic:
@@ -586,6 +590,28 @@ def _store_reviews(conversation_id: str, conversation: dict, reviews: list[tuple
     if stored:
         catalog.invalidate_stats()
         logger.info("conversation reviews stored conversation_id=%s reviews=%d", conversation_id, stored)
+
+
+def _store_ratings(conversation_id: str, conversation: dict, ratings: list) -> list[dict]:
+    """The user's words about run images, as the bot read them, stored as their reactions (by
+    the numbers it sees). Returns what was set, for the chat to show and undo."""
+    if not ratings:
+        return []
+    by_number = {n: image_id for image_id, n in chat.image_numbers(conversation["messages"]).items()}
+    rated = []
+    for numbers, value, words in ratings:
+        for number in numbers:
+            image_id = by_number.get(number)
+            if image_id is None:
+                continue
+            done = conversations.set_inferred_reaction(conversation_id, image_id, value, words)
+            if done is not None:
+                rated.append({"image_id": image_id, "number": number, "rating": value, "comment": words,
+                              "previous": done["previous"]})
+    if rated:
+        catalog.invalidate_stats()
+        logger.info("conversation ratings from words conversation_id=%s images=%d", conversation_id, len(rated))
+    return rated
 
 
 def on_run_finished(conversation_id: str, run: dict) -> None:

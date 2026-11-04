@@ -76,6 +76,7 @@ COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workfl
 - Review every image a run brings, in the reply that first sees it: <review image="N" verdict="ok">…</review> or verdict="flawed", one per image, saying in a few words what's wrong (hands, anatomy, duplicated bodies or faces, garbage text, burnt or washed-out colors, wrong style, not what was asked…) and its likely cause in the recipe (which LoRA or weight, the size, the steps…). Reviews are kept with each image's recipe: the installed models list shows how often each LoRA and weight has failed, and why.
 - calibrate_lora shows what a LoRA does and from which weight it breaks: the same prompt and seed at several weights, run when the GPU is free (idle priority, so it can take a while). Review its images weight by weight and note the conclusion as "<lora>: <effect>; fine up to <weight>, breaks at <weight>".
 - The user can react to the images runs make -- liked, or disliked with the reason -- and the reactions come with their next message. Take them as the most direct feedback there is, above your own reviews: keep what was liked, fix what wasn't.
+- When the user judges run images in words instead -- "they're all great", "the third one is perfect", "I don't like the ones with the hat" -- record that as their reaction, so it counts like one: <rating images="5,6,7,8" value="up">their words, short</rating>, or value="down" with what they disliked. Only images from runs that their message clearly points at (if you can't tell which, ask instead), and not ones they reacted to themselves: their own reaction stands. If a later message changes their mind, rate those images again.
 - Choose models and LoRAs with what is known about them (the installed models, in the app's context at the end of the latest message: the user's description, how images made with them went), and note what you learn about how one shapes images, as "<model name>: <effect>"."""
 
 FAMILY_RULES_INTRO = (
@@ -124,7 +125,13 @@ REVIEW_PATTERN = re.compile(
     r"<review\s+image\s*=\s*[\"']?(\d+)[\"']?(?:\s+verdict\s*=\s*[\"']?(\w+)[\"']?)?\s*>(.*?)(?:</review>|(?=\n)|$)",
     re.IGNORECASE | re.DOTALL,
 )
-STRAY_TAG_PATTERN = re.compile(r"</?(?:title|remember|forget|review)\b[^>]*>", re.IGNORECASE)
+# The user's words about run images, recorded as their reactions: <rating images="5,6" value="up">words</rating>.
+RATING_PATTERN = re.compile(
+    r"<rating\s+images?\s*=\s*[\"']?([#\d,\s]+)[\"']?(?:\s+value\s*=\s*[\"']?(\w+)[\"']?)?\s*>(.*?)"
+    r"(?:</rating>|(?=\n)|$)",
+    re.IGNORECASE | re.DOTALL,
+)
+STRAY_TAG_PATTERN = re.compile(r"</?(?:title|remember|forget|review|rating)\b[^>]*>", re.IGNORECASE)
 # A prompt written bare, as "POSITIVE: ..." at the start of a line (the label maybe in **bold**).
 BARE_POSITIVE_LINE = re.compile(r"^[ \t]*(?:\*\*)?POSITIVE[ \t]*:", re.IGNORECASE | re.MULTILINE)
 BARE_NEGATIVE_START = re.compile(r"^[ \t]*(?:\*\*)?NEGATIVE[ \t]*:", re.IGNORECASE)
@@ -515,6 +522,8 @@ class Reply:
     note_updates: list[tuple[int, str]] = field(default_factory=list)  # (note number, new text)
     note_forgets: list[int] = field(default_factory=list)  # note numbers
     reviews: list[tuple[int, str, str]] = field(default_factory=list)  # (image number, ok|flawed, note)
+    # The user's words as reactions: (image numbers, up|down, their words).
+    ratings: list[tuple[list[int], str, str]] = field(default_factory=list)
     title: str = ""
 
     @property
@@ -585,11 +594,18 @@ def parse_reply(text: str, has_negative_prompt: bool) -> Reply:
         if verdict not in ("ok", "flawed"):
             verdict = "ok" if note.lower().startswith("ok") else "flawed"
         reviews.append((int(number), verdict, note))
+    ratings = []
+    for numbers, value, words in RATING_PATTERN.findall(text):
+        value = (value or "").lower()
+        found = list(dict.fromkeys(int(n) for n in re.findall(r"\d+", numbers)))
+        if value in ("up", "down") and found:
+            ratings.append((found, value, _note_text(words)))
 
     content = TITLE_PATTERN.sub("", text)
     content = REMEMBER_PATTERN.sub("", content)
     content = FORGET_PATTERN.sub("", content)
     content = REVIEW_PATTERN.sub("", content)
+    content = RATING_PATTERN.sub("", content)
     content = STRAY_TAG_PATTERN.sub("", content)
     content = CODE_FENCE_LINE.sub("", content)
     content = re.sub(r"[ \t]+\n", "\n", content)
@@ -618,5 +634,5 @@ def parse_reply(text: str, has_negative_prompt: bool) -> Reply:
 
     return Reply(
         content=content, parts=parts, notes=notes, note_updates=updates, note_forgets=forgets, reviews=reviews,
-        title=title,
+        ratings=ratings, title=title,
     )

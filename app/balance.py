@@ -152,6 +152,7 @@ def _rows(conversation: dict) -> tuple[list[dict], int]:
                     "size": _size(run.get("size") or settings.get("size")),
                     "seed": job.get("seed") if job.get("seed") is not None else settings.get("seed"),
                     "rating": reaction.get("rating"),
+                    "in_words": bool(reaction.get("inferred")),  # said in a message, not a thumb
                     "comment": " ".join((reaction.get("comment") or "").split()),
                     "verdict": review.get("verdict"),
                     "note": " ".join((review.get("note") or "").split()),
@@ -196,6 +197,8 @@ def _settings(row: dict) -> str:
 
 def _verdicts(row: dict) -> str:
     user = "user " + {"up": "liked", "down": "disliked"}.get(row["rating"], "no reaction")
+    if row["rating"] and row.get("in_words"):
+        user += " (said so in a message)"
     if row["comment"]:
         user += f': "{row["comment"]}"'
     if row["verdict"]:

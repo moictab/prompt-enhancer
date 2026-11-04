@@ -364,6 +364,29 @@ def set_reaction(
         return image
 
 
+def set_inferred_reaction(conversation_id: str, image_id: str, rating: str, comment: str,
+                          root: str | None = None) -> dict | None:
+    """The bot's reading of the user's words as their reaction to a run's image ("they're all
+    great"): stored like a reaction, marked inferred and already sent (the bot knows). One the
+    user set themselves stands, and only a run's images take one. Returns {previous} when set
+    (the reaction it replaced, if any, to undo it), None otherwise."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return None
+        image = next((img for m in conversation["messages"] if m["role"] == "results"
+                      for img in m.get("images") or [] if img["id"] == image_id), None)
+        if image is None:
+            return None
+        previous = image.get("reaction")
+        if previous and not previous.get("inferred"):
+            return None
+        comment = " ".join((comment or "").split())[:MAX_REACTION_COMMENT]
+        image["reaction"] = {"rating": rating, "comment": comment, "at": _now(), "sent": True, "inferred": True}
+        storage.write_json(_path(conversation_id, root), conversation)
+        return {"previous": previous}
+
+
 def unsent_reactions(conversation: dict) -> list[dict]:
     return [
         {"image_id": img["id"], "rating": img["reaction"].get("rating"), "comment": img["reaction"].get("comment", "")}

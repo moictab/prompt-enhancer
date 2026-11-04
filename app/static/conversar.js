@@ -350,7 +350,8 @@ function liveParts(raw) {
     .replace(/<remember\b[^>]*>[\s\S]*?(?:<\/remember>|(?=\n)|$)/gi, "")
     .replace(/<forget\b[^>]*>(?:\s*<\/forget>)?/gi, "")
     .replace(/<review\b[^>]*>[\s\S]*?(?:<\/review>|(?=\n)|$)/gi, "")
-    .replace(/<\/?(?:title|remember|forget|review)\b[^>]*>/gi, "")
+    .replace(/<rating\b[^>]*>[\s\S]*?(?:<\/rating>|(?=\n)|$)/gi, "")
+    .replace(/<\/?(?:title|remember|forget|review|rating)\b[^>]*>/gi, "")
     .replace(/^[ \t]*```[\w-]*[ \t]*$\n?/gm, "")
     .replace(/<\/?[a-z]*$/i, "");
   const parts = [];
@@ -685,6 +686,13 @@ function reactionControls(image, number) {
     })
   );
   wrap.append(up, down, commentButton);
+  if (reaction.inferred && reaction.rating) {
+    wrap.append(el("span", {
+      class: "react-inferred",
+      text: "por lo que dijiste",
+      title: "El bot la ha valorado a partir de lo que escribiste. Pulsa los pulgares para cambiarla.",
+    }));
+  }
   return wrap;
 }
 
@@ -758,6 +766,56 @@ function reactionsSummary(reactions, numbers) {
       )
     )
   );
+}
+
+// What the bot recorded as the user's reactions from their words: "Apuntado como tu valoración:
+// te gustan #5, #6, #7 y #8", with Deshacer while those reactions still stand.
+function ratingsLine(ratings) {
+  if (!ratings?.length) return null;
+  const images = new Map(
+    (state.conversation?.messages || []).flatMap((m) => m.images || []).map((image) => [image.id, image])
+  );
+  const standing = ratings.filter((r) => {
+    const reaction = images.get(r.image_id)?.reaction;
+    return reaction?.inferred && reaction.rating === r.rating;
+  });
+  const list = (items) => {
+    const refs = items.map((r) => `#${r.number}`);
+    return refs.length > 1 ? `${refs.slice(0, -1).join(", ")} y ${refs.at(-1)}` : refs[0];
+  };
+  const liked = ratings.filter((r) => r.rating === "up");
+  const disliked = ratings.filter((r) => r.rating === "down");
+  const said = [
+    liked.length && `te ${liked.length === 1 ? "gusta" : "gustan"} ${list(liked)}`,
+    disliked.length && `no te ${disliked.length === 1 ? "gusta" : "gustan"} ${list(disliked)}`,
+  ].filter(Boolean).join("; ");
+  const line = el(
+    "p",
+    { class: `msg-ratings${standing.length ? "" : " is-undone"}` },
+    el("span", { class: "msg-ratings-text" }, withImageRefs(
+      standing.length ? `Apuntado como tu valoración: ${said}.` : `Valoración deshecha (${said}).`))
+  );
+  if (standing.length) {
+    const undo = el("button", { type: "button", class: "btn-quiet", text: "Deshacer",
+      title: "Quita estas valoraciones: las imágenes quedan sin valorar" });
+    undo.addEventListener("click", async () => {
+      setBusy(undo, true, "Deshaciendo…");
+      try {
+        for (const r of standing) {
+          await request(`/api/conversations/${state.conversation.id}/images/${r.image_id}/reaction`, {
+            method: "PUT",
+            json: { rating: null, comment: "" },
+          });
+        }
+      } catch (err) {
+        toast(err.message, { error: true });
+      }
+      await refreshFromServer();
+      renderLog();
+    });
+    line.append(undo);
+  }
+  return line;
 }
 
 function noteChip(note) {
@@ -1077,6 +1135,7 @@ function fillBotMessage(
   {
     notes = [],
     note_changes: noteChanges = [],
+    ratings = [],
     cost = null,
     truncated = false,
     request_id: requestId = null,
@@ -1116,6 +1175,7 @@ function fillBotMessage(
   node.replaceChildren(
     ...[
       ...body,
+      !live && ratingsLine(ratings),
       (notes.length > 0 || noteChanges.length > 0) &&
         el("div", { class: "msg-notes" }, [...noteChanges.map(noteChangeChip), ...notes.map(noteChip)]),
       truncated &&

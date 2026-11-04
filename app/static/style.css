@@ -1271,6 +1271,10 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .msg-failed .notice { flex: 1 1 18rem; }
 
 .msg-notes { display: flex; flex-direction: column; gap: 0.35rem; }
+.msg-ratings { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.6rem; margin: 0; color: var(--paper-dim); font-size: var(--step--1); }
+.msg-ratings.is-undone { color: var(--paper-faint); }
+.msg-ratings .btn-quiet { padding-block: 0.1rem; font-size: 0.75rem; }
+.react-inferred { color: var(--paper-faint); font-size: 0.7rem; }
 .memory-chip {
   display: flex;
   flex-wrap: wrap;
