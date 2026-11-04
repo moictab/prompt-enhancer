@@ -53,6 +53,8 @@ const ui = {
   engine: $("chat-engine"), // only with Claude Code installed
   claudeModel: $("chat-claude-model"),
   claudeModelField: $("chat-claude-model-field"),
+  claudeEffort: $("chat-claude-effort"),
+  claudeEffortField: $("chat-claude-effort-field"),
   modelField: $("chat-model-field"),
   temperatureField: $("chat-temperature-field"), // Claude Code has no temperature to set
   chat: document.querySelector(".chat"),
@@ -109,6 +111,7 @@ function settings() {
     initiative_images: Number.isInteger(source.initiative_images) ? source.initiative_images : INITIATIVE_IMAGES,
     engine: source.engine || "openrouter",
     claude_model: source.claude_model || "",
+    claude_effort: source.claude_effort || "",
   };
 }
 
@@ -126,7 +129,9 @@ function onClaude(values = settings()) {
 function engineLabel(values = settings()) {
   if (!onClaude(values)) return shortModel(values.llm_model);
   const name = values.claude_model || ui.claudeModel?.dataset.default || "";
-  return `Claude Code · ${name.charAt(0).toUpperCase()}${name.slice(1)}`;
+  const effort = values.claude_effort ? ui.claudeEffort?.selectedOptions[0]?.textContent : "";
+  const label = `Claude Code · ${name.charAt(0).toUpperCase()}${name.slice(1)}`;
+  return effort ? `${label}, esfuerzo ${effort.toLowerCase()}` : label;
 }
 
 function familyName(familyId) {
@@ -1328,6 +1333,8 @@ function applySettingsToForm(values) {
     ui.engine.value = values.engine === CLAUDE_CODE ? CLAUDE_CODE : "openrouter";
     ui.claudeModel.value = values.claude_model || ui.claudeModel.dataset.default;
     ui.claudeModelField.hidden = !onClaude(values);
+    ui.claudeEffort.value = values.claude_effort || "";
+    ui.claudeEffortField.hidden = !onClaude(values);
     ui.modelField.hidden = onClaude(values);
     ui.temperatureField.hidden = onClaude(values);
   }
@@ -1365,7 +1372,7 @@ async function changeSettings(changes) {
   }
   try {
     const updated = await request(`/api/conversations/${state.conversation.id}`, { method: "PATCH", json: changes });
-    for (const key of ["family_id", "llm_model", "temperature", "auto_comment", "initiative_images", "engine", "claude_model"]) {
+    for (const key of ["family_id", "llm_model", "temperature", "auto_comment", "initiative_images", "engine", "claude_model", "claude_effort"]) {
       state.conversation[key] = updated[key];
     }
     rememberSettings();
@@ -1541,6 +1548,7 @@ function defaultSettings() {
     initiative_images: Number.isInteger(stored.initiative_images) ? stored.initiative_images : INITIATIVE_IMAGES,
     engine: ui.engine && stored.engine === CLAUDE_CODE ? CLAUDE_CODE : "openrouter",
     claude_model: stored.claude_model || "",
+    claude_effort: stored.claude_effort || "",
   };
 }
 
@@ -2285,6 +2293,7 @@ function setupSettings() {
     });
   });
   ui.claudeModel?.addEventListener("change", () => changeSettings({ claude_model: ui.claudeModel.value }).then(renderHead));
+  ui.claudeEffort?.addEventListener("change", () => changeSettings({ claude_effort: ui.claudeEffort.value }).then(renderHead));
   ui.temperature.addEventListener("input", () => (ui.temperatureValue.textContent = ui.temperature.value));
   ui.temperature.addEventListener("change", () => changeSettings({ temperature: Number(ui.temperature.value) }));
   ui.initiative?.addEventListener("change", () => {

@@ -46,6 +46,18 @@
           {% endfor %}
         </select>
       </div>
+      <div class="field" id="chat-claude-effort-field" hidden>
+        <label for="chat-claude-effort">Esfuerzo</label>
+        <select id="chat-claude-effort" aria-describedby="chat-claude-effort-hint">
+          <option value="">El del modelo</option>
+          <option value="low">Bajo</option>
+          <option value="medium">Medio</option>
+          <option value="high">Alto</option>
+          <option value="xhigh">Muy alto</option>
+          <option value="max">Máximo</option>
+        </select>
+        <p class="chat-auto-comment-hint" id="chat-claude-effort-hint">Cuánto piensa antes de responder. Más esfuerzo, respuestas más pensadas, más lentas y más uso de tu suscripción.</p>
+      </div>
       {% endif %}
       <div class="field" id="chat-model-field">
         <label for="chat-model">Modelo de texto</label>

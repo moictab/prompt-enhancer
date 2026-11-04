@@ -30,6 +30,7 @@ def _require_model(llm_model: str) -> str:
 
 
 Engine = Literal["openrouter", "claude-code"]
+Effort = Literal["", "low", "medium", "high", "xhigh", "max"]  # "": the model's own (claude_code.EFFORTS)
 
 
 class ConversationSettings(BaseModel):
@@ -39,6 +40,7 @@ class ConversationSettings(BaseModel):
     auto_comment: bool = True
     engine: Engine = "openrouter"
     claude_model: str = Field(default="", max_length=80)
+    claude_effort: Effort = ""
     initiative_images: int = Field(default=conversations.INITIATIVE_IMAGES, ge=0, le=chat_tools.INITIATIVE_MAX_IMAGES)
 
 
@@ -50,6 +52,7 @@ class ConversationSettingsUpdate(BaseModel):
     auto_comment: bool | None = None
     engine: Engine | None = None
     claude_model: str | None = Field(default=None, max_length=80)
+    claude_effort: Effort | None = None
     initiative_images: int | None = Field(default=None, ge=0, le=chat_tools.INITIATIVE_MAX_IMAGES)
 
 
@@ -82,7 +85,7 @@ def create_conversation(req: ConversationSettings):
     return conversations.create(
         req.family_id, _require_model(req.llm_model), req.temperature,
         auto_comment=req.auto_comment, engine=req.engine, claude_model=req.claude_model.strip(),
-        initiative_images=req.initiative_images,
+        initiative_images=req.initiative_images, claude_effort=req.claude_effort,
     )
 
 

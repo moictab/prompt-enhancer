@@ -49,6 +49,8 @@ logger = logging.getLogger("app.conversations")
 
 ENGINE = "claude-code"
 MODELS = ("opus", "sonnet", "haiku")
+# How hard it thinks (--effort); a conversation without one gets the model's own.
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 SERVER_KEY = "pe"
 TOOL_PREFIX = f"mcp__{SERVER_KEY}__"
 MAX_TURNS = 40  # agentic steps in one reply
@@ -87,6 +89,12 @@ def engine(conversation: dict) -> bool:
 
 def available() -> bool:
     return shutil.which(get_settings().claude_code_command) is not None
+
+
+def effort_for(conversation: dict) -> str | None:
+    """How hard it thinks (--effort): the conversation's choice, or None for the model's own."""
+    effort = conversation.get("claude_effort")
+    return effort if effort in EFFORTS else None
 
 
 def model_for(conversation: dict) -> str:
@@ -193,11 +201,12 @@ def build_message(conversation: dict, state: dict, sections: dict[str, str], par
     return blocks, recorded
 
 
-def args_for(model: str, session_id: str, resume: bool, files: dict[str, Path]) -> list[str]:
+def args_for(model: str, session_id: str, resume: bool, files: dict[str, Path],
+             effort: str | None = None) -> list[str]:
     command = shutil.which(get_settings().claude_code_command) or get_settings().claude_code_command
     return [
         command, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-        "--include-partial-messages", "--model", model,
+        "--include-partial-messages", "--model", model, *(["--effort", effort] if effort else []),
         "--tools", "", "--strict-mcp-config", "--mcp-config", str(files["mcp"]),
         "--allowedTools", f"{TOOL_PREFIX}*", "--permission-mode", "dontAsk", "--permission-prompts", "none",
         "--setting-sources", "", "--settings", str(files["settings"]),
@@ -334,12 +343,13 @@ def run(conversation: dict, family: dict, toolbox, library: list[dict],
     seat = bot_seat.open_seat(conversation_id, toolbox, tools_allowed=tools_allowed)
     folder = _folder("turns", seat.token)
     files = _write_files(folder, system, seat)
-    args = args_for(model, session_id, not new_session, files)
+    effort = effort_for(conversation)
+    args = args_for(model, session_id, not new_session, files, effort)
     context = {"mode": "conversation", "conversation_id": conversation_id, "engine": ENGINE}
     if automatic:
         context["automatic"] = True
     record = request_log.RequestRecord({
-        "model": f"claude-code/{model}", "session_id": session_id, "resume": not new_session,
+        "model": f"claude-code/{model}", "effort": effort, "session_id": session_id, "resume": not new_session,
         "system": system if new_session else "(recorded when the session started)",
         "messages": [{"role": "user", "content": _logged_blocks(blocks)}],
     }, context)
@@ -472,7 +482,7 @@ def run(conversation: dict, family: dict, toolbox, library: list[dict],
         })
     ends = [StreamEnd(cost=None, truncated=(final or {}).get("stop_reason") == "max_tokens", request_id=record.id)]
     extra = {"engine": ENGINE, "claude_code": {
-        "model": model, "estimated_cost": (final or {}).get("total_cost_usd"),
+        "model": model, **({"effort": effort} if effort else {}), "estimated_cost": (final or {}).get("total_cost_usd"),
         "turns": (final or {}).get("num_turns"), "duration_ms": (final or {}).get("duration_ms")}}
     if rate_limit:
         extra["claude_code"]["rate_limit"] = rate_limit

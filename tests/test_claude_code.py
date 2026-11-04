@@ -384,3 +384,19 @@ def test_a_retry_waiting_for_the_limit_can_be_called_off(api_client, auth_header
         assert conversation["id"] not in retry_later.pending()
     finally:
         retry_later.cancel(conversation["id"])
+
+
+def test_the_effort_is_the_conversations_or_the_models_own(api_client, auth_headers, tmp_path, fake_comfy, claude):
+    family = _family(tmp_path)
+    own = _claude_conversation(api_client, auth_headers, family)
+    chosen = _claude_conversation(api_client, auth_headers, family, claude_effort="xhigh")
+    fake = claude([init(), text("Hola."), result()], [init(), text("Hola."), result()])
+    _send(api_client, auth_headers, own["id"], "hola")
+    _send(api_client, auth_headers, chosen["id"], "hola")
+
+    assert "--effort" not in fake.launches[0]["args"]
+    args = fake.launches[1]["args"]
+    assert args[args.index("--effort") + 1] == "xhigh"
+    assert conversations.get(chosen["id"])["messages"][-1]["claude_code"]["effort"] == "xhigh"
+    assert api_client.patch(f"/api/conversations/{chosen['id']}", auth=auth_headers,
+                            json={"claude_effort": "turbo"}).status_code == 422

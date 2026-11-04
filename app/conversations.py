@@ -57,11 +57,13 @@ def create(
     engine: str = "openrouter",
     claude_model: str = "",
     initiative_images: int | None = None,
+    claude_effort: str = "",
 ) -> dict:
     """auto_comment: when a run finishes, the bot looks at its images on its own; off, they
     wait for the user's next message (one request fewer per run). Older conversations,
     without the field, comment (comments_on_results). engine: who answers, the LLM on
-    OpenRouter (llm_model) or Claude Code (claude_model; claude_code.py). initiative_images: how
+    OpenRouter (llm_model) or Claude Code (claude_model, and claude_effort: "" for the model's own;
+    claude_code.py). initiative_images: how
     many images the bot may make on its own after each of the user's messages (initiative)."""
     now = _now()
     conversation = {
@@ -75,6 +77,7 @@ def create(
         "auto_comment": auto_comment,
         "engine": engine,
         "claude_model": claude_model,
+        "claude_effort": claude_effort,
         "initiative_images": INITIATIVE_IMAGES if initiative_images is None else initiative_images,
         "cost": None,
         "messages": [],
@@ -152,7 +155,7 @@ def list_summaries(root: str | None = None) -> list[dict]:
 def update_settings(conversation_id: str, changes: dict, root: str | None = None) -> dict | None:
     """Change settings, or the title (the user's: the bot only titles an untitled
     conversation). Neither counts as activity: updated_at, the list's order, stays."""
-    allowed = {"family_id", "llm_model", "temperature", "title", "auto_comment", "engine", "claude_model",
+    allowed = {"family_id", "llm_model", "temperature", "title", "auto_comment", "engine", "claude_model", "claude_effort",
                "initiative_images"}
     with _lock:
         conversation = get(conversation_id, root)
