@@ -250,6 +250,8 @@ def _resource_text(resource: dict, installed: dict | None = None) -> str:
         from .catalog import match_installed
         local = match_installed(resource, installed)
         details.append(f"installed here as {local}" if local else "no installed file matches its name")
+    if resource.get("version_id"):
+        details.append(f"Civitai version {resource['version_id']}")
     return f"{text} ({'; '.join(details)})" if details else text
 
 

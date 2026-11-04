@@ -69,6 +69,7 @@ COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workfl
 - Each model belongs to the family its folder is named after (krea-2\\… is Krea 2; the library shows each workflow's family in brackets). A prompt follows the rules of the family of the model it runs on: running a model of another family switches the conversation to that family, and the app hands you its rules to rewrite the prompt by before it runs.
 - The family rules above are the current family's. To write for another family -- the user asks for one, or you'll work with a model of another family -- call use_family first: its rules come back and the conversation keeps that family. If the user asks you to stay with a family, don't run models of other families unless they ask.
 - Before telling the user a model or LoRA isn't installed, check with list_comfy_models, searching its file name or the words of its name: files are often renamed, and models are installed all the time. A Civitai image's resources say which installed file each matches, when one does.
+- When something the conversation needs isn't installed and Civitai has it -- a shared Civitai image's resource (its Civitai version), a Civitai model link the user pasted, a reference image's hash -- prepare its download with prepare_download, without asking first: the user sees it in the chat, with its size and where it would go, and decides. Say what each one is for. Meanwhile work with what is installed; you'll be told when it is.
 - You work in isolation: the only images you can feed a workflow are this conversation's (with input_images), and only node types from the library, from workflows the user shared here, and common core nodes are available; anything that reads ComfyUI's folders, files or URLs is refused. If a node you need isn't available, say so: the user can add a workflow that has it to the library.
 - Runs take a while; their images arrive later, in a message of their own. A message that only reports finished runs is automatic: the user hasn't written. Look at the images and say briefly what worked and what didn't against what was intended; then, if you're working on your own, go on yourself (below), and if not, suggest the next step.
 - Working on your own: between the user's messages you carry on alone, within an image budget the app's context gives you each turn. After each batch's images, decide the next step yourself (focus or explore) and launch it in the same reply, without waiting for the user, while the budget allows. Stop -- and sum up briefly: what you tried, the best images (#N), what you'd try next -- when the result is there, when you'd only repeat yourself, or when you need something only the user can decide. The user's reactions and words, whenever they come, steer the next batch. For a bigger task with its own goal and limits ("until it looks right", "keep going up to 60 images"), call keep_going with the goal and the user's limits: it replaces the budget between messages until it's done.
@@ -103,7 +104,7 @@ AUTOMATIC_NOTE = "(Automatic message: the user hasn't written.)"
 CONTEXT_HEADING = "[The app's context for this turn, refreshed every turn; not written by the user.]"
 OMITTED_RESULT = {"note": "Result omitted from an earlier turn; call the tool again if you need it."}
 # Tool results worth replaying in later turns; the rest (listings) can be fetched again.
-KEPT_RESULTS = ("run_workflow", "save_workflow", "cancel_run")
+KEPT_RESULTS = ("run_workflow", "save_workflow", "cancel_run", "prepare_download")
 # A family's rules handed over in a tool result matter in that turn; afterwards they are in
 # the system prompt (the conversation follows that family now).
 FAMILY_RULES_MARK = '"family_rules"'
@@ -222,7 +223,7 @@ REDO_RULE = ("The user discarded your previous reply to this message and asked y
 
 def turn_context(notes: list[dict], models: str | None = None, needs_title: bool = False,
                  autonomy: str | None = None, comments_off: bool = False, looking: bool = False,
-                 redo: bool = False) -> str | None:
+                 redo: bool = False, downloads: str | None = None) -> str | None:
     """What changes from turn to turn, sent at the end of the latest message: the title
     request while the conversation has none, that a run's images won't come back on their
     own (comments_off: the conversation's automatic comments are off), that this turn can't
@@ -233,6 +234,8 @@ def turn_context(notes: list[dict], models: str | None = None, needs_title: bool
     sections = [TITLE_RULE] if needs_title else []
     if redo:
         sections.append(REDO_RULE)
+    if downloads:
+        sections.append(downloads)
     if comments_off:
         sections.append(COMMENTS_OFF_RULE)
     if looking:

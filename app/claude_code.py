@@ -169,7 +169,7 @@ def _context(conversation: dict, state: dict, sections: dict[str, str], parts: d
     text = chat.turn_context(parts["notes"] if resend else [], parts.get("models") if resend else None,
                              needs_title=parts["needs_title"], autonomy=parts.get("autonomy"),
                              comments_off=parts.get("comments_off", False), looking=parts.get("looking", False),
-                             redo=parts.get("redo", False))
+                             redo=parts.get("redo", False), downloads=parts.get("downloads"))
     extra = []
     if not new_session:
         started = state.get("sections") or {}

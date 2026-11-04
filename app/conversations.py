@@ -427,6 +427,36 @@ def add_run(conversation_id: str, run: dict, workflows: list[dict], root: str | 
         return run
 
 
+def add_download(conversation_id: str, record: dict, root: str | None = None) -> dict | None:
+    """A download from Civitai the bot prepared (downloads.py), numbered from 1 within the conversation."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return None
+        found = conversation.setdefault("downloads", [])
+        record = {**record, "n": len(found) + 1}
+        found.append(record)
+        storage.write_json(_path(conversation_id, root), conversation)
+        return record
+
+
+def get_download(conversation_id: str, n: int, root: str | None = None) -> dict | None:
+    found = (get(conversation_id, root) or {}).get("downloads") or []
+    return found[n - 1] if isinstance(n, int) and 0 < n <= len(found) else None
+
+
+def update_download(conversation_id: str, n: int, change, root: str | None = None) -> dict | None:
+    """Apply change(record) to the stored download under the lock; returns the record."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        found = (conversation or {}).get("downloads") or []
+        if not 0 < n <= len(found):
+            return None
+        change(found[n - 1])
+        storage.write_json(_path(conversation_id, root), conversation)
+        return found[n - 1]
+
+
 def get_run(conversation_id: str, n: int, root: str | None = None) -> dict | None:
     conversation = get(conversation_id, root)
     runs = (conversation or {}).get("runs") or []

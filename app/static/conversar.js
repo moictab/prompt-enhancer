@@ -81,6 +81,7 @@ const state = {
   toolSupport: new Map(), // model id -> takes tools (can run ComfyUI workflows)
   comfy: document.getElementById("chat-layout").dataset.comfy === "on",
   pollTimer: 0,
+  downloadChoices: {}, // "<conversation>:<n>" -> the folder, family and name the user left in a download's card
   noteIds: null, // ids of the notes still in memory, to show forgotten ones as such
   noteTexts: null, // their texts: a forgotten note brought back has a new id but the same text
   attachments: [], // [{ file, url }]
@@ -870,6 +871,132 @@ function runCard(part, live) {
   return card;
 }
 
+// ---------- downloads from Civitai: the bot prepares them, the user accepts each one ----------
+
+function formatBytes(bytes) {
+  if (!bytes) return "";
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+}
+
+// The family folders under ComfyUI's models folders (GET /api/model-folders), loaded once.
+function modelFolders() {
+  if (state.modelFolders === undefined) {
+    state.modelFolders = null;
+    request("/api/model-folders")
+      .then((folders) => {
+        state.modelFolders = folders;
+        renderLog();
+      })
+      .catch(() => (state.modelFolders = {}));
+  }
+  return state.modelFolders || {};
+}
+
+function downloadCard(part, live) {
+  const record = live ? null : state.conversation?.downloads?.[part.download - 1];
+  if (!record) {
+    return el("div", { class: "run-card download-card is-pending" },
+      el("span", { class: "run-label", text: "Descarga" }),
+      el("span", { class: "run-status", text: "Preparándola" }));
+  }
+  const id = state.conversation.id;
+  const choice = (state.downloadChoices[`${id}:${record.n}`] ||= {
+    folder: record.folder,
+    family: record.family,
+    name: record.name,
+  });
+  const what = `${record.model_name}${record.version_name ? `, ${record.version_name}` : ""}`;
+  const kind = record.folder === "loras" ? "LoRA" : "Checkpoint";
+  const facts = [kind, record.base_model, formatBytes(record.size_bytes)].filter(Boolean).join(", ");
+  const card = el(
+    "div",
+    { class: `run-card download-card is-${record.status === "downloading" ? "pending" : record.status}` },
+    el("span", { class: "run-label", text: `Descarga ${record.n}` }),
+    el("span", { class: "run-workflow", text: what }),
+    el("span", { class: "run-status", text: facts })
+  );
+  const act = async (button, path, body, busyText) => {
+    setBusy(button, true, busyText);
+    try {
+      await request(`/api/conversations/${id}/downloads/${record.n}/${path}`, { method: "POST", json: body });
+    } catch (err) {
+      setBusy(button, false);
+      toast(err.message, { error: true });
+      return;
+    }
+    await refreshFromServer();
+    schedulePoll();
+  };
+  if (record.status === "downloading") {
+    const got = record.progress?.bytes || 0;
+    const total = record.progress?.total || record.size_bytes;
+    const share = total ? Math.min(100, Math.round((got / total) * 100)) : 0;
+    card.append(
+      el("span", { class: "download-progress", role: "progressbar", "aria-valuenow": share, "aria-valuemin": 0, "aria-valuemax": 100 },
+        el("span", { style: `width: ${share}%` })),
+      el("span", { class: "run-status", text: `Descargando: ${formatBytes(got) || "0 MB"} de ${formatBytes(total)} (${share} %)` }),
+      el("span", { class: "run-actions" },
+        el("button", { type: "button", class: "btn-quiet", text: "Cancelar",
+          onclick: (event) => act(event.currentTarget, "cancel", null, "Cancelando…") }))
+    );
+    return card;
+  }
+  if (record.status === "done") {
+    card.append(el("span", { class: "run-folder", text: `Instalado en ${FOLDER_LABELS[record.folder] || record.folder}: ${record.installed_as}` }));
+    return card;
+  }
+  const notes = {
+    declined: "La has descartado.",
+    cancelled: "La cancelaste mientras se descargaba.",
+    failed: `No se ha podido descargar. ${record.error || ""}`,
+  };
+  if (notes[record.status]) card.append(el("span", { class: record.status === "failed" ? "run-error" : "run-folder", text: notes[record.status] }));
+  // Where it goes and what it's called, as the user leaves them.
+  const folders = modelFolders();
+  const allowed = record.folder === "loras" ? ["loras"] : ["checkpoints", "diffusion_models"];
+  const folderSelect = el("select", { "aria-label": "Carpeta de modelos" },
+    allowed.map((name) => el("option", { value: name, text: FOLDER_LABELS[name] || name, selected: name === choice.folder })));
+  const familySelect = el("select", { "aria-label": "Carpeta de la familia" });
+  const fillFamilies = () => {
+    const names = folders[choice.folder] || [];
+    familySelect.replaceChildren(
+      el("option", { value: "", text: "Elige la familia", disabled: true, selected: !names.includes(choice.family) }),
+      ...names.map((name) => el("option", { value: name, text: name, selected: name === choice.family }))
+    );
+  };
+  fillFamilies();
+  folderSelect.addEventListener("change", () => {
+    choice.folder = folderSelect.value;
+    fillFamilies();
+  });
+  familySelect.addEventListener("change", () => (choice.family = familySelect.value));
+  const nameInput = el("input", { type: "text", value: choice.name, spellcheck: "false", "aria-label": "Nombre del archivo",
+    oninput: () => (choice.name = nameInput.value.trim()) });
+  const accept = el("button", { type: "button", class: "btn-primary", text: record.status === "proposed" ? "Descargar" : "Reintentar" });
+  accept.addEventListener("click", () => {
+    if (!choice.family) {
+      familySelect.focus();
+      return;
+    }
+    act(accept, "accept", { folder: choice.folder, family: choice.family, name: choice.name }, "Empezando…");
+  });
+  card.append(
+    el("span", { class: "download-target" },
+      allowed.length > 1 ? folderSelect : el("span", { text: FOLDER_LABELS[record.folder] }),
+      el("span", { "aria-hidden": "true", text: "/" }), familySelect,
+      el("span", { "aria-hidden": "true", text: "/" }), nameInput,
+      el("span", { class: "download-ext", text: ".safetensors" })),
+    el("span", { class: "run-actions" }, accept,
+      record.status === "proposed" && el("button", { type: "button", class: "btn-quiet", text: "Descartar",
+        onclick: (event) => act(event.currentTarget, "decline", null, "Descartando…") }))
+  );
+  return card;
+}
+
+function hasActiveDownloads() {
+  return (state.conversation?.downloads || []).some((d) => d.status === "downloading");
+}
+
 const FOLDER_LABELS = {
   loras: "LoRAs",
   checkpoints: "checkpoints",
@@ -939,6 +1066,7 @@ function fillBotMessage(
   const body = parts.map((part) => {
     if (part.type === "text") return el("div", { class: "msg-text" }, richText(part.text));
     if (part.type === "run") return runCard(part, live);
+    if (part.type === "download") return downloadCard(part, live);
     if (part.type === "tool") return toolLine(part);
     if (part.type === "family") {
       const why = part.reason === "asked" ? "" : ": el modelo base que va a usar es de esa familia";
@@ -1284,7 +1412,8 @@ async function refreshFromServer() {
     fresh.commenting !== current.commenting ||
     fresh.replying !== current.replying ||
     JSON.stringify(fresh.autonomy || null) !== JSON.stringify(current.autonomy || null) ||
-    JSON.stringify(fresh.runs || []) !== JSON.stringify(current.runs || []);
+    JSON.stringify(fresh.runs || []) !== JSON.stringify(current.runs || []) ||
+    JSON.stringify(fresh.downloads || []) !== JSON.stringify(current.downloads || []);
   state.conversation = fresh;
   attachIfReplying(fresh);
   if (!changed) return;
@@ -1304,7 +1433,7 @@ function schedulePoll() {
   const conversation = state.conversation;
   if (!conversation || state.live.has(conversation.id)) return;
   let wait = POLL_MS;
-  if (!(conversation.commenting || conversation.replying || hasPendingRuns())) {
+  if (!(conversation.commenting || conversation.replying || hasPendingRuns() || hasActiveDownloads())) {
     if (!conversation.retry_at) return;
     // Waiting for Claude Code's limit to reset: look again when the server retries the reply.
     wait = Math.min(Math.max((conversation.retry_at + RETRY_MARGIN_S) * 1000 - Date.now(), POLL_MS), 10 * 60_000);

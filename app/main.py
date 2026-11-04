@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
-from . import bot_seat, comfy, mcp_server, retry_later, runs
+from . import bot_seat, comfy, downloads, mcp_server, retry_later, runs
 from .auth import require_auth
 from .config import get_settings
 from .logging_config import configure_logging
@@ -40,6 +40,8 @@ async def lifespan(app: FastAPI):
         runs.tracker.start()
     # Replies waiting for Claude Code's usage limit to reset, from before a restart.
     retry_later.resume()
+    # Downloads a restart cut short: failed, to be accepted again.
+    downloads.after_restart()
     async with mcp_server.running(), bot_seat.running():
         yield
     runs.tracker.stop()

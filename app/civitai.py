@@ -127,7 +127,7 @@ def _resources(meta: dict) -> list[dict]:
                          name=model.get("name"), version=version.get("name"), base_model=version.get("baseModel"),
                          trigger_words=[w for w in version.get("trainedWords") or [] if isinstance(w, str)][
                              :MAX_TRIGGER_WORDS],
-                         file=primary.get("name"))
+                         file=primary.get("name"), version_id=version.get("id"))
         elif r.get("name"):
             entry["name"] = r["name"]
         else:

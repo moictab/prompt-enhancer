@@ -27,6 +27,9 @@ class Settings:
     claude_code_config_dir: str = ""
     claude_code_model: str = "opus"
     self_url: str = "http://127.0.0.1:8090"
+    # ComfyUI's models folder (its loras, checkpoints and diffusion_models): where downloads from
+    # Civitai go, each one accepted by the user (downloads.py). Unset, downloads are off.
+    comfy_models_dir: str = ""
 
 
 def get_settings() -> Settings:
@@ -44,4 +47,5 @@ def get_settings() -> Settings:
             os.environ.get("CLAUDE_CODE_CONFIG_DIR", "").strip() or "~/.claude-prompt-enhancer"),
         claude_code_model=os.environ.get("CLAUDE_CODE_MODEL", "").strip() or "opus",
         self_url=(os.environ.get("SELF_URL", "").strip() or "http://127.0.0.1:8090").rstrip("/"),
+        comfy_models_dir=os.environ.get("COMFY_MODELS_DIR", "").strip(),
     )

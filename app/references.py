@@ -193,6 +193,8 @@ are installed here;
 Say how many images back each point, and what you would take from it for this conversation's model and family \
 (their rules decide the prompt's form). Keep what is worth keeping as notes, named after the folder ("{name}: \
 ..."), telegraphic: what you would need to write such a prompt again without the folder. A hunch only as one. \
+If your notes already hold conclusions about this folder (an earlier study: the user may have added or removed \
+images since), rewrite or forget those notes to match this study rather than adding new ones, and say what changed. \
 Unless the user asked for images too, don't launch anything in this reply."""
 
 ANSWERED = ("[Earlier the user pointed you at the reference folder \"{name}\" ({images} images); the study went with "
@@ -273,8 +275,22 @@ def _read(file: Path, root: Path) -> dict:
         "cfg": settings.get("cfg", settings.get("CFG scale")),
         "sampler": settings.get("sampler_name", settings.get("Sampler")),
         "scheduler": settings.get("scheduler", settings.get("Schedule type")),
+        "hashes": _hashes(settings, base_models),
     })
     return item
+
+
+def _hashes(settings: dict, base_models: list[str]) -> dict[str, str]:
+    """A1111's file hashes (AutoV2), by model or LoRA name: Civitai finds a file by them, so a
+    missing one can be prepared for download (downloads.py)."""
+    found = {}
+    if settings.get("Model hash") and base_models:
+        found[base_models[0]] = str(settings["Model hash"])
+    for pair in str(settings.get("Lora hashes") or "").strip('"').split(","):
+        name, _, value = pair.partition(":")
+        if name.strip() and value.strip():
+            found[name.strip()] = value.strip()
+    return found
 
 
 def _spread(items: list, count: int) -> list:
@@ -400,6 +416,7 @@ def study(entry: dict, directory: Path, installed: dict | None = None) -> Study:
     loras: dict[str, list] = {}
     lora_images: Counter = Counter()
     positive, negative = Counter(), Counter()
+    hashes: dict[str, str] = {}
     for item in items:
         generators[item.get("generator", "no metadata")] += 1
         if item.get("shape"):
@@ -408,6 +425,8 @@ def study(entry: dict, directory: Path, installed: dict | None = None) -> Study:
             continue
         for model in dict.fromkeys(item["models"]):
             models[model] += 1
+        for name, value in item.get("hashes", {}).items():
+            hashes.setdefault(name, value)
         for name, weight in item["loras"]:
             loras.setdefault(name, [])
             if weight is not None:
@@ -426,10 +445,17 @@ def study(entry: dict, directory: Path, installed: dict | None = None) -> Study:
     head += f"; {total} studied, spread evenly over the folder" if total < len(files) else ""
     head += f"; {len(described)} of them carry generation metadata (a prompt, models, settings).]"
     lines = [head, "", INSTRUCTIONS.format(name=entry["name"]), "", "## Recipes"]
+
+    def where(name: str, kind: str) -> str:
+        """Installed or not; a missing one with its hash, for prepare_download."""
+        note = _installed(name, kind, installed)
+        if note.startswith("no installed") and hashes.get(name):
+            note += f", Civitai hash {hashes[name]}"
+        return f"; {note}" if note else ""
+
     if models:
         lines.append("Base models (images): " + "; ".join(
-            f"{_file_name(m)} ({n}{'; ' + note if (note := _installed(m, 'checkpoint', installed)) else ''})"
-            for m, n in models.most_common(TOP_VALUES)))
+            f"{_file_name(m)} ({n}{where(m, 'checkpoint')})" for m, n in models.most_common(TOP_VALUES)))
     if lora_images:
         def lora_text(name: str, n: int) -> str:
             weights = loras.get(name) or []
@@ -437,8 +463,7 @@ def study(entry: dict, directory: Path, installed: dict | None = None) -> Study:
             if weights:
                 low, high, mid = min(weights), max(weights), statistics.median(weights)
                 spread = f"; weight {_fmt(mid)}" + (f", {_fmt(low)} to {_fmt(high)}" if low != high else "")
-            note = _installed(name, "lora", installed)
-            return f"{_file_name(name)} ({n}{spread}{'; ' + note if note else ''})"
+            return f"{_file_name(name)} ({n}{spread}{where(name, 'lora')})"
         lines.append("LoRAs (images; median weight, range): " + "; ".join(
             lora_text(name, n) for name, n in lora_images.most_common(20)))
     for label, counter in (("Samplers", samplers), ("Schedulers", schedulers), ("Steps", steps), ("CFG", cfgs)):

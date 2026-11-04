@@ -276,6 +276,28 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "prepare_download",
+            "description": (
+                "Prepare a download from Civitai of a checkpoint or LoRA the conversation needs and isn't installed: "
+                "one a shared Civitai image was made with (its Civitai version), a Civitai model link the user "
+                "pasted, or a file hash a reference image gives. It only prepares it: the chat shows the user what "
+                "it is, its size and where it would go, and the user decides whether to download it. Don't launch "
+                "with it until it is installed (you'll be told)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "version_id": {"type": "integer", "description": "The Civitai model version id."},
+                    "url": {"type": "string", "description": "A civitai.com model link (its newest version, unless "
+                                                             "the link names one with modelVersionId)."},
+                    "hash": {"type": "string", "description": "The file's hash (AutoV2 or SHA256)."},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "keep_going",
             "description": (
                 "Take on a bigger task of your own, with a goal the user set ('until it looks right', 'keep "
@@ -947,6 +969,21 @@ class ToolBox:
         if working["cost"] + working.get("last_turn_cost", 0) > working["max_cost"]:
             raise ToolError(f"The budget's money (${working['cost']:.2f} of ${working['max_cost']:.2f}) wouldn't "
                             "cover looking at another run's images: don't launch more; sum up for the user.")
+
+    def _tool_prepare_download(self, version_id=None, url=None, hash=None) -> tuple[dict, dict]:
+        from . import catalog, civitai, downloads
+        try:
+            record = downloads.prepare(self.conversation_id, {"version_id": version_id, "url": url, "hash": hash},
+                                       catalog.load()["entries"] or None)
+        except (downloads.DownloadError, civitai.CivitaiError) as e:
+            raise ToolError(str(e))
+        where = f"{record['folder']}\\{record['family'] or '(a family folder the user picks)'}\\{record['name']}"
+        result = {"download": record["n"], "status": record["status"], "model": record["model_name"],
+                  "version": record["version_name"], "type": record["model_type"], "base_model": record["base_model"],
+                  "size_mb": round(record["size_bytes"] / 1e6), "would_install_as": f"{where}.safetensors"}
+        if record["status"] == "proposed":
+            result["note"] = "Waiting for the user to accept it in the chat; nothing is downloaded until then."
+        return result, {"type": "download", "download": record["n"]}
 
     def _tool_cancel_run(self, run: int) -> tuple[dict, dict]:
         number = _number(run, int)

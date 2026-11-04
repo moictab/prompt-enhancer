@@ -32,8 +32,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import (catalog, chat, chat_tools, claude_code, comfy, conversations, families, history, memory,
-               retry_later, runs, workflows)
+from . import (catalog, chat, chat_tools, claude_code, comfy, conversations, downloads, families, history,
+               memory, retry_later, runs, workflows)
 from .config import get_settings
 from .openrouter_client import StreamEnd, list_models, stream_chat
 
@@ -286,6 +286,7 @@ def _turn(conversation_id: str, automatic: bool):
         return
 
     notes = memory.list_notes()
+    news = [d for d in conversation.get("downloads") or [] if d.get("told") is False]
     toolbox = toolbox_for(conversation)
     if toolbox:
         toolbox.automatic = automatic
@@ -312,6 +313,8 @@ def _turn(conversation_id: str, automatic: bool):
         "looking": bool(toolbox) and automatic and not autonomous,
         # The user discarded its reply to this message ("Rehacer") and wants another.
         "redo": bool(last.get("redo")),
+        # What became of the downloads it prepared, since it last heard (downloads.py).
+        "downloads": downloads.news_text(news),
     }
     load_image = _image_loader(conversation_id)
     on_claude = claude_code.engine(conversation)
@@ -357,6 +360,8 @@ def _turn(conversation_id: str, automatic: bool):
     if updated is None:
         yield {"type": "error", "detail": "The conversation was deleted while replying."}
         return
+    for record in news:  # it has been told now
+        conversations.update_download(conversation_id, record["n"], lambda d: d.update(told=True))
     if _settle_autonomy(conversation_id):
         updated = conversations.get(conversation_id) or updated
     yield {"type": "done", "message": updated["messages"][-1], "conversation": conversations.summary(updated)}

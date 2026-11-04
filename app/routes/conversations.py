@@ -6,8 +6,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .. import (balance, catalog, chat_tools, civitai, claude_code, comfy, conversation_turn, conversations, history,
-               memory, references, retry_later, runs)
+from .. import (balance, catalog, chat_tools, civitai, claude_code, comfy, conversation_turn, conversations,
+               downloads, history, memory, references, retry_later, runs)
 from .api import _require_family, read_image
 
 router = APIRouter(prefix="/api/conversations")
@@ -99,6 +99,9 @@ def get_conversation(conversation_id: str):
     conversation["messages"] = [{**m, "balance": True} if m.get("balance") else m for m in conversation["messages"]]
     conversation["messages"] = [{**m, "reference_study": True} if m.get("reference_study") else m
                                 for m in conversation["messages"]]
+    for record in conversation.get("downloads") or []:  # how far the one under way has got
+        if record["status"] == "downloading":
+            record["progress"] = downloads.progress(conversation_id, record["n"])
     if claude_code.engine(conversation):
         # The subscription's usage as the latest turn reported it (any conversation's: it's the account's).
         conversation["claude_code_limits"] = claude_code.limits()
@@ -241,6 +244,40 @@ def retry_reply(conversation_id: str):
     _require_idle(conversation_id)
     _require_family(conversation["family_id"])
     return _reply(conversation_id)
+
+
+class DownloadChoice(BaseModel):
+    folder: str | None = Field(default=None, max_length=40)
+    family: str | None = Field(default=None, max_length=80)
+    name: str | None = Field(default=None, max_length=140)
+
+
+def _download_action(action, conversation_id: str, n: int, *args):
+    _require_conversation(conversation_id)
+    try:
+        return action(conversation_id, n, *args)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Unknown download")
+    except downloads.DownloadError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{conversation_id}/downloads/{n}/accept")
+def accept_download(conversation_id: str, n: int, choice: DownloadChoice):
+    """The user accepts a download the bot prepared, with the folder, family folder and name they chose."""
+    return _download_action(downloads.accept, conversation_id, n, choice.folder, choice.family, choice.name)
+
+
+@router.post("/{conversation_id}/downloads/{n}/decline")
+def decline_download(conversation_id: str, n: int):
+    return _download_action(downloads.decline, conversation_id, n)
+
+
+@router.post("/{conversation_id}/downloads/{n}/cancel")
+def cancel_download(conversation_id: str, n: int):
+    _require_conversation(conversation_id)
+    downloads.cancel(conversation_id, n)
+    return {"cancelling": True}
 
 
 @router.delete("/{conversation_id}/retry")

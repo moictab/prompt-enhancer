@@ -38,6 +38,14 @@ def get_openrouter_models():
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@router.get("/model-folders")
+def get_model_folders():
+    """The family folders under ComfyUI's models folders, where a download from Civitai may go
+    (empty when downloads aren't set up: COMFY_MODELS_DIR)."""
+    from .. import downloads
+    return downloads.family_folders()
+
+
 @router.get("/history")
 def get_history():
     return history.list_entries()
