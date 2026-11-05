@@ -658,7 +658,7 @@ def start_autonomy(conversation_id: str, goal: str, max_images: int, max_cost: f
         return conversation["autonomy"]
 
 
-def start_away(conversation_id: str, until: float, instructions: str, max_images: int,
+def start_away(conversation_id: str, until: float, instructions: str, max_images: int, focus: str = "mix",
                root: str | None = None) -> dict | None:
     """The away mode (away.py, kind "away"): the bot works on its own until `until` (epoch seconds),
     within max_images and what Claude Code's allowance leaves (away.outlook). The subscription pays,
@@ -668,7 +668,8 @@ def start_away(conversation_id: str, until: float, instructions: str, max_images
         if conversation is None:
             return None
         conversation["autonomy"] = {
-            "active": True, "kind": "away", "goal": instructions, "until": until, "max_images": max_images,
+            "active": True, "kind": "away", "goal": instructions, "until": until, "focus": focus,
+            "max_images": max_images,
             "max_cost": 0.0, "images": 0, "cost": 0.0, "last_turn_cost": 0.0, "started_at": _now(),
         }
         storage.write_json(_path(conversation_id, root), conversation)

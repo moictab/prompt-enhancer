@@ -16,7 +16,7 @@
   <dialog class="away-dialog" id="away-dialog" aria-labelledby="away-title">
     <form id="away-form" novalidate>
       <h2 id="away-title">Modo autónomo</h2>
-      <p class="away-lead">Mientras estás fuera, el bot trabaja por su cuenta en una conversación nueva: parte de tus favoritas y prueba lo que cree que te gustaría.</p>
+      <p class="away-lead">Mientras estás fuera, el bot trabaja por su cuenta en una conversación nueva, con la GPU y el Claude Code que sobran.</p>
       <ul class="away-rules">
         <li>Usa la GPU solo cuando nada más la quiere, y la cede al momento.</li>
         <li>De Claude Code gasta las ventanas de 5 horas que se renuevan antes de que vuelvas. De la que siga abierta a tu vuelta, como mucho un 25 %.</li>
@@ -25,6 +25,15 @@
       <div class="field">
         <label for="away-until">Vuelvo a las</label>
         <input id="away-until" type="time" value="08:00" required>
+      </div>
+      <div class="field">
+        <label for="away-focus">Qué hace</label>
+        <select id="away-focus" aria-describedby="away-focus-hint">
+          <option value="mix">Mitad y mitad</option>
+          <option value="explore">Sorpréndeme</option>
+          <option value="favorites">Sobre tus favoritas</option>
+        </select>
+        <p class="field-help" id="away-focus-hint"></p>
       </div>
       <div class="field">
         <label for="away-instructions">Indicaciones<span class="optional">opcional</span></label>

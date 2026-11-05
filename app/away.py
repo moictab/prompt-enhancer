@@ -3,6 +3,11 @@ the bot works on its own, in a conversation of its own, making what it thinks th
 what it is curious to try, on what would otherwise go unused: the GPU while nothing else wants it,
 and the Claude Code subscription's allowance.
 
+The user picks what the night is for (`focus`): their favorites (copied in, for variations, finishing,
+calibrating their LoRAs), surprising them ("explore": original images only loosely based on their taste,
+away from what they usually make, starting from sparks the app draws at random -- sparks.py: an LLM left
+to itself keeps arriving at the same few ideas), or half and half ("mix", the default).
+
 It must never get in the way of the user's own use (the owner's rules):
 - ComfyUI: everything it launches goes at comfy.PRIORITY_AWAY ("idle"), the one level the gateway
   still stops halfway: it runs only while nothing else wants the GPU, and gives way at once.
@@ -23,13 +28,15 @@ allowance won't cover another -- sums up the night for the user. Runs still unde
 idle, and their images land in the chat without a comment (the conversation's own comments are off).
 """
 import logging
+import random
 import threading
 import time
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from . import catalog, chat, claude_code, comfy, conversations, families, retry_later, storage
+from . import catalog, chat, claude_code, comfy, conversations, families, retry_later, sparks, storage
 from .config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -45,7 +52,15 @@ FINAL_SECONDS = 20 * 60  # the last turn: what it launched after this couldn't b
 MIN_SECONDS = 30 * 60
 MAX_SECONDS = 24 * 3600
 MAX_IMAGES = 400
-FAVORITES = 8  # the user's favorites, newest first, copied into the conversation for the bot to start from
+# What the night is for (the user picks it when starting): their favorites, surprising them, or half and half.
+# Per focus, how many favorites are copied in for the bot to start from, and how many sparks are drawn.
+FOCUSES = ("mix", "explore", "favorites")
+FAVORITES = {"favorites": 8, "mix": 4, "explore": 0}
+SPARKS = {"favorites": 0, "mix": 3, "explore": 5}
+RECENT_NIGHTS = 3  # the sparks of these latest nights aren't drawn again (while there are others)
+THEMES = 10  # the latest conversations' titles: what the user usually makes, for exploring to step away from
+UNUSED = 8  # installed models and LoRAs never used here, a random few, for exploring
+BASE_FOLDERS = ("checkpoints", "diffusion_models")
 
 _timer: threading.Timer | None = None
 _guard = threading.Lock()
@@ -145,7 +160,7 @@ def _span(seconds: float) -> str:
     return f"{minutes // 60} h {minutes % 60:02d} min" if minutes >= 60 else f"{minutes} min"
 
 
-BRIEF = """[Away mode] The user is away until {until} and left you working on your own until then, in this conversation of yours: make what you think they would love, and what you are curious to try, with GPU time and Claude Code allowance that would otherwise go unused.
+BRIEF = """[Away mode] The user is away until {until} and left you working on your own until then, in this conversation of yours, with GPU time and Claude Code allowance that would otherwise go unused. {focus}
 
 How it works:
 - In rounds: launch a batch, look at its images when they come back, launch the next. Everything you launch runs at idle priority, only while ComfyUI has nothing else to do, so it never gets in anyone's way (a job may be stopped and redone when something else comes).
@@ -153,29 +168,64 @@ How it works:
 - When the time or the allowance is about to run out you get a last turn: sum up the night then. If you run out of good ideas before, launch nothing and make that reply the summary.
 - The user isn't here to confirm anything: note facts you saw about models, LoRAs and workflows, with how many images back them; a hunch only as one; nothing about their taste until they have reacted. Review every image (<review>), but rate none for them: <rating> is for their own words.
 
-Where to start is your call; mix:
-- Their favorites, attached here: variations (image:N with changes -- other seeds, proportions, situations, settings, light), or finishing one that isn't finished (finish_image).
-- Calibrating the LoRAs their favorites use that were never calibrated{loras}.
-- Something of your own you think they would like, from their notes and what they loved.
+{sections}"""
 
+FOCUS = {
+    "favorites": "Make what you think they would love, starting from their favorites, and what you are curious to try.",
+    "explore": ("Tonight is for surprising them: original images they wouldn't have thought to ask for, only loosely "
+                "based on their taste -- not variations of what they have made, but new subjects, settings, styles "
+                "and models."),
+    "mix": ("Split the night: about half the rounds on their favorites (variations, finishing), half on surprising "
+            "them -- original images they wouldn't have thought to ask for, only loosely based on their taste."),
+}
+
+FAVORITES_SECTION = """Their favorites -- where to start is your call:
+- Variations of them (image:N with changes -- other seeds, proportions, situations, settings, light), or finishing one that isn't finished (finish_image).
+- Calibrating the LoRAs they use that were never calibrated{loras}.
+- Something of your own you think they would like, from their notes and what they loved.
 {favorites}"""
 
+EXPLORE_SECTION = """Surprising them:
+- Start from the sparks below, which the app drew at random for tonight: each is a nudge, not an order. Read it through their taste, change or drop parts, combine two -- but keep what makes it unexpected. Avoid the obvious take, and their usual ground unless you give it a twist.
+- Several ideas, each tried first with a small batch (3-4 images: different seeds and proportions); go further with those that work, drop the rest without regret. Each idea may call for its own model, LoRAs and workflow: try some they rarely use.
+- Their taste, loosely: {taste}
+- What they usually make (recent conversations): {themes}.
+- Installed and never used here, a random few: {unused}.
+Sparks for tonight:
+{sparks}"""
 
-def brief_text(until: float, favorites: list[dict], loras: list[str]) -> str:
-    if favorites:
-        lines = [f"Their favorites, newest first (images #1-#{len(favorites)} here, each with its recipe):"]
-        for number, item in enumerate(favorites, 1):
-            what = "a favorite (loved)" if item["rating"] == "love" else "liked"
-            line = (f"- #{number}: {what}, from the conversation \"{item['title']}\", run with {item['workflow']}"
-                    f"; {'a finished image' if item['finished'] else 'not finished'}.")
-            if item.get("comment"):
-                line += f' They said: "{item["comment"]}"'
-            lines.append(line)
-        favorites_text = "\n".join(lines)
-    else:
-        favorites_text = "They haven't marked any favorite yet: go by their notes and the models' stats."
-    return BRIEF.format(until=_when(until), favorites=favorites_text,
-                        loras=f": {', '.join(loras)}" if loras else " (none of them is uncalibrated)")
+
+def favorites_text(favorites: list[dict]) -> str:
+    if not favorites:
+        return "They haven't marked any favorite yet: go by their notes and the models' stats."
+    lines = [f"Images #1-#{len(favorites)} here are their favorites, each with its recipe:"]
+    for number, item in enumerate(favorites, 1):
+        what = "a favorite (loved)" if item["rating"] == "love" else "liked"
+        line = (f"- #{number}: {what}, from the conversation \"{item['title']}\", run with {item['workflow']}"
+                f"; {'a finished image' if item['finished'] else 'not finished'}.")
+        if item.get("comment"):
+            line += f' They said: "{item["comment"]}"'
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def brief_text(until: float, focus: str, favorites: list[dict], loras: list[str],
+               explore: dict | None = None) -> str:
+    """The away conversation's first message. explore: what surprising the user starts from -- sparks,
+    taste, themes, unused (the app's, see start)."""
+    sections = []
+    if focus != "explore":
+        sections.append(FAVORITES_SECTION.format(
+            favorites=favorites_text(favorites),
+            loras=f": {', '.join(loras)}" if loras else " (none of them is uncalibrated)"))
+    if focus != "favorites":
+        explore = explore or {}
+        sections.append(EXPLORE_SECTION.format(
+            taste=explore.get("taste") or "nothing marked yet: go by their notes.",
+            themes=", ".join(f'"{t}"' for t in explore.get("themes") or []) or "nothing yet",
+            unused=", ".join(explore.get("unused") or []) or "none",
+            sparks="\n".join(f"{n}. {'; '.join(spark)}" for n, spark in enumerate(explore.get("sparks") or [], 1))))
+    return BRIEF.format(until=_when(until), focus=FOCUS[focus], sections="\n\n".join(sections))
 
 
 def context_text(working: dict, seen: Outlook, now: float, first: bool) -> str:
@@ -191,10 +241,18 @@ def context_text(working: dict, seen: Outlook, now: float, first: bool) -> str:
                      f"at {_clock(seen.resets_at)}, with more.")
     else:
         lines.append(f"Claude Code: about {seen.turns} turns left, this one included.")
+    focus = working.get("focus") or "favorites"
+    if focus == "mix":
+        lines.append("Tonight's split: about half the rounds on their favorites, half on surprising them.")
+    elif focus == "explore":
+        lines.append("Tonight is for surprising them: new ideas, from the sparks.")
     if seen.action == "last":
         lines.append("This is your last turn. Sum up the night for the user: what you tried and why, the best images "
-                     "(#N), what you learned, what you'd try next. If you like, end it by launching one last batch for "
-                     "them to find (say so): its images won't come back to you.")
+                     "(#N), what you learned, what you'd try next"
+                     + ("; each new idea apart -- what it was, and its best image or that it didn't work"
+                        if focus != "favorites" else "")
+                     + ". If you like, end it by launching one last batch for them to find (say so): its images won't "
+                     "come back to you.")
         return "\n".join(lines)
     lines.append(f"Batches should be back by {_clock(until - FINAL_SECONDS)} for you to review them: size them by the "
                  "time per image and the queue.")
@@ -220,16 +278,23 @@ def current() -> str | None:
     return None
 
 
-def _favorites() -> list[dict]:
-    """The user's favorites among the runs' images, every conversation's: loved first, then liked,
-    newest first within each; with where they come from."""
-    found = []
+def _scan() -> tuple[list[dict], list[str], list[str]]:
+    """One pass over every conversation: the user's favorites among the runs' images (loved first, then
+    liked, newest first within each; with where they come from), the titles of their latest conversations
+    (what they usually make; away ones aside), and the sparks of the latest away nights."""
+    found, titled, nights = [], [], []
     root = Path(get_settings().data_dir, "conversations")
     for path in root.glob("*.json") if root.is_dir() else []:
         if not conversations.is_valid_id(path.stem):
             continue
         conversation = storage.read_json(str(path), default=None) or {}
         messages = conversation.get("messages") or []
+        brief = (messages[0].get("away") if messages else None) or None
+        if brief:
+            nights.append((conversation.get("created_at") or "", [card for spark in brief.get("sparks") or []
+                                                                   for card in spark]))
+        elif conversation.get("title"):
+            titled.append((conversation.get("updated_at") or "", conversation["title"]))
         numbers = chat.image_numbers(messages)
         runs = {run["n"]: run for run in conversation.get("runs") or []}
         finished = {run.get("finish_of") for run in runs.values() if run.get("kind") == "finish"}
@@ -253,7 +318,45 @@ def _favorites() -> list[dict]:
                 })
     found.sort(key=lambda item: item["at"], reverse=True)
     found.sort(key=lambda item: item["rating"] != "love")  # stable: loved first, each group newest first
-    return found[:FAVORITES]
+    themes = list(dict.fromkeys(title for _, title in sorted(titled, reverse=True)))[:THEMES]
+    recent = [card for _, cards in sorted(nights, reverse=True)[:RECENT_NIGHTS] for card in cards]
+    return found, themes, recent
+
+
+REASON_WORDS = {"hands": "hands", "face": "faces", "anatomy": "anatomy", "style": "style",
+                "composition": "composition", "not_asked": "not what they asked for"}
+
+
+def _taste(stats: dict, entries: dict) -> str:
+    """Their taste in a line, from the catalog's stats: what they liked most, and what puts them off."""
+    def liked(folders):
+        rows = sorted(((record.get("liked", 0), record.get("loved", 0), file) for file, record in stats.items()
+                       if record.get("liked") and (entries.get(file) or {}).get("folder") in folders), reverse=True)
+        return ", ".join(f"{catalog.short_name(file)} ({count} liked"
+                         f"{f', {loved} favorite' + ('s' if loved > 1 else '') if loved else ''})"
+                         for count, loved, file in rows[:4])
+
+    reasons: Counter = Counter()
+    for file, record in stats.items():
+        if (entries.get(file) or {}).get("folder") in BASE_FOLDERS:  # an image counts once: by its base model
+            reasons.update(record.get("dislike_reasons") or {})
+    parts = []
+    if models := liked(BASE_FOLDERS):
+        parts.append(f"the base models they liked most: {models}")
+    if loras := liked(("loras",)):
+        parts.append(f"LoRAs: {loras}")
+    if reasons:
+        parts.append("what puts them off most: " + ", ".join(f"{REASON_WORDS.get(r, r)} ({n})"
+                                                             for r, n in reasons.most_common(3)))
+    return "; ".join(parts) + "." if parts else ""
+
+
+def _unused(stats: dict, entries: dict, rng: random.Random | None = None) -> list[str]:
+    """A random few of the installed models and LoRAs no run here has used yet."""
+    files = sorted(file for file, entry in entries.items()
+                   if entry.get("folder") in (*BASE_FOLDERS, "loras") and not (stats.get(file) or {}).get("images"))
+    picked = (rng or random.Random()).sample(files, min(UNUSED, len(files)))
+    return [catalog.short_name(file) for file in sorted(picked)]
 
 
 def _copy_image(conversation_id: str, item: dict) -> dict | None:
@@ -277,10 +380,14 @@ def _title(now: float) -> str:
 
 
 def start(until: float, instructions: str = "", claude_model: str = "", claude_effort: str = "",
-          family_id: str | None = None, now: float | None = None) -> dict:
-    """Open the away conversation and set the bot to work in it until `until` (epoch seconds). Its first
-    message is the app's: what the mode is, the user's favorites (copied in) and their instructions."""
+          family_id: str | None = None, focus: str = "mix", now: float | None = None) -> dict:
+    """Open the away conversation and set the bot to work in it until `until` (epoch seconds), on `focus`:
+    their favorites, surprising them ("explore"), or half and half ("mix"). Its first message is the
+    app's: what the mode is, the favorites copied in, and for exploring the sparks drawn for the night,
+    their taste in a line, what they usually make and a few models never used -- then their instructions."""
     now = time.time() if now is None else now
+    if focus not in FOCUSES:
+        raise AwayError(f"Unknown focus: {focus}")
     if comfy.client() is None:
         raise AwayError("ComfyUI isn't configured: there's nothing to work with")
     if not claude_code.available():
@@ -296,10 +403,10 @@ def start(until: float, instructions: str = "", claude_model: str = "", claude_e
         raise AwayError(f"Claude Code leaves no room before you're back: its 5-hour window is at "
                         f"{round((five.get('used') or 0) * 100)}% and doesn't renew until {_clock(five['resets_at'])}"
                         if five.get("resets_at") else "Claude Code leaves no room before you're back")
-    favorites = _favorites()
+    found, themes, recent = _scan()
     family = families.get_family(family_id or "") if family_id else None
     if family is None:
-        family = next((families.get_family(f["family_id"]) for f in favorites if f.get("family_id")), None) \
+        family = next((families.get_family(f["family_id"]) for f in found if f.get("family_id")), None) \
             or (families.list_families() or [None])[0]
     if family is None:
         raise AwayError("There's no model family to start with")
@@ -310,20 +417,29 @@ def start(until: float, instructions: str = "", claude_model: str = "", claude_e
         claude_effort=claude_effort, image_check=False)
     conversation_id = conversation["id"]
     conversations.update_settings(conversation_id, {"title": _title(now)})
-    images = [image for image in (_copy_image(conversation_id, item) for item in favorites) if image]
+    copied = [(item, image) for item, image in ((item, _copy_image(conversation_id, item))
+                                                for item in found[:FAVORITES[focus]]) if image]
+    favorites, images = [item for item, _ in copied], [image for _, image in copied]
     stats = catalog.stats()
     loras = list(dict.fromkeys(name for item in favorites for name in item["loras"]
                                if not (stats.get(name) or {}).get("calibration")))
+    explore = None
+    if SPARKS[focus]:
+        entries = catalog.load()["entries"] or {}
+        explore = {"sparks": sparks.draw(SPARKS[focus], avoid=recent), "taste": _taste(stats, entries),
+                   "themes": themes, "unused": _unused(stats, entries)}
+    instructions = " ".join((instructions or "").split())
     conversations.append_message(conversation_id, {
-        "role": "user", "content": " ".join((instructions or "").split()), "images": images,
-        "away": {"until": until, "favorites": len(images)},
-        "away_brief": brief_text(until, favorites[:len(images)], [catalog.short_name(n) for n in loras]),
+        "role": "user", "content": instructions, "images": images,
+        "away": {"until": until, "favorites": len(images), "focus": focus,
+                 "sparks": explore["sparks"] if explore else []},
+        "away_brief": brief_text(until, focus, favorites, [catalog.short_name(n) for n in loras], explore),
     })
-    conversations.start_away(conversation_id, until, " ".join((instructions or "").split()), MAX_IMAGES)
+    conversations.start_away(conversation_id, until, instructions, MAX_IMAGES, focus=focus)
     storage.write_json(str(_pointer()), {"conversation_id": conversation_id, "until": until})
     _schedule_end(conversation_id, until)
-    logger.info("away mode started conversation_id=%s until=%s favorites=%d", conversation_id, _clock(until),
-                len(images))
+    logger.info("away mode started conversation_id=%s until=%s focus=%s favorites=%d sparks=%d", conversation_id,
+                _clock(until), focus, len(images), SPARKS[focus])
     return conversations.get(conversation_id)
 
 

@@ -138,6 +138,9 @@ def test_it_starts_a_conversation_of_its_own_from_the_favorites_and_launches_at_
     assert 'a favorite (loved), from the conversation "Bruja en el bosque"' in sent and "justo así" in sent
     assert "style-ink_v1" in sent  # the LoRA it uses, never calibrated
     assert "## Away Mode" in sent and "about 19 turns left" in sent and "Start:" in sent
+    # By default the night is half and half: their favorites, and surprising them from a few sparks.
+    assert "Split the night" in sent and "Sparks for tonight:" in sent
+    assert brief["away"]["focus"] == "mix" and len(brief["away"]["sparks"]) == away.SPARKS["mix"]
     # Nothing it launches goes ahead of anyone.
     assert fake_comfy.priorities == ["idle"] and "modo autónomo" in fake_comfy.tags[0]
     assert stored["autonomy"]["kind"] == "away" and stored["autonomy"]["active"]
@@ -160,6 +163,58 @@ def test_it_starts_a_conversation_of_its_own_from_the_favorites_and_launches_at_
     runs.wait_until_idle()
     assert conversations.get(started["id"])["messages"][-1]["role"] == "results"
     assert len(fake.launches) == 1
+
+
+def test_surprising_them_starts_from_random_sparks_not_their_favorites(
+        api_client, auth_headers, tmp_path, fake_comfy, claude):
+    family = _family(tmp_path)
+    _favorite(family)
+    other = _conversation(api_client, auth_headers, family)
+    conversations.update_settings(other["id"], {"title": "Ramona en la playa"})
+    conversations.append_message(other["id"], {"role": "user", "content": "hola", "images": []})
+    storage.write_json(str(tmp_path / "catalog.json"), {"entries": {
+        LORA: {"folder": "loras", "family": "krea-2"},
+        "krea-2\\concept-paper_v1.safetensors": {"folder": "loras", "family": "krea-2"}}})
+    fake = claude([init(), text("Primera idea: un faro de papel."), result()],
+                  [init(), text("Otra noche."), result()])
+
+    started = _start(api_client, auth_headers, focus="explore").json()
+    _settle(started["id"])
+
+    brief = conversations.get(started["id"])["messages"][0]
+    # Nothing to anchor it to their favorites: no images copied, four cards per spark, five sparks.
+    assert brief["images"] == [] and brief["away"]["focus"] == "explore"
+    assert len(brief["away"]["sparks"]) == away.SPARKS["explore"]
+    assert all(len(spark) == 4 for spark in brief["away"]["sparks"])
+    sent = fake.sent()
+    assert "Tonight is for surprising them" in sent and "Sparks for tonight:" in sent
+    assert "; ".join(brief["away"]["sparks"][0]) in sent
+    assert '"Ramona en la playa"' in sent  # what they usually make: to step away from
+    assert "concept-paper_v1" in sent  # installed and never used here
+    assert "Their favorites --" not in sent and "Tonight is for surprising them: new ideas" in sent
+    stored = conversations.get(started["id"])
+    assert stored["autonomy"]["focus"] == "explore"
+
+    # The next night draws other cards.
+    away.stop(started["id"], "until")
+    second = _start(api_client, auth_headers, focus="explore").json()
+    _settle(second["id"])
+    tonight = {card for spark in conversations.get(second["id"])["messages"][0]["away"]["sparks"] for card in spark}
+    last_night = {card for spark in brief["away"]["sparks"] for card in spark}
+    assert not tonight & last_night
+
+
+def test_sparks_differ_within_a_draw_and_skip_recent_cards():
+    import random
+
+    from app import sparks
+    drawn = sparks.draw(5, rng=random.Random(7))
+    cards = [card for spark in drawn for card in spark]
+    assert len(cards) == len(set(cards)) == 20
+    again = sparks.draw(5, avoid=cards, rng=random.Random(7))
+    assert not {card for spark in again for card in spark} & set(cards)
+    # With a deck used up, it draws from all of it again rather than nothing.
+    assert len(sparks.draw(1, avoid=sparks.SUBJECTS)[0]) == 4
 
 
 def test_out_of_room_in_the_window_it_waits_for_it_to_renew(api_client, auth_headers, tmp_path, fake_comfy, claude):

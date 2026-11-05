@@ -644,13 +644,15 @@ async def stop_autonomy(conversation_id: str) -> dict:
 
 @server.tool(annotations=WRITE)
 async def start_away_mode(hours: Annotated[float, Field(ge=0.5, le=24)], instructions: str = "",
-                          claude_model: str = "") -> dict:
+                          claude_model: str = "", focus: Literal["mix", "explore", "favorites"] = "mix") -> dict:
     """The away mode ("Modo autónomo"): while the user is away for `hours`, the bot works on its own in a
-    new conversation, from their favorites, at idle GPU priority and within what Claude Code's 5-hour
+    new conversation -- on their favorites, on surprising them with new ideas from random sparks
+    ("explore"), or half and half ("mix") -- at idle GPU priority and within what Claude Code's 5-hour
     window can spare (leaving the user 75% of the one still open when they're back). Anything that makes
     the bot work, in any conversation -- a message included -- ends it."""
     conversation = await _json("POST", "/api/conversations/away", json={
-        "until": time.time() + hours * 3600, "instructions": instructions, "claude_model": claude_model})
+        "until": time.time() + hours * 3600, "instructions": instructions, "claude_model": claude_model,
+        "focus": focus})
     return {"conversation_id": conversation["id"], "title": conversation["title"],
             "until": conversation["autonomy"]["until"]}
 

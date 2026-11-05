@@ -101,6 +101,8 @@ class AwayStart(BaseModel):
     claude_model: str = Field(default="", max_length=80)
     claude_effort: Effort = ""
     family_id: str | None = None
+    # What the night is for: half and half, surprising them (new ideas from random sparks), or their favorites.
+    focus: Literal["mix", "explore", "favorites"] = "mix"
 
 
 @router.post("/away")
@@ -110,7 +112,7 @@ def start_away(req: AwayStart):
     Answers the conversation; its first turn is already under way."""
     try:
         conversation = away.start(req.until, req.instructions, req.claude_model.strip(), req.claude_effort,
-                                  req.family_id)
+                                  req.family_id, req.focus)
     except away.AwayError as e:
         raise HTTPException(status_code=409, detail=str(e))
     try:

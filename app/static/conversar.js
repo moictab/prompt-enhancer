@@ -84,6 +84,8 @@ const ui = {
   awayDialog: $("away-dialog"),
   awayForm: $("away-form"),
   awayUntil: $("away-until"),
+  awayFocus: $("away-focus"),
+  awayFocusHint: $("away-focus-hint"),
   awayInstructions: $("away-instructions"),
   awayModel: $("away-model"),
   awayError: $("away-error"),
@@ -670,12 +672,28 @@ function renderAwayButton() {
     : "Mientras estás fuera, el bot trabaja por su cuenta con la GPU y el Claude Code que sobran";
 }
 
+// What the night is for (away.FOCUSES), as the dialog explains each.
+const AWAY_FOCUS_HINTS = {
+  mix: "Media noche sobre 4 de tus favoritas y la otra media con ideas nuevas que no le has pedido.",
+  explore: "Ideas nuevas, poco atadas a lo que sueles hacer: parte de unas chispas sacadas al azar (un tema, un lugar, una técnica, una luz) y las lleva a tu gusto.",
+  favorites: "Variaciones y acabados de 8 de tus favoritas, y calibrar las LoRAs que usan.",
+};
+const AWAY_FOCUS_KEY = "away-focus";
+
 function setupAway() {
   if (!ui.awayOpen) return;
   const showError = (text) => {
     ui.awayError.textContent = text;
     ui.awayError.hidden = false;
   };
+  const showHint = () => { ui.awayFocusHint.textContent = AWAY_FOCUS_HINTS[ui.awayFocus.value] || ""; };
+  const remembered = readStored(localStorage, AWAY_FOCUS_KEY, "mix");
+  if (AWAY_FOCUS_HINTS[remembered]) ui.awayFocus.value = remembered;
+  showHint();
+  ui.awayFocus.addEventListener("change", () => {
+    showHint();
+    writeStored(localStorage, AWAY_FOCUS_KEY, ui.awayFocus.value);
+  });
   ui.awayOpen.addEventListener("click", () => {
     const working = activeAway();
     if (working) {
@@ -705,6 +723,7 @@ function setupAway() {
         method: "POST",
         json: {
           until,
+          focus: ui.awayFocus.value,
           instructions: ui.awayInstructions.value.trim(),
           claude_model: ui.awayModel.value,
           claude_effort: readStored(localStorage, SETTINGS_KEY, {}).claude_effort || "",
@@ -1769,6 +1788,18 @@ function referenceNote(counts) {
   });
 }
 
+// "Modo autónomo hasta las 8:00. Mitad sobre 4 de tus favoritas, mitad ideas nuevas. Tus indicaciones:"
+function awayBriefLine(message) {
+  const { until, favorites = 0, focus = "favorites" } = message.away;
+  const some = favorites === 1 ? "tu favorita" : `${favorites} de tus favoritas`;
+  const what = focus === "explore"
+    ? "Ideas nuevas para sorprenderte"
+    : focus === "mix"
+      ? (favorites ? `Mitad sobre ${some}, mitad ideas nuevas` : "Ideas nuevas: aún no tienes favoritas")
+      : (favorites ? `Parte de ${some}` : "Aún no tienes favoritas: parte de lo que sabe de tus gustos");
+  return `Modo autónomo hasta las ${clock(until)}. ${what}${message.content ? ". Tus indicaciones:" : "."}`;
+}
+
 function userMessage(message, previews = null) {
   if (message.balance) return balanceMessage(message);
   if (message.continue && !message.content) {
@@ -1780,12 +1811,7 @@ function userMessage(message, previews = null) {
     ? previews.map((src) => el("figure", { class: "shot" }, el("img", { src, alt: "Imagen compartida" })))
     : images.map((image) => numberedImage(image, numbers.get(image.id)));
   // The away mode's first message is the app's: what the bot starts from, plus the user's indications.
-  const away = message.away && el("p", {
-    class: "msg-away",
-    text: `Modo autónomo hasta las ${clock(message.away.until)}. ${message.away.favorites
-      ? `Parte de ${message.away.favorites === 1 ? "tu favorita" : `${message.away.favorites} de tus favoritas`}`
-      : "Aún no tienes favoritas: parte de lo que sabe de tus gustos"}${message.content ? ". Tus indicaciones:" : "."}`,
-  });
+  const away = message.away && el("p", { class: "msg-away", text: awayBriefLine(message) });
   return el(
     "article",
     { class: "msg msg-user" },
