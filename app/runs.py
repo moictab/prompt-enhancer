@@ -38,15 +38,15 @@ def job_timeout_seconds(run: dict) -> int:
     return run.get("timeout_seconds") or get_settings().comfy_job_timeout_minutes * 60
 
 
-def _still_on_time(client: comfy.Comfy, job: dict, timeout: float) -> bool:
-    """A job past its run's time limit that the gateway says is still waiting its turn, or running for
-    less than the limit: the limit counts from when a job starts (the gateway's rule), since waiting in
-    a long queue is no failure -- 13 jobs were given up on 2026-11-04 while still queued, and ComfyUI
-    made their images for nothing. Waiting is "queued" (the gateway's queue, where a job bumped by a
-    more urgent one goes back, its start forgotten) and "dispatched" (handed to ComfyUI, not started:
-    a second or so -- on 2026-11-05 a job that had waited 50 minutes was given up in that second).
-    Asked only once the run is past the limit."""
-    record = client.gateway_job(job["base_url"], job["prompt_id"])
+def _still_on_time(record: dict | None, timeout: float) -> bool:
+    """A job past its run's time limit that the gateway says (its record, `Comfy.gateway_job`) is still
+    waiting its turn, or running for less than the limit: the limit counts from when a job starts (the
+    gateway's rule), since waiting in a long queue is no failure -- 13 jobs were given up on 2026-11-04
+    while still queued, and ComfyUI made their images for nothing. Waiting is "queued" (the gateway's
+    queue, where a job bumped by a more urgent one goes back, its start forgotten) and "dispatched"
+    (handed to ComfyUI, not started: milliseconds, unless something launched in ComfyUI itself goes
+    first -- on 2026-11-05 a job that had waited 50 minutes was given up in that second). The gateway
+    doesn't notice a ComfyUI hung on a job: that's what the limit is for."""
     if not record:
         return False
     status = record.get("status")
@@ -145,12 +145,20 @@ class RunTracker:
             result = None
         if result is None:
             timeout = job_timeout_seconds(run)
-            if _age_seconds(run) > timeout and not _still_on_time(client, job, timeout):
-                self._set_job(conversation_id, run["n"], index, status="error",
-                              error=f"{TIMED_OUT} {timeout // 60} minutes")
-                logger.info("run job given up conversation_id=%s run=%s job=%d prompt_id=%s timeout=%ss",
-                            conversation_id, run["n"], index, job["prompt_id"], timeout)
-            return
+            overdue = _age_seconds(run) > timeout
+            if not (overdue or run.get("retried_at")):
+                return
+            # Past the limit, or fetched again: ask the gateway (one more request, so not on every
+            # poll), which also keeps what a job saved when ComfyUI's /history forgets it.
+            record = client.gateway_job(job["base_url"], job["prompt_id"])
+            result = comfy.result_from_gateway(record)
+            if result is None:
+                if overdue and not _still_on_time(record, timeout):
+                    self._set_job(conversation_id, run["n"], index, status="error",
+                                  error=f"{TIMED_OUT} {timeout // 60} minutes")
+                    logger.info("run job given up conversation_id=%s run=%s job=%d prompt_id=%s timeout=%ss",
+                                conversation_id, run["n"], index, job["prompt_id"], timeout)
+                return
         images, error = [], result.error
         workflows = conversations.run_workflows(conversation_id, run["n"])
         workflow = workflows[index] if index < len(workflows) else None
@@ -245,14 +253,16 @@ def _fetchable(job: dict) -> bool:
 
 
 def _has_result(client: comfy.Comfy | None, job: dict) -> bool:
-    """Whether ComfyUI has the job's result now (its /history keeps it until ComfyUI restarts)."""
+    """Whether the job's result can be had now: ComfyUI's /history (kept until ComfyUI restarts), or
+    the gateway's record of what it saved."""
     if client is None:
         return False
     try:
-        return comfy.result_from_history(client.history(job["base_url"], job["prompt_id"])) is not None
-    except Exception as e:  # unreachable, stalled: nothing to fetch now
+        if comfy.result_from_history(client.history(job["base_url"], job["prompt_id"])) is not None:
+            return True
+    except Exception as e:  # unreachable, stalled: the gateway may still know
         logger.info("run history unavailable prompt_id=%s error=%r", job["prompt_id"], e)
-        return False
+    return comfy.result_from_gateway(client.gateway_job(job["base_url"], job["prompt_id"])) is not None
 
 
 def can_retry_downloads(run: dict) -> bool:
@@ -268,8 +278,8 @@ def retry_downloads(conversation_id: str, n: int) -> dict | None:
     if run is None or not can_retry_downloads(run):
         return None
     client = comfy.client()
-    # A job given up for its time is fetched only if it did finish: one ComfyUI never ran (or has
-    # forgotten, after a restart) would only wait out the limit again.
+    # A job given up for its time is fetched only if it did finish: one that never did would only
+    # wait out the limit again.
     again = [index for index, job in enumerate(run["jobs"]) if _fetchable(job) and (
         job["error"].startswith(DOWNLOAD_FAILED) or _has_result(client, job))]
     if not again:

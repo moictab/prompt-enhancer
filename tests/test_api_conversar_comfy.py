@@ -388,8 +388,10 @@ def test_the_time_limit_is_a_setting(api_client, auth_headers, tmp_path, fake_co
 
 def test_a_job_given_up_that_finished_later_can_be_fetched(api_client, auth_headers, tmp_path, fake_comfy,
                                                             monkeypatch):
-    """Given up for its time, a job ComfyUI then finished: its image is fetched into the run's
-    results message; one ComfyUI has no result for isn't revived (it would only wait out the limit)."""
+    """Given up for its time, a job ComfyUI then finished is fetched into the run's results message:
+    from /history, or from the gateway's record when ComfyUI has forgotten it (a restart). One with
+    no result anywhere isn't revived (it would only wait out the limit)."""
+    from .conftest import png_bytes
     conversation_id = _launch_two(api_client, auth_headers, tmp_path)
     monkeypatch.setattr(runs, "_age_seconds", lambda run: 46 * 60)
     with patch("app.conversation_turn.stream_chat", Script(("No han llegado.", []))):
@@ -397,9 +399,13 @@ def test_a_job_given_up_that_finished_later_can_be_fetched(api_client, auth_head
         runs.wait_until_idle()
     assert [j["status"] for j in conversations.get_run(conversation_id, 1)["jobs"]] == ["error", "error"]
     retry = f"/api/conversations/{conversation_id}/runs/1/retry-downloads"
-    assert api_client.post(retry, auth=auth_headers).status_code == 409  # nothing in ComfyUI yet
+    assert api_client.post(retry, auth=auth_headers).status_code == 409  # nothing made yet
 
     fake_comfy.finish("prompt-1", "out-a")
+    fake_comfy.files["out-b.png"] = png_bytes()
+    fake_comfy.gateway_jobs["prompt-2"] = {"status": "success", "started_at": 100.0, "finished_at": 160.0, "outputs": [
+        {"filename": "preview.png", "subfolder": "", "type": "temp"},
+        {"filename": "out-b.png", "subfolder": "prompt-enhancer/chat", "type": "output"}]}
     assert api_client.post(retry, auth=auth_headers).json()["status"] == "pending"
     monkeypatch.setattr(runs, "_age_seconds", lambda run: 60)
     with patch("app.conversation_turn.stream_chat", Script()) as idle:
@@ -407,10 +413,11 @@ def test_a_job_given_up_that_finished_later_can_be_fetched(api_client, auth_head
         runs.wait_until_idle()
 
     run = conversations.get_run(conversation_id, 1)
-    assert [j["status"] for j in run["jobs"]] == ["success", "error"] and run["status"] == "done"
+    assert [j["status"] for j in run["jobs"]] == ["success", "success"] and run["status"] == "done"
+    assert run["jobs"][1]["seconds"] == 60
     conversation = conversations.get(conversation_id)
     assert [m["role"] for m in conversation["messages"]] == ["user", "assistant", "results", "assistant"]
-    assert len(conversation["messages"][2]["images"]) == 1
+    assert len(conversation["messages"][2]["images"]) == 2
     assert idle.calls == []
 
 

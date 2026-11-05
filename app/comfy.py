@@ -130,6 +130,22 @@ def result_from_history(entry: dict) -> Result | None:
     return Result("success", outputs_from_history(entry), seconds=execution_seconds(messages))
 
 
+def result_from_gateway(record: dict | None) -> Result | None:
+    """The result the gateway noted for a job that finished well -- the images it saved, from
+    ComfyUI's messages as they came -- for when ComfyUI's /history has forgotten it (a restart).
+    None for anything else: the gateway notes no error details, and those /history keeps anyway."""
+    if not record or record.get("status") != "success":
+        return None
+    outputs = [{"node": "", "filename": o["filename"], "subfolder": o.get("subfolder") or "", "type": "output"}
+               for o in record.get("outputs") or []
+               if isinstance(o, dict) and o.get("filename") and o.get("type") == "output"]  # "temp": previews
+    if not outputs:
+        return None
+    started, finished = record.get("started_at"), record.get("finished_at")
+    seconds = finished - started if all(isinstance(t, (int, float)) for t in (started, finished)) else None
+    return Result("success", outputs, seconds=seconds)
+
+
 class Comfy:
     def __init__(self, gateway_url: str, direct_url: str = "", project: str = PROJECT):
         self.gateway_url = gateway_url.rstrip("/")
@@ -241,9 +257,10 @@ class Comfy:
         return True
 
     def gateway_job(self, base: str, prompt_id: str) -> dict | None:
-        """The gateway's record of one of this app's jobs -- its status (queued, dispatched, running,
-        success...) and when it was sent, handed to ComfyUI and started -- or None when it went to
-        ComfyUI directly or can't be read."""
+        """The gateway's record of one of this app's jobs -- its status (queued, dispatched, running;
+        success, error, interrupted, cancelled, rejected, lost), when it was sent, handed to ComfyUI,
+        started and finished, and the images it saved -- or None when it went to ComfyUI directly or
+        can't be read."""
         if not self.gateway_url or base.rstrip("/") != self.gateway_url:
             return None
         try:
@@ -252,7 +269,8 @@ class Comfy:
             return None
         if not isinstance(record, dict):
             return None
-        return {key: record.get(key) for key in ("status", "submitted_at", "dispatched_at", "started_at")}
+        return {key: record.get(key)
+                for key in ("status", "submitted_at", "dispatched_at", "started_at", "finished_at", "outputs")}
 
     def cancel(self, base: str, prompt_id: str) -> None:
         """Take it off the queue if waiting, and stop it if running."""
