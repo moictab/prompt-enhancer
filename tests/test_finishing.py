@@ -55,8 +55,8 @@ def test_finishing_an_image_runs_the_familys_finishing_workflow_on_it_with_its_r
 
 def test_finishing_waits_behind_the_drafts_and_leaves_them_their_place(finishing):
     """A finish is minutes of GPU: at "high" it spent the hour's budget the drafts the user waits for
-    need, and at "low" the gateway would stop it for them and start it over. So "normal", whoever
-    asked, and a draft launched after it in the same reply still goes at "high"."""
+    need. So "low", whoever asked (the gateway no longer stops a low job halfway), and a draft
+    launched after it in the same reply still goes at "high"."""
     box, fake, conversation_id, image_id = finishing
 
     box.run("finish_image", json.dumps({"image": 1}))
@@ -64,7 +64,7 @@ def test_finishing_waits_behind_the_drafts_and_leaves_them_their_place(finishing
     box.automatic = True
     box.run("finish_image", json.dumps({"image": 1}))
 
-    assert fake.priorities == ["normal", "high", "normal"]
+    assert fake.priorities == ["low", "high", "low"]
 
 
 def test_without_a_finishing_workflow_the_bot_is_told_what_to_do(finishing):

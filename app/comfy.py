@@ -36,10 +36,10 @@ PRIORITY_REST = "normal"  # the rest of that reply's images (an exploring batch)
 PRIORITY_ON_ITS_OWN = "low"
 # Finishing an image (finish_image), even one the user just loved, and also when the bot does it on
 # its own: 4-5 minutes of GPU each, so at "high" three of them spent the project's 15 minutes an hour
-# there, and the drafts the user waits for dropped to "normal". Not "low" either: the gateway stops a
-# low job for a high one and runs it again from the start -- minutes of GPU thrown away each time; it
-# never stops a normal one. "Pasar delante" is there for one wanted sooner.
-PRIORITY_FINISH = "normal"
+# there, and the drafts the user waits for dropped to "normal". At "low" they wait behind everything
+# someone is waiting for; since 2026-11-05 the gateway never stops a job halfway (only "idle" ones),
+# so a long finish isn't thrown away when a draft comes in. "Pasar delante" is there for one wanted sooner.
+PRIORITY_FINISH = "low"
 # A run the user put ahead of everything else waiting ("Pasar delante"): the gateway owner's override,
 # which skips the hourly limits on urgent and high (Comfy.prioritize).
 PRIORITY_AHEAD = "urgent"
