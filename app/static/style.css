@@ -1158,7 +1158,7 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .msg-reactions .heart { color: var(--stop); fill: currentColor; }
 .msg-reactions-reasons { color: var(--paper-faint); }
 
-/* What the bot did between its words: a run it launched, a tool it used. */
+/* What the bot did between its words: a download it prepared (a card: it waits for the user), a tool it used. */
 .run-card {
   display: flex;
   flex-wrap: wrap;
@@ -1199,6 +1199,46 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .run-actions .btn-quiet { padding-block: 0.15rem; font-size: 0.75rem; }
 @keyframes pulse { 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .run-card.is-pending .run-status::before { animation: none; } }
+/* The runs a reply launched: one line (what, how it's going) that unfolds to each run. */
+.run-group {
+  position: relative;
+  border-left: 3px solid var(--safelight);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  font-size: var(--step--1);
+}
+.run-group.is-error { border-left-color: var(--stop); }
+.run-group.is-done, .run-group.is-cancelled { border-left-color: var(--line-strong); }
+/* Text that flows (not flex items), so that only its first line makes room for Pasar delante. */
+.run-row { display: block; padding: 0.35rem 0.5rem 0.35rem 0.7rem; border-radius: var(--radius-sm); line-height: 1.5; }
+.run-row > span { margin-right: 0.6rem; }
+.run-row > .run-label { display: inline-block; vertical-align: top; white-space: nowrap; }
+/* Each moves to the next line whole (the status with its dot) when it doesn't fit beside the rest. */
+.run-row > .run-workflow, .run-row > .run-status { display: inline-block; max-width: 100%; vertical-align: top; }
+.run-row > .run-room { float: right; width: 6.4rem; height: 1em; margin: 0; }
+.run-more > summary { position: relative; padding-left: 1.7rem; cursor: pointer; list-style: none; }
+.run-more > summary::before { position: absolute; left: 0.75rem; top: 0.7rem; }
+.run-more > summary::-webkit-details-marker { display: none; }
+.run-more > summary:hover .run-workflow { color: var(--paper); }
+.run-group .run-workflow { color: var(--paper-dim); }
+.run-group.is-done .run-label, .run-group.is-cancelled .run-label { color: var(--paper-dim); }
+.run-status.is-error { color: var(--stop-text); }
+.run-group.is-pending .run-row .run-status::before {
+  content: "";
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.4rem;
+  border-radius: 999px;
+  background: var(--safelight);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.run-group > .run-actions { position: absolute; top: 0.2rem; right: 0.3rem; }
+.run-details { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.1rem 0.5rem 0.5rem 1.7rem; }
+.run-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.15rem 0.6rem; }
+.run-line + .run-line { padding-top: 0.35rem; border-top: 1px solid var(--line); }
+.run-details > .run-folder { flex-basis: auto; }
+@media (prefers-reduced-motion: reduce) { .run-group.is-pending .run-row .run-status::before { animation: none; } }
 .tool-line { color: var(--paper-faint); font-size: var(--step--1); }
 .tool-line::before { content: "↳ "; }
 .tool-line.is-error { color: var(--stop-text); }
@@ -1271,24 +1311,28 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .msg-bot .msg-text { display: flex; flex-direction: column; gap: 0.6rem; max-width: 70ch; line-height: 1.6; overflow-wrap: anywhere; }
 .msg-bot .msg-text ul, .msg-bot .msg-text ol { display: flex; flex-direction: column; gap: 0.25rem; margin: 0; padding-left: 1.3rem; }
 .msg-bot code { padding: 0.05rem 0.3rem; background: var(--raised); border-radius: var(--radius-sm); font-size: 0.875em; }
-.msg-frames { margin: 0; }
 
-/* A proposal folds to its number and first line, with Copiar at hand; unfolded, the whole prompt. */
-.proposal-item { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+/* The proposals a reply makes one after another are one list, each folded to a line -- its
+   number, the start of the prompt, the model -- with Copiar at hand; unfolded, the whole prompt. */
+.proposals { margin: 0; padding: 0; list-style: none; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.proposal-item { position: relative; }
+.proposal-item + .proposal-item { border-top: 1px solid var(--line); }
 .proposal > summary {
   display: grid;
   /* The number's column grows with it: a long conversation reaches proposal 100 and beyond. */
-  grid-template-columns: 0.4rem minmax(1.3rem, max-content) minmax(0, 1fr);
+  grid-template-columns: 0.4rem minmax(1.1rem, max-content) minmax(0, 1fr);
   align-items: center;
-  gap: 0.65rem;
-  padding: 0.5rem 5.5rem 0.5rem 0.85rem;
+  gap: 0.6rem;
+  padding: 0.3rem 5.5rem 0.3rem 0.85rem;
   border-radius: var(--radius-lg);
   cursor: pointer;
   list-style: none;
 }
 .proposal > summary::-webkit-details-marker { display: none; }
-.proposal > summary::before {
+.proposal > summary::before, .run-more > summary::before {
   content: "";
+  flex: none;
+  align-self: center;
   width: 0.4rem;
   height: 0.4rem;
   border-right: 2px solid var(--paper-faint);
@@ -1296,32 +1340,36 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
   transform: rotate(-45deg);
   transition: transform 0.15s ease;
 }
-.proposal[open] > summary::before { transform: rotate(45deg); }
+.proposal[open] > summary::before, .run-more[open] > summary::before { transform: rotate(45deg); }
 .proposal > summary:hover .proposal-preview { color: var(--paper); }
 .proposal-no {
   color: var(--safelight);
   font-stretch: 62%;
   font-weight: 800;
-  font-size: var(--step-2);
+  font-size: var(--step-1);
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
-.proposal-head { display: grid; gap: 0.1rem; min-width: 0; }
-.proposal-preview { overflow: hidden; color: var(--paper-dim); text-overflow: ellipsis; white-space: nowrap; }
+.proposal-head { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; }
+.proposal-preview { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--paper-dim); text-overflow: ellipsis; white-space: nowrap; }
 .proposal-model {
+  flex: 0 1 auto;
+  max-width: 40%;
   overflow: hidden;
   color: var(--paper-faint);
   font-size: var(--step--1);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.proposal-label { display: none; color: var(--paper-faint); font-size: var(--step--1); font-weight: 600; }
+.proposal-label { display: none; color: var(--paper-faint); font-size: var(--step--1); font-weight: 600; white-space: nowrap; }
 .proposal[open] .proposal-preview { display: none; }
 .proposal[open] .proposal-label { display: block; }
+.proposal[open] .proposal-model { max-width: none; flex: 1 1 auto; }
 /* The prompt starts where its first line did, folded: past the chevron and the number. */
-.proposal .frame-body { padding: 0 1rem 0.35rem 3.85rem; }
-.proposal-copy { position: absolute; top: 0.45rem; right: 0.5rem; padding-block: 0.2rem; }
+.proposal .frame-body { padding: 0 1rem 0.35rem 3.45rem; }
+.proposal-copy { position: absolute; top: 0.25rem; right: 0.5rem; padding-block: 0.15rem; }
 .proposal[open] + .proposal-copy { display: none; } /* unfolded, its own actions are there */
+@media (max-width: 560px) { .proposal:not([open]) .proposal-model { display: none; } }
 .msg-bot.is-pending .developing { width: min(28rem, 100%); padding: 0.4rem 0; }
 .msg-meta { color: var(--paper-faint); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
 .msg-failed { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }

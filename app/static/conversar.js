@@ -102,6 +102,7 @@ const state = {
   drafts: new Map(), // conversation id ("" for a new one) -> { text, attachments } left in the composer
   seen: readStored(localStorage, SEEN_KEY, {}), // conversation id -> its last reply the user saw
   openProposals: new Set(), // "<conversation id>:<n>": proposals the user unfolded (they start folded)
+  openRuns: new Set(), // "<conversation id>:<n>": groups of runs, by their first, the user unfolded
   creating: false,
   renaming: null, // the id of the conversation whose title is being edited in the list
   listTimer: 0,
@@ -1025,94 +1026,219 @@ const RUN_STATUS = {
   cancelled: "Cancelada",
 };
 
+// A status among several runs, by how many have it: "terminada", "2 terminadas".
+const RUN_STATES = {
+  pending: ["en cola o generando", "en cola o generando"],
+  error: ["ha fallado", "han fallado"],
+  done: ["terminada", "terminadas"],
+  cancelled: ["cancelada", "canceladas"],
+};
+
 // A workflow the bot wrote itself comes as "custom".
 function workflowName(name) {
   return name === "custom" ? "workflow propio" : name;
 }
 
-function runCard(part, live) {
-  const run = live ? null : runByNumber(part.run);
-  const status = run?.status || "pending";
-  const numbers = imageNumbers();
-  const made = (run?.jobs || []).flatMap((job) => job.images || []).filter((id) => numbers.has(id));
-  const errors = [...new Set((run?.jobs || []).map((job) => job.error).filter(Boolean))];
-  let detail = live ? "Lanzada" : RUN_STATUS[status];
-  if (status === "pending" && run?.kind === "calibration") detail = "En espera: se genera cuando la GPU está libre";
-  if (status === "pending" && run) detail += `, desde las ${formatWhen(run.created_at)}`;
-  if (status === "pending" && run?.priority === "urgent") detail += ", delante de todo";
-  if (made.length) detail += `: ${made.length === 1 ? "imagen" : "imágenes"} ${made.map((id) => numbers.get(id)).join(", ")}`;
-  const card = el(
-    "div",
-    { class: `run-card is-${live ? "pending" : status}` },
-    el("span", { class: "run-label", text: `Ejecución ${part.run}` }),
-    el("span", {
-      class: "run-workflow",
-      text: part.calibration
-        ? `calibración de ${part.calibration} en ${workflowName(part.workflow)}`
-        : part.finish_of
-          ? `acabado de #${part.finish_of} con ${workflowName(part.workflow)}`
-          : part.count > 1
-          ? `${workflowName(part.workflow)} ×${part.count}`
-          : workflowName(part.workflow),
-    }),
-    el("span", { class: "run-status", text: detail }),
-    errors.length > 0 && status !== "cancelled" && el("span", { class: "run-error", text: errors.join(" · ") }),
-    run?.output_folder && el("span", { class: "run-folder", text: `En ComfyUI: output/${run.output_folder}/` })
-  );
-  if (!live && run) {
-    const actions = el("span", { class: "run-actions" });
-    if (status === "pending" && run.priority !== "urgent") actions.append(aheadButton(run));
-    if (status === "pending") {
-      const cancel = el("button", { type: "button", class: "btn-quiet", text: "Cancelar" });
-      cancel.addEventListener("click", async () => {
-        setBusy(cancel, true, "Cancelando…");
-        try {
-          const updated = await request(`/api/conversations/${state.conversation.id}/runs/${run.n}/cancel`, {
-            method: "POST",
-          });
-          Object.assign(run, updated);
-        } catch (err) {
-          toast(err.message, { error: true });
-        }
-        await refreshFromServer();
-      });
-      actions.append(cancel);
-    }
-    actions.append(
-      el("a", {
-        class: "btn-quiet",
-        href: `/api/conversations/${state.conversation.id}/runs/${run.n}/workflow`,
-        title: "El workflow exacto que se envió, para abrirlo en ComfyUI",
-        text: "Workflow",
-      })
-    );
-    card.append(actions);
+// [5, 6, 7, 9] → "5–7, 9"
+function numberRanges(numbers) {
+  const ranges = [];
+  for (const n of [...new Set(numbers)].sort((a, b) => a - b)) {
+    const last = ranges[ranges.length - 1];
+    if (last && n === last[1] + 1) last[1] = n;
+    else ranges.push([n, n]);
   }
-  return card;
+  return ranges.map(([a, b]) => (a === b ? `${a}` : b === a + 1 ? `${a}, ${b}` : `${a}–${b}`)).join(", ");
 }
 
-// "Pasar delante": the run's images still waiting in the queue go before everything else waiting.
-function aheadButton(run) {
+// "desde las 17:30" today, "desde el 4 nov" before.
+function since(timestamp) {
+  const when = formatWhen(timestamp);
+  if (!when) return "";
+  return when.includes(":") ? `desde las ${when}` : `desde el ${when}`;
+}
+
+function runWhat(part) {
+  if (part.calibration) return `calibración de ${part.calibration} en ${workflowName(part.workflow)}`;
+  if (part.finish_of) return `acabado de #${part.finish_of} con ${workflowName(part.workflow)}`;
+  return part.count > 1 ? `${workflowName(part.workflow)} ×${part.count}` : workflowName(part.workflow);
+}
+
+function runStatusText(run, live) {
+  const status = run?.status || "pending";
+  let detail = live ? "Lanzada" : RUN_STATUS[status];
+  if (status === "pending" && run?.kind === "calibration") detail = "En espera: se genera cuando la GPU está libre";
+  if (status === "pending" && run?.created_at) detail += `, ${since(run.created_at)}`;
+  if (status === "pending" && run?.priority === "urgent") detail += ", delante de todo";
+  return detail;
+}
+
+// The runs one reply launched one after another, as one line -- what they are and how they're
+// going -- that unfolds to each run's details and actions (rarely needed: the images come below).
+function runGroup(parts, live) {
+  const numbers = imageNumbers();
+  const entries = parts.map((part) => {
+    const run = live ? null : runByNumber(part.run);
+    const made = (run?.jobs || []).flatMap((job) => job.images || []).filter((id) => numbers.has(id));
+    return { part, run, status: run?.status || "pending", made: made.map((id) => numbers.get(id)) };
+  });
+  const several = entries.length > 1;
+  const statuses = new Set(entries.map((e) => e.status));
+  const pending = entries.filter((e) => e.run && e.status === "pending");
+  const made = entries.flatMap((e) => e.made);
+
+  let what = runWhat(parts[0]);
+  if (several) {
+    const images = parts.reduce((sum, part) => sum + (part.count || 1), 0);
+    const count = `${images} ${images === 1 ? "imagen" : "imágenes"}`;
+    const flows = new Set(parts.map((part) => part.workflow));
+    what = parts.every((part) => part.finish_of)
+      ? `acabados de ${parts.map((part) => `#${part.finish_of}`).join(", ")}`
+      : flows.size === 1
+        ? `${workflowName(parts[0].workflow)}, ${count}`
+        : `${flows.size} workflows, ${count}`;
+  }
+  let status;
+  if (live) {
+    status = several ? "Lanzadas" : "Lanzada";
+  } else if (!several) {
+    status = runStatusText(entries[0].run);
+  } else if (statuses.size === 1 && statuses.has("pending")) {
+    const first = entries.find((e) => e.run)?.run;
+    status = `En cola o generando${first?.created_at ? `, ${since(first.created_at)}` : ""}`;
+    if (pending.length && pending.every((e) => e.run.priority === "urgent")) status += ", delante de todo";
+  } else {
+    const phrases = Object.keys(RUN_STATES)
+      .filter((key) => statuses.has(key))
+      .map((key) => {
+        const n = entries.filter((e) => e.status === key).length;
+        const [one, many] = RUN_STATES[key];
+        return statuses.size === 1 ? (n === 1 ? one : many) : `${n} ${n === 1 ? one : many}`;
+      });
+    status = phrases.join(", ");
+    status = status.charAt(0).toUpperCase() + status.slice(1);
+  }
+  if (made.length) status += `: ${made.length === 1 ? "imagen" : "imágenes"} ${numberRanges(made)}`;
+
+  const tone = live || statuses.has("pending") ? "pending" : statuses.has("error") ? "error" : statuses.has("done") ? "done" : "cancelled";
+  const runNumbers = numberRanges(parts.map((part) => part.run));
+  // Pasar delante stays at hand while something waits: it's for the conversation being worked on.
+  const behind = live ? [] : pending.filter((e) => e.run.priority !== "urgent").map((e) => e.run);
+  const row = (tag) =>
+    el(
+      tag,
+      { class: "run-row" },
+      behind.length > 0 && el("span", { class: "run-room", "aria-hidden": "true" }),
+      el("span", { class: "run-label", text: several ? `Ejecuciones ${runNumbers}` : `Ejecución ${parts[0].run}` }),
+      el("span", { class: "run-workflow", text: what }),
+      el("span", { class: statuses.has("error") && !live ? "run-status is-error" : "run-status", text: status })
+    );
+  const group = el("div", { class: `run-group is-${tone}` });
+  if (live || entries.every((e) => !e.run)) {
+    group.append(row("div"));
+    return group;
+  }
+  const key = `${state.conversation?.id}:${parts[0].run}`;
+  const folder = entries.find((e) => e.run?.output_folder)?.run.output_folder;
+  const details = el(
+    "details",
+    {
+      class: "run-more",
+      open: state.openRuns.has(key),
+      ontoggle: () => (details.open ? state.openRuns.add(key) : state.openRuns.delete(key)),
+    },
+    row("summary"),
+    el(
+      "div",
+      { class: "run-details" },
+      entries.filter((e) => e.run).map((e) => runLine(e, several)),
+      // The conversation's folder, the same for all its runs.
+      folder && el("span", { class: "run-folder", text: `En ComfyUI: output/${folder}/` })
+    )
+  );
+  group.append(details);
+  if (behind.length) group.append(el("span", { class: "run-actions" }, aheadButton(behind)));
+  return group;
+}
+
+// One run, unfolded: in a group, what it is and how it's going; always, when it was launched or
+// its error, and what can be done with it.
+function runLine({ part, run, status, made }, several) {
+  const errors = [...new Set((run.jobs || []).map((job) => job.error).filter(Boolean))];
+  const actions = el("span", { class: "run-actions" });
+  if (several && status === "pending" && run.priority !== "urgent") actions.append(aheadButton([run]));
+  if (status === "pending") {
+    const cancel = el("button", { type: "button", class: "btn-quiet", text: "Cancelar" });
+    cancel.addEventListener("click", async () => {
+      setBusy(cancel, true, "Cancelando…");
+      try {
+        const updated = await request(`/api/conversations/${state.conversation.id}/runs/${run.n}/cancel`, {
+          method: "POST",
+        });
+        Object.assign(run, updated);
+      } catch (err) {
+        toast(err.message, { error: true });
+      }
+      await refreshFromServer();
+    });
+    actions.append(cancel);
+  }
+  actions.append(
+    el("a", {
+      class: "btn-quiet",
+      href: `/api/conversations/${state.conversation.id}/runs/${run.n}/workflow`,
+      title: "El workflow exacto que se envió, para abrirlo en ComfyUI",
+      text: "Workflow",
+    })
+  );
+  let detail = runStatusText(run);
+  if (made.length) detail += `: ${made.length === 1 ? "imagen" : "imágenes"} ${numberRanges(made)}`;
+  const launched = formatWhen(run.created_at);
+  return el(
+    "div",
+    { class: `run-line is-${status}` },
+    several && el("span", { class: "run-label", text: `Ejecución ${run.n}` }),
+    several && el("span", { class: "run-workflow", text: runWhat(part) }),
+    el("span", {
+      class: "run-status",
+      text: several ? detail : launched && `Lanzada ${launched.includes(":") ? "a las" : "el"} ${launched}`,
+    }),
+    actions,
+    errors.length > 0 && status !== "cancelled" && el("span", { class: "run-error", text: errors.join(" · ") })
+  );
+}
+
+// "Pasar delante": the runs' images still waiting in the queue go before everything else waiting.
+function aheadButton(runs) {
   const button = el("button", {
     type: "button",
     class: "btn-quiet",
     text: "Pasar delante",
-    title: "Sus imágenes que esperan en la cola entran antes que todo lo demás: otras conversaciones y otros proyectos",
+    title: `${runs.length > 1 ? "Las imágenes de estas ejecuciones" : "Sus imágenes"} que esperan en la cola entran antes que todo lo demás: otras conversaciones y otros proyectos`,
   });
   button.addEventListener("click", async () => {
     setBusy(button, true, "Pasando delante…");
-    try {
-      const result = await request(`/api/conversations/${state.conversation.id}/runs/${run.n}/prioritize`, {
-        method: "POST",
-      });
-      Object.assign(run, result.run);
+    let raised = 0;
+    const failures = [];
+    for (const run of runs) {
+      try {
+        const result = await request(`/api/conversations/${state.conversation.id}/runs/${run.n}/prioritize`, {
+          method: "POST",
+        });
+        Object.assign(run, result.run);
+        raised += result.raised;
+      } catch (err) {
+        failures.push(err.message);
+      }
+    }
+    const who = runs.length > 1 ? `Ejecuciones ${numberRanges(runs.map((run) => run.n))}` : `Ejecución ${runs[0].n}`;
+    if (failures.length && !raised) {
+      toast(failures[0], { error: true });
+    } else {
       toast(
-        result.raised
-          ? `Ejecución ${run.n}: ${result.raised === 1 ? "su imagen pasa" : `sus ${result.raised} imágenes pasan`} delante de todo`
-          : `Ejecución ${run.n}: ya no le queda nada en cola, se está generando`
+        raised
+          ? `${who}: ${raised === 1 ? "su imagen pasa" : `sus ${raised} imágenes pasan`} delante de todo`
+          : `${who}: ya no ${runs.length > 1 ? "les" : "le"} queda nada en cola, se está generando`
       );
-    } catch (err) {
-      toast(err.message, { error: true });
     }
     await refreshFromServer();
   });
@@ -1315,21 +1441,36 @@ function fillBotMessage(
 ) {
   const entry = { id: state.conversation?.id, ...settings() };
   let number = firstNumber;
-  const body = parts.map((part) => {
-    if (part.type === "text") return el("div", { class: "msg-text" }, richText(part.text));
-    if (part.type === "run") return runCard(part, live);
-    if (part.type === "download") return downloadCard(part, live);
-    if (part.type === "tool") return toolLine(part);
-    if (part.type === "family") {
+  const OTHER = new Set(["text", "run", "download", "tool", "family"]);
+  // A reply proposes its prompts one after another and then launches their runs: each such
+  // stretch is one block (a list of proposals, a line of runs), not a card apiece.
+  const body = [];
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i];
+    if (part.type === "text") body.push(el("div", { class: "msg-text" }, richText(part.text)));
+    else if (part.type === "download") body.push(downloadCard(part, live));
+    else if (part.type === "tool") body.push(toolLine(part));
+    else if (part.type === "family") {
       const why = part.reason === "asked" ? "" : ": el modelo base que va a usar es de esa familia";
-      return el("p", {
+      body.push(el("p", {
         class: "tool-line",
         text: `Ha pasado a la familia ${part.family}${part.previous ? ` (antes, ${part.previous})` : ""}${why}.`,
-      });
+      }));
+    } else if (part.type === "run") {
+      const runs = [part];
+      while (parts[i + 1]?.type === "run") runs.push(parts[(i += 1)]);
+      body.push(runGroup(runs, live));
+    } else {
+      const list = el("ol", { class: "proposals" });
+      for (;;) {
+        number += 1;
+        list.append(proposal(entry, parts[i], number, live));
+        if (i + 1 >= parts.length || OTHER.has(parts[i + 1].type)) break;
+        i += 1;
+      }
+      body.push(list);
     }
-    number += 1;
-    return el("ol", { class: "frames msg-frames" }, proposal(entry, part, number, live));
-  });
+  }
   const ids = requestIds || (requestId ? [requestId] : []);
   const links =
     ids.length > 1
@@ -1366,8 +1507,9 @@ function fillBotMessage(
   );
 }
 
-// A proposed prompt, folded to its number and first line (prompts are long, and a
-// conversation piles them up), with Copiar at hand; unfolded, the whole prompt and its actions.
+// A proposed prompt, folded to one line -- its number, the start of the prompt, the model it's
+// for (prompts are long, and a conversation piles them up) -- with Copiar at hand; unfolded,
+// the whole prompt and its actions. A reply's proposals in a row share one list (fillBotMessage).
 function proposal(entry, part, number, live) {
   const key = `${state.conversation?.id}:${number}`;
   const models = proposalModels(part);
