@@ -28,11 +28,12 @@ import base64
 import json
 import logging
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import (catalog, chat, chat_tools, claude_code, comfy, conversations, downloads, families, history,
+from . import (away, catalog, chat, chat_tools, claude_code, comfy, conversations, downloads, families, history,
                image_check, memory, retry_later, runs, timing, workflows)
 from .config import get_settings
 from .openrouter_client import StreamEnd, list_models, stream_chat
@@ -319,14 +320,31 @@ def _turn(conversation_id: str, automatic: bool):
     # Working on its own: an automatic turn (its look at a run's images) may launch the next run,
     # while the budget lasts.
     working = conversations.autonomy(conversation)
-    autonomous = automatic and working is not None and not _budget_spent(working)
+    # The away mode (away.py): every turn of it first checks the time and Claude Code's allowance, and
+    # waits for the 5-hour window to renew, or ends, when they don't allow it.
+    seen = None
+    if away.is_away(working):
+        now = time.time()
+        seen = away.outlook(working, claude_code.limits(), now, away.turn_share(conversation))
+        if seen.action == "wait":
+            conversations.set_retry(conversation_id, int(seen.at))
+            retry_later.schedule(conversation_id, seen.at)
+            logger.info("away mode waits for the 5-hour window conversation_id=%s at=%d", conversation_id, seen.at)
+            return
+        if seen.action == "end":
+            away.stop(conversation_id, seen.reason)
+            return
+        if toolbox:
+            toolbox.away = True
+    autonomous = seen is not None or (automatic and working is not None and not _budget_spent(working))
     # Taking stock (balance.py) is a look back: nothing to call, let alone launch.
     taking_stock = bool(last.get("balance"))
     # What changes every turn goes at the end of the latest message, after the cached part.
     context_parts = {
         "notes": notes, "models": models_section, "needs_title": not conversation["title"],
         "notes_info": {"left": notes_left, "topics": declared, "known": memory.topic_names()},
-        "autonomy": chat.autonomy_text(working, automatic, _budget_spent(working)) if working else None,
+        "autonomy": (away.context_text(working, seen, now, first=bool(last.get("away"))) if seen
+                     else chat.autonomy_text(working, automatic, _budget_spent(working)) if working else None),
         "comments_off": bool(toolbox) and not conversations.comments_on_results(conversation),
         # Its look at a run's results launches nothing: it shouldn't say it will.
         "looking": bool(toolbox) and automatic and not autonomous,
@@ -365,15 +383,19 @@ def _turn(conversation_id: str, automatic: bool):
             automatic=automatic, no_tools=(automatic and not autonomous) or taking_stock)
 
     used_tools = any(s["tool_calls"] for s in steps)
+    # Away, Claude Code's limit only makes it wait (the retry checks the allowance again); any other
+    # failure ends it: nobody is there to see why.
+    limited = bool(failure and failure.get("retry_at"))
     if failure and not used_tools:
-        _settle_autonomy(conversation_id)
+        if not (seen and limited):
+            _settle_autonomy(conversation_id, reason="error" if seen else None)
         if failure.get("retry_at"):  # Claude Code's limit: answered again once it resets
             conversations.set_retry(conversation_id, failure["retry_at"])
             retry_later.schedule(conversation_id, failure["retry_at"])
         yield {"type": "error", **failure}
         return
     if not used_tools and not "".join(s["text"] for s in steps).strip():
-        _settle_autonomy(conversation_id)
+        _settle_autonomy(conversation_id, reason="error" if seen else None)
         yield {
             "type": "error",
             "detail": "The model returned an empty reply. Try again.",
@@ -394,7 +416,11 @@ def _turn(conversation_id: str, automatic: bool):
         retry_later.schedule(conversation_id, failure["retry_at"])
     for record in news:  # it has been told now
         conversations.update_download(conversation_id, record["n"], lambda d: d.update(told=True))
-    if _settle_autonomy(conversation_id):
+    if seen and seen.action == "last":
+        # It has summed up: the away mode ends here, whatever its last batch still makes.
+        away.stop(conversation_id, seen.reason)
+        updated = conversations.get(conversation_id) or updated
+    elif not (seen and limited) and _settle_autonomy(conversation_id):
         updated = conversations.get(conversation_id) or updated
     yield {"type": "done", "message": updated["messages"][-1], "conversation": conversations.summary(updated)}
 
@@ -477,24 +503,27 @@ def _launched(step: dict) -> bool:
 
 
 def _budget_spent(working: dict) -> bool:
-    """No images left, or not enough money left to look at another run's images."""
+    """No images left, or not enough money left to look at another run's images (the away mode has
+    no money budget: the subscription pays, and away.outlook keeps to its allowance)."""
     return (working["images"] >= working["max_images"]
-            or working["cost"] + working.get("last_turn_cost", 0) > working["max_cost"])
+            or (working.get("kind") != away.KIND
+                and working["cost"] + working.get("last_turn_cost", 0) > working["max_cost"]))
 
 
-def _settle_autonomy(conversation_id: str) -> bool:
+def _settle_autonomy(conversation_id: str, reason: str | None = None) -> bool:
     """Working on its own ends with a turn that leaves nothing under way: the bot stopped
-    launching (the goal is met, or it is out of ideas) or the budget ran out. Whether it ended."""
+    launching (the goal is met, or it is out of ideas) or the budget ran out -- or, with a reason,
+    right away (an away turn that failed). Whether it ended."""
     working = conversations.autonomy(conversations.get(conversation_id) or {})
-    if working is None or runs.tracker.pending_in(conversation_id):
+    if working is None or (reason is None and runs.tracker.pending_in(conversation_id)):
         return False
-    if working["images"] >= working["max_images"]:
-        reason = "images"
-    elif working["cost"] + working.get("last_turn_cost", 0) > working["max_cost"]:
-        reason = "cost"
+    if reason is None:
+        reason = ("images" if working["images"] >= working["max_images"]
+                  else "cost" if _budget_spent(working) else "done")
+    if away.is_away(working):
+        away.stop(conversation_id, reason)
     else:
-        reason = "done"
-    conversations.end_autonomy(conversation_id, reason)
+        conversations.end_autonomy(conversation_id, reason)
     logger.info("autonomy ended conversation_id=%s reason=%s images=%s cost=%s",
                 conversation_id, reason, working["images"], working["cost"])
     return True

@@ -887,6 +887,27 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
   scrollbar-color: var(--line-strong) transparent;
 }
 .threads-new { width: 100%; }
+/* The away mode: under "Nueva conversación"; while it works, it says until when and opens its conversation. */
+.threads-away { width: 100%; margin-top: -0.5rem; justify-content: center; }
+.threads-away.is-active { color: var(--safelight); }
+
+.away-dialog {
+  width: min(32rem, calc(100vw - 2rem));
+  padding: 1.25rem 1.25rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  color: var(--paper);
+}
+.away-dialog::backdrop { background: rgba(10, 8, 6, 0.7); }
+.away-dialog form { display: flex; flex-direction: column; gap: 0.9rem; }
+.away-dialog h2 { margin: 0; font-size: var(--step-1); }
+.away-lead { margin: 0; color: var(--paper); line-height: 1.5; }
+.away-rules { margin: 0; padding-left: 1.1rem; color: var(--paper-dim); font-size: var(--step--1); line-height: 1.5; }
+.away-rules li + li { margin-top: 0.3rem; }
+.away-dialog input[type="time"] { width: 8rem; font-variant-numeric: tabular-nums; }
+.away-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+.msg-away { margin: 0; color: var(--safelight); font-size: var(--step--1); }
 .thread-list { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .thread {
   display: flex;

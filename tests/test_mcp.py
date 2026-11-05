@@ -75,7 +75,8 @@ def test_the_endpoint_takes_the_apps_credentials_and_lists_every_feature(api_cli
     tools = {t["name"]: t for t in agent.rpc("tools/list")["result"]["tools"]}
     for name in ("start_conversation", "send_message", "wait_for_conversation", "get_image", "react_to_image",
                  "search_history", "save_family", "save_note", "set_personality", "save_workflow",
-                 "list_installed_models", "list_requests", "finish_conversation", "get_balance_data"):
+                 "list_installed_models", "list_requests", "finish_conversation", "get_balance_data",
+                 "start_away_mode"):
         assert name in tools
     assert tools["delete_conversation"]["annotations"]["destructiveHint"] is True
     assert tools["get_conversation"]["annotations"]["readOnlyHint"] is True

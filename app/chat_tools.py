@@ -452,6 +452,8 @@ class ToolBox:
         # A turn the bot takes by itself (its look at a run's results): what it launches then goes behind
         # what someone asked for in ComfyUI's queue.
         self.automatic = False
+        # A turn of the away mode (away.py): everything it launches goes at idle, behind anything else.
+        self.away = False
         # In a turn someone asked for, the images they are waiting for go first; the rest of a big
         # batch goes behind other conversations' few (comfy.PRIORITY_REST).
         self.waited_for = WAITED_FOR_IMAGES
@@ -745,6 +747,8 @@ class ToolBox:
 
     def _priority(self) -> str:
         """The next image's place in ComfyUI's queue, unless the run sets its own."""
+        if self.away:
+            return comfy.PRIORITY_AWAY
         if self.automatic:
             return comfy.PRIORITY_ON_ITS_OWN
         if self.waited_for > 0:
@@ -762,6 +766,8 @@ class ToolBox:
             title = title[:TAG_TITLE_CHARS - 1].rstrip() + "…"
         if calibrating:
             why = f"calibración de {re.split(r'[\\/]', catalog.short_name(calibrating))[-1]}"
+        elif self.away:
+            why = "modo autónomo"
         else:
             why = "por su cuenta" if self.automatic else "tras tu mensaje"
         return f"{title} · ejecución {number} · {why}"
@@ -777,7 +783,8 @@ class ToolBox:
         jobs, sent, priorities = [], [], []
         for job_graph, seed, fields in variants:
             payload = job_graph.to_api()
-            job_priority = priority or self._priority()
+            # Away, nothing goes ahead of anyone: drafts, finishes and calibrations alike.
+            job_priority = comfy.PRIORITY_AWAY if self.away else priority or self._priority()
             try:
                 prompt_id = self.client.submit(base, payload, tag=tag, priority=job_priority)
             except comfy.ComfyError:
@@ -1026,6 +1033,15 @@ class ToolBox:
                  "replaced": bool(existing)})
 
     def _tool_keep_going(self, goal: str = "", max_images=None, max_cost=None, stop: bool = False) -> tuple[dict, dict]:
+        working = conversations.autonomy(self._conversation())
+        if working and working.get("kind") == "away":
+            from . import away  # here, not at the top: away imports claude_code, which imports this module
+            if stop:
+                away.stop(self.conversation_id, "done")
+                return ({"stopped": True, "note": "The away mode has ended: sum up the night for the user."},
+                        {"type": "tool", "tool": "keep_going", "stop": True})
+            raise ToolError("You're working away already, until the user is back: keep_going isn't needed. Launch "
+                            "the next round, or launch nothing and sum up the night.")
         if stop:
             ended = conversations.end_autonomy(self.conversation_id, "user")
             return ({"stopped": True, "used": _usage(ended)} if ended else {"note": "You weren't working on your own."},
@@ -1049,6 +1065,9 @@ class ToolBox:
         """While the bot works on its own, a launch must fit what's left of the budget -- in
         images, and in money for the look at its results that will follow."""
         working = conversations.autonomy(self._conversation())
+        if self.away and not (working and working.get("kind") == "away"):
+            raise ToolError("The away mode has ended (the user is back, or its time came): don't launch more; "
+                            "sum up the night for the user.")
         if working is None:
             return
         left = working["max_images"] - working["images"]
@@ -1057,7 +1076,8 @@ class ToolBox:
                             "don't launch more; sum up for the user.")
         if count > left:
             raise ToolError(f"Only {left} image{'s' if left > 1 else ''} left in the budget: launch at most that.")
-        if working["cost"] + working.get("last_turn_cost", 0) > working["max_cost"]:
+        # The away mode has no money budget (the subscription pays; away.outlook keeps to its allowance).
+        if working.get("kind") != "away" and working["cost"] + working.get("last_turn_cost", 0) > working["max_cost"]:
             raise ToolError(f"The budget's money (${working['cost']:.2f} of ${working['max_cost']:.2f}) wouldn't "
                             "cover looking at another run's images: don't launch more; sum up for the user.")
 

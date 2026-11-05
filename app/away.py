@@ -1,0 +1,387 @@
+"""The away mode ("Modo autónomo", 2026-11-05): while the user is away -- the night, a long absence --
+the bot works on its own, in a conversation of its own, making what it thinks they would love and
+what it is curious to try, on what would otherwise go unused: the GPU while nothing else wants it,
+and the Claude Code subscription's allowance.
+
+It must never get in the way of the user's own use (the owner's rules):
+- ComfyUI: everything it launches goes at comfy.PRIORITY_AWAY ("idle"), the one level the gateway
+  still stops halfway: it runs only while nothing else wants the GPU, and gives way at once.
+- Claude Code's 5-hour window, which opens with its first use and renews 5 hours later. A turn runs
+  in a window that renews before the user is back -- all of it may be used, up to FULL_SHARE -- or
+  in the one still open when they are back, while it has used at most OVERLAP_SHARE of it: they find
+  75% of that one left, at least. With no window open, a turn opens one that ends 5 hours later.
+  Each turn's share is estimated from what the away turns took so far (TURN_SHARE at least), and
+  checked before every turn (`outlook`); out of room until a window renews, it waits for it
+  (retry_later, as after a limit). The weekly window has no ceiling of its own (the owner's call):
+  it is only never run out (OTHER_SHARE).
+- The user: anything they do that makes the bot work -- a message, a retry, stopping it -- in any
+  conversation ends it (user_active): they are back.
+
+It ends at `until`, when the user said they'd be back (a timer, kept across restarts: resume), or
+before, when the allowance runs out. Its last turn -- FINAL_SECONDS before `until`, or when the
+allowance won't cover another -- sums up the night for the user. Runs still under way then go on at
+idle, and their images land in the chat without a comment (the conversation's own comments are off).
+"""
+import logging
+import threading
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+from . import catalog, chat, claude_code, comfy, conversations, families, retry_later, storage
+from .config import get_settings
+
+logger = logging.getLogger(__name__)
+
+KIND = "away"
+WINDOW_SECONDS = 5 * 3600
+FULL_SHARE = 0.95  # a window that renews before the user is back: nearly all of it, not into a refusal
+OVERLAP_SHARE = 0.25  # the one still open when they're back: they find 75% of it left
+OTHER_SHARE = 0.95  # the weekly window: no ceiling but not running it out
+TURN_SHARE = 0.05  # a turn's share of the 5-hour window, at least (the bot's turns: median 2%, p90 5%)
+RECENT_TURNS = 3  # the estimate: the largest of the latest turns' shares
+FINAL_SECONDS = 20 * 60  # the last turn: what it launched after this couldn't be reviewed before the end
+MIN_SECONDS = 30 * 60
+MAX_SECONDS = 24 * 3600
+MAX_IMAGES = 400
+FAVORITES = 8  # the user's favorites, newest first, copied into the conversation for the bot to start from
+
+_timer: threading.Timer | None = None
+_guard = threading.Lock()
+
+
+class AwayError(ValueError):
+    pass
+
+
+@dataclass
+class Outlook:
+    """What the next turn may do. action: "go" (a turn with tools), "last" (the last turn: it sums
+    up), "wait" (until `at`, when the 5-hour window renews) or "end" (reason "until" or "limit")."""
+    action: str
+    reason: str = ""
+    at: float | None = None
+    turns: int = 0  # turns the allowance still covers in this window, this one included
+    resets_at: float | None = None
+    capped: bool = False  # this window is still open when the user is back: OVERLAP_SHARE of it at most
+    renews: bool = False  # it renews in time for more turns before the end
+
+
+def is_away(working: dict | None) -> bool:
+    return bool(working) and working.get("active") and working.get("kind") == KIND
+
+
+def outlook(working: dict, limits: dict | None, now: float, turn_share: float = TURN_SHARE) -> Outlook:
+    """Whether a turn may run now, under the owner's rules (see the module's docstring), from the
+    subscription's usage as the latest turn reported it (claude_code.limits)."""
+    until = working["until"]
+    if now >= until:
+        return Outlook("end", reason="until")
+    final_from = until - FINAL_SECONDS
+    windows = (limits or {}).get("windows") or {}
+    for name, window in windows.items():
+        if name == "five_hour" or not isinstance(window, dict):
+            continue
+        resets = window.get("resets_at")
+        if not (isinstance(resets, (int, float)) and resets > now):
+            continue
+        if (window.get("used") or 0) + turn_share > OTHER_SHARE or window.get("status") == "rejected":
+            return Outlook("wait", at=resets) if resets < final_from else Outlook("end", reason="limit")
+    five = windows.get("five_hour") or {}
+    resets = five.get("resets_at")
+    if isinstance(resets, (int, float)) and resets > now:
+        used, open_ = five.get("used") or 0.0, True
+    else:
+        used, resets, open_ = 0.0, now + WINDOW_SECONDS, False  # a turn now opens a new window
+    capped = resets > until
+    room = (OVERLAP_SHARE if capped else FULL_SHARE) - used
+    renews = open_ and resets < final_from
+    if room < turn_share:
+        return Outlook("wait", at=resets) if renews else Outlook("end", reason="limit")
+    turns = int(room / turn_share + 1e-9)
+    if now >= final_from:
+        return Outlook("last", reason="until", turns=turns, resets_at=resets, capped=capped)
+    if turns < 2 and not renews:
+        return Outlook("last", reason="limit", turns=turns, resets_at=resets, capped=capped)
+    return Outlook("go", turns=turns, resets_at=resets, capped=capped, renews=renews)
+
+
+def turn_share(conversation: dict) -> float:
+    """A turn's share of the 5-hour window, as the conversation's turns went: the rise from one reply
+    to the next within the same window (which counts anything else that used it meanwhile too)."""
+    seen = []
+    for message in conversation["messages"]:
+        info = ((message.get("claude_code") or {}).get("rate_limit") or {})
+        window = (info.get("unifiedWindows") or {}).get("five_hour")
+        if message["role"] == "assistant" and isinstance(window, dict) \
+                and isinstance(window.get("utilization"), (int, float)):
+            seen.append((window.get("resetsAt"), window["utilization"]))
+    steps = [after - before for (window, before), (same, after) in zip(seen, seen[1:])
+             if window == same and after >= before]
+    return max([TURN_SHARE, *steps[-RECENT_TURNS:]])
+
+
+# --- what the bot is told ---------------------------------------------------------------------------
+
+DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December")
+DIAS = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")
+MESES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+
+
+def _clock(ts: float) -> str:
+    return datetime.fromtimestamp(ts).strftime("%H:%M")  # the PC's time: the app's zone
+
+
+def _when(ts: float) -> str:
+    moment = datetime.fromtimestamp(ts)
+    return f"{moment:%H:%M} on {DAYS[moment.weekday()]} {moment.day} {MONTHS[moment.month - 1]}"
+
+
+def _span(seconds: float) -> str:
+    minutes = max(0, round(seconds / 60))
+    return f"{minutes // 60} h {minutes % 60:02d} min" if minutes >= 60 else f"{minutes} min"
+
+
+BRIEF = """[Away mode] The user is away until {until} and left you working on your own until then, in this conversation of yours: make what you think they would love, and what you are curious to try, with GPU time and Claude Code allowance that would otherwise go unused.
+
+How it works:
+- In rounds: launch a batch, look at its images when they come back, launch the next. Everything you launch runs at idle priority, only while ComfyUI has nothing else to do, so it never gets in anyone's way (a job may be stopped and redone when something else comes).
+- Every turn tells you the time and how much Claude Code allowance is left. Each turn uses some, the images you look at most of all: batches of 4-8 images, zooms only where they matter, no lookups the context already answers.
+- When the time or the allowance is about to run out you get a last turn: sum up the night then. If you run out of good ideas before, launch nothing and make that reply the summary.
+- The user isn't here to confirm anything: note facts you saw about models, LoRAs and workflows, with how many images back them; a hunch only as one; nothing about their taste until they have reacted. Review every image (<review>), but rate none for them: <rating> is for their own words.
+
+Where to start is your call; mix:
+- Their favorites, attached here: variations (image:N with changes -- other seeds, proportions, situations, settings, light), or finishing one that isn't finished (finish_image).
+- Calibrating the LoRAs their favorites use that were never calibrated{loras}.
+- Something of your own you think they would like, from their notes and what they loved.
+
+{favorites}"""
+
+
+def brief_text(until: float, favorites: list[dict], loras: list[str]) -> str:
+    if favorites:
+        lines = [f"Their favorites, newest first (images #1-#{len(favorites)} here, each with its recipe):"]
+        for number, item in enumerate(favorites, 1):
+            what = "a favorite (loved)" if item["rating"] == "love" else "liked"
+            line = (f"- #{number}: {what}, from the conversation \"{item['title']}\", run with {item['workflow']}"
+                    f"; {'a finished image' if item['finished'] else 'not finished'}.")
+            if item.get("comment"):
+                line += f' They said: "{item["comment"]}"'
+            lines.append(line)
+        favorites_text = "\n".join(lines)
+    else:
+        favorites_text = "They haven't marked any favorite yet: go by their notes and the models' stats."
+    return BRIEF.format(until=_when(until), favorites=favorites_text,
+                        loras=f": {', '.join(loras)}" if loras else " (none of them is uncalibrated)")
+
+
+def context_text(working: dict, seen: Outlook, now: float, first: bool) -> str:
+    """The turn's context while it works away: the time and allowance left, and what to do now."""
+    until = working["until"]
+    lines = [f"## Away Mode\nThe user is back at {_when(until)}; it's {_clock(now)} now ({_span(until - now)} left). "
+             f"{working['images']} images made so far tonight."]
+    if seen.capped:
+        lines.append(f"Claude Code: this 5-hour window is still open when the user is back, so you may use only a "
+                     f"quarter of it: about {seen.turns} turns left, this one included.")
+    elif seen.renews:
+        lines.append(f"Claude Code: about {seen.turns} turns left in this 5-hour window, this one included; it renews "
+                     f"at {_clock(seen.resets_at)}, with more.")
+    else:
+        lines.append(f"Claude Code: about {seen.turns} turns left, this one included.")
+    if seen.action == "last":
+        lines.append("This is your last turn. Sum up the night for the user: what you tried and why, the best images "
+                     "(#N), what you learned, what you'd try next. If you like, end it by launching one last batch for "
+                     "them to find (say so): its images won't come back to you.")
+        return "\n".join(lines)
+    lines.append(f"Batches should be back by {_clock(until - FINAL_SECONDS)} for you to review them: size them by the "
+                 "time per image and the queue.")
+    lines.append("Start: say what you'll try tonight and why, and launch the first round in this same reply."
+                 if first else
+                 "Review these images, decide the next round (focus or explore, and say which) and launch it in this "
+                 "same reply, without asking -- or launch nothing and sum up the night, if you're out of good ideas.")
+    return "\n".join(lines)
+
+
+# --- starting and stopping -----------------------------------------------------------------------------
+
+def _pointer() -> Path:
+    return Path(get_settings().data_dir, "away.json")
+
+
+def current() -> str | None:
+    """The conversation working away right now, if any."""
+    found = storage.read_json(str(_pointer()), default=None) or {}
+    conversation_id = found.get("conversation_id")
+    if conversation_id and is_away(conversations.autonomy(conversations.get(conversation_id) or {})):
+        return conversation_id
+    return None
+
+
+def _favorites() -> list[dict]:
+    """The user's favorites among the runs' images, every conversation's: loved first, then liked,
+    newest first within each; with where they come from."""
+    found = []
+    root = Path(get_settings().data_dir, "conversations")
+    for path in root.glob("*.json") if root.is_dir() else []:
+        if not conversations.is_valid_id(path.stem):
+            continue
+        conversation = storage.read_json(str(path), default=None) or {}
+        messages = conversation.get("messages") or []
+        numbers = chat.image_numbers(messages)
+        runs = {run["n"]: run for run in conversation.get("runs") or []}
+        finished = {run.get("finish_of") for run in runs.values() if run.get("kind") == "finish"}
+        for message in messages:
+            if message["role"] != "results":
+                continue
+            run = runs.get(message.get("run")) or {}
+            for image in message.get("images") or []:
+                reaction = image.get("reaction") or {}
+                if reaction.get("rating") not in ("love", "up"):
+                    continue
+                job = next((j for j in run.get("jobs") or [] if image["id"] in (j.get("images") or [])), {})
+                found.append({
+                    "conversation_id": conversation["id"], "image_id": image["id"], "rating": reaction["rating"],
+                    "at": reaction.get("at") or message.get("timestamp") or "",
+                    "title": conversations.display_title(conversation) or "untitled",
+                    "workflow": run.get("workflow") or "a workflow", "comment": (reaction.get("comment") or "").strip(),
+                    "finished": run.get("kind") == "finish" or numbers.get(image["id"]) in finished,
+                    "family_id": conversation.get("family_id"),
+                    "loras": [lora["name"] for lora in job.get("loras") or [] if lora.get("name")],
+                })
+    found.sort(key=lambda item: item["at"], reverse=True)
+    found.sort(key=lambda item: item["rating"] != "love")  # stable: loved first, each group newest first
+    return found[:FAVORITES]
+
+
+def _copy_image(conversation_id: str, item: dict) -> dict | None:
+    """A favorite, into the away conversation as an image the user shared: with its workflow, so the bot
+    can run it (image:N) or finish it."""
+    found = conversations.image_file(item["conversation_id"], item["image_id"])
+    if found is None:
+        return None
+    path, content_type = found
+    image = conversations.save_image(conversation_id, Path(path).read_bytes(), content_type)
+    workflow = conversations.image_workflow(item["conversation_id"], item["image_id"])
+    if workflow and conversations.image_workflow(conversation_id, image["id"]) is None:
+        storage.write_json(f"{get_settings().data_dir}/conversations/{conversation_id}/{image['id']}.workflow.json",
+                           workflow)
+    return image
+
+
+def _title(now: float) -> str:
+    moment = datetime.fromtimestamp(now)
+    return f"Modo autónomo · {DIAS[moment.weekday()]} {moment.day} {MESES[moment.month - 1]}, {moment:%H:%M}"
+
+
+def start(until: float, instructions: str = "", claude_model: str = "", claude_effort: str = "",
+          family_id: str | None = None, now: float | None = None) -> dict:
+    """Open the away conversation and set the bot to work in it until `until` (epoch seconds). Its first
+    message is the app's: what the mode is, the user's favorites (copied in) and their instructions."""
+    now = time.time() if now is None else now
+    if comfy.client() is None:
+        raise AwayError("ComfyUI isn't configured: there's nothing to work with")
+    if not claude_code.available():
+        raise AwayError("The away mode needs Claude Code, which isn't installed here (CLAUDE_CODE_COMMAND)")
+    if not now + MIN_SECONDS <= until <= now + MAX_SECONDS:
+        raise AwayError("The time you're back must be between half an hour and a day from now")
+    running = current()
+    if running:
+        raise AwayError(f'The bot is already working on its own in "{conversations.display_title(conversations.get(running))}"')
+    limits = claude_code.limits()
+    if outlook({"until": until}, limits, now).action == "end":
+        five = ((limits or {}).get("windows") or {}).get("five_hour") or {}
+        raise AwayError(f"Claude Code leaves no room before you're back: its 5-hour window is at "
+                        f"{round((five.get('used') or 0) * 100)}% and doesn't renew until {_clock(five['resets_at'])}"
+                        if five.get("resets_at") else "Claude Code leaves no room before you're back")
+    favorites = _favorites()
+    family = families.get_family(family_id or "") if family_id else None
+    if family is None:
+        family = next((families.get_family(f["family_id"]) for f in favorites if f.get("family_id")), None) \
+            or (families.list_families() or [None])[0]
+    if family is None:
+        raise AwayError("There's no model family to start with")
+    settings = get_settings()
+    conversation = conversations.create(
+        family["id"], settings.default_llm_model, 0.7, auto_comment=False, engine=claude_code.ENGINE,
+        claude_model=claude_model if claude_model in claude_code.MODELS else settings.claude_code_model,
+        claude_effort=claude_effort, image_check=False)
+    conversation_id = conversation["id"]
+    conversations.update_settings(conversation_id, {"title": _title(now)})
+    images = [image for image in (_copy_image(conversation_id, item) for item in favorites) if image]
+    stats = catalog.stats()
+    loras = list(dict.fromkeys(name for item in favorites for name in item["loras"]
+                               if not (stats.get(name) or {}).get("calibration")))
+    conversations.append_message(conversation_id, {
+        "role": "user", "content": " ".join((instructions or "").split()), "images": images,
+        "away": {"until": until, "favorites": len(images)},
+        "away_brief": brief_text(until, favorites[:len(images)], [catalog.short_name(n) for n in loras]),
+    })
+    conversations.start_away(conversation_id, until, " ".join((instructions or "").split()), MAX_IMAGES)
+    storage.write_json(str(_pointer()), {"conversation_id": conversation_id, "until": until})
+    _schedule_end(conversation_id, until)
+    logger.info("away mode started conversation_id=%s until=%s favorites=%d", conversation_id, _clock(until),
+                len(images))
+    return conversations.get(conversation_id)
+
+
+def stop(conversation_id: str, reason: str) -> dict | None:
+    """End it: the bot launches nothing more and doesn't come back by itself. What it launched goes on
+    at idle and lands in the chat without a comment."""
+    ended = conversations.end_autonomy(conversation_id, reason)
+    retry_later.cancel(conversation_id)
+    if (conversations.get(conversation_id) or {}).get("retry_at"):
+        conversations.set_retry(conversation_id, None)
+    found = storage.read_json(str(_pointer()), default=None) or {}
+    if found.get("conversation_id") == conversation_id:
+        storage.remove(str(_pointer()))
+    _cancel_end()
+    if ended:
+        logger.info("away mode ended conversation_id=%s reason=%s images=%s", conversation_id, reason,
+                    ended.get("images"))
+    return ended
+
+
+def user_active() -> None:
+    """The user did something that makes the bot work: they are back, and the away mode ends."""
+    conversation_id = current()
+    if conversation_id:
+        stop(conversation_id, "user")
+
+
+def _schedule_end(conversation_id: str, until: float) -> None:
+    global _timer
+    timer = threading.Timer(max(0.0, until - time.time()), _end_now, args=(conversation_id,))
+    timer.daemon = True
+    with _guard:
+        previous, _timer = _timer, timer
+    if previous is not None:
+        previous.cancel()
+    timer.start()
+
+
+def _cancel_end() -> None:
+    global _timer
+    with _guard:
+        previous, _timer = _timer, None
+    if previous is not None:
+        previous.cancel()
+
+
+def _end_now(conversation_id: str) -> None:
+    if is_away(conversations.autonomy(conversations.get(conversation_id) or {})):
+        stop(conversation_id, "until")
+
+
+def resume() -> None:
+    """After a restart: the end of the one under way, scheduled again (or ended, if its time has passed)."""
+    conversation_id = current()
+    if not conversation_id:
+        return
+    until = conversations.autonomy(conversations.get(conversation_id))["until"]
+    if until <= time.time():
+        stop(conversation_id, "until")
+    else:
+        _schedule_end(conversation_id, until)

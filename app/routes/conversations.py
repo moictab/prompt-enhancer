@@ -6,7 +6,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .. import (balance, catalog, chat_tools, civitai, claude_code, comfy, conversation_turn, conversations,
+from .. import (away, balance, catalog, chat_tools, civitai, claude_code, comfy, conversation_turn, conversations,
                downloads, history, memory, references, retry_later, runs)
 from .api import _require_family, read_image
 
@@ -93,6 +93,31 @@ def create_conversation(req: ConversationSettings):
         initiative_images=req.initiative_images, claude_effort=req.claude_effort,
         claude_auto_model=req.claude_auto_model, image_check=req.image_check,
     )
+
+
+class AwayStart(BaseModel):
+    until: float  # when the user is back, epoch seconds
+    instructions: str = Field(default="", max_length=2000)
+    claude_model: str = Field(default="", max_length=80)
+    claude_effort: Effort = ""
+    family_id: str | None = None
+
+
+@router.post("/away")
+def start_away(req: AwayStart):
+    """The away mode ("Modo autónomo", away.py): while the user is away, the bot works on its own in a
+    new conversation until `until`, on idle GPU and within what Claude Code's 5-hour window can spare.
+    Answers the conversation; its first turn is already under way."""
+    try:
+        conversation = away.start(req.until, req.instructions, req.claude_model.strip(), req.claude_effort,
+                                  req.family_id)
+    except away.AwayError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    try:
+        conversation_turn.start_turn(conversation["id"])
+    except conversation_turn.Busy:
+        pass  # can't be: it was just made
+    return _with_activity(conversations.get(conversation["id"]) or conversation)
 
 
 @router.get("/{conversation_id}")
@@ -228,6 +253,7 @@ async def send_message(
         message["images"] = saved + [{**sheet, "sheet": True} for sheet in sheets]
         message["references"] = study.counts
         message["reference_study"] = study.text
+    away.user_active()  # they're back: the away mode, wherever it works, ends
     conversations.append_message(conversation_id, message)
     _start_initiative(conversation_id)
     return _reply(conversation_id)
@@ -253,6 +279,7 @@ def retry_reply(conversation_id: str):
         raise HTTPException(status_code=409, detail="The last message already has a reply")
     _require_idle(conversation_id)
     _require_family(conversation["family_id"])
+    away.user_active()
     return _reply(conversation_id)
 
 
@@ -294,6 +321,7 @@ def cancel_download(conversation_id: str, n: int):
 def cancel_retry(conversation_id: str):
     """Don't answer the last message again by itself when Claude Code's limit resets."""
     _require_conversation(conversation_id)
+    away.user_active()
     retry_later.cancel(conversation_id)
     conversations.set_retry(conversation_id, None)
     return {"retry_at": None}
@@ -312,6 +340,7 @@ def redo_reply(conversation_id: str):
     working = conversations.autonomy(conversation)
     if working and working.get("active") and working.get("kind") != "initiative":
         raise HTTPException(status_code=409, detail="The bot is working on its own here: stop it first")
+    away.user_active()
     _require_family(conversation["family_id"])
     try:
         # Held so that none of its runs can put its images in the chat in between.
@@ -362,8 +391,10 @@ def finish_conversation(conversation_id: str, focus: str = Form("")):
     message of its own (the evidence, and whatever the user adds as focus), answered like any
     other but without tools, streamed the same way. With nothing to take stock of, the
     conversation is only marked: the answer is the conversation, as JSON."""
-    conversation = _require_conversation(conversation_id)
+    _require_conversation(conversation_id)
     _require_idle(conversation_id)
+    away.user_active()  # they're back; and the away mode's own conversation can be ended like any other
+    conversation = _require_conversation(conversation_id)
     working = conversations.autonomy(conversation)
     if working and working.get("kind") != "initiative":
         raise HTTPException(status_code=409, detail="The bot is working on its own here: stop it before ending")
@@ -403,6 +434,7 @@ def cancel_run(conversation_id: str, n: int):
     if run["status"] != "pending":
         raise HTTPException(status_code=409, detail="The run has already finished")
     # Cancelling is stopping: the bot doesn't carry on alone after it.
+    away.user_active()
     conversations.end_autonomy(conversation_id, "user")
     return runs.cancel(conversation_id, n)
 
@@ -428,8 +460,10 @@ def prioritize_run(conversation_id: str, n: int):
 @router.post("/{conversation_id}/autonomy/stop")
 def stop_autonomy(conversation_id: str):
     """The bot stops working on its own: it launches nothing more, and comments on whatever
-    is still running when it arrives, as usual."""
-    _require_conversation(conversation_id)
+    is still running when it arrives, as usual (away, it lands without a comment)."""
+    conversation = _require_conversation(conversation_id)
+    if away.is_away(conversations.autonomy(conversation)):
+        return away.stop(conversation_id, "user")
     ended = conversations.end_autonomy(conversation_id, "user")
     if ended is None:
         raise HTTPException(status_code=409, detail="The bot isn't working on its own here")

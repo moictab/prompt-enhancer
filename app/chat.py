@@ -699,6 +699,11 @@ def build_llm_messages(
             text = f"{COMPACTED_NOTE}\n\n{text}" if text else COMPACTED_NOTE
         if message.get("continue"):
             text = f"{CONTINUE_NOTE}\n\n{text}" if text else CONTINUE_NOTE
+        if message.get("away_brief"):
+            # The away mode's first message (away.py): what it is and where to start, from the app;
+            # the user's own words for it, if any, after.
+            text = (f"{message['away_brief']}\n\nWhat the user asked for this time: {text}" if text
+                    else message["away_brief"])
         if message.get("balance"):
             # Taking stock (balance.py): the evidence as it was when asked, while it waits for the bot's
             # balance; once answered, a line (tens of KB less in every later turn: the balance follows).

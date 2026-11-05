@@ -43,6 +43,9 @@ PRIORITY_FINISH = "low"
 # A run the user put ahead of everything else waiting ("Pasar delante"): the gateway owner's override,
 # which skips the hourly limits on urgent and high (Comfy.prioritize).
 PRIORITY_AHEAD = "urgent"
+# Everything the away mode launches (away.py): the one level the gateway still stops halfway, so it
+# runs only while nothing else wants the GPU and gives way at once to anything that comes.
+PRIORITY_AWAY = "idle"
 CONNECT_TIMEOUT = 4
 READ_TIMEOUT = 60
 MODELS_CACHE_SECONDS = 300

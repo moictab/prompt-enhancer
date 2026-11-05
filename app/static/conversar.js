@@ -79,6 +79,16 @@ const ui = {
   picker: $("image-picker"),
   autonomyBar: $("autonomy-bar"),
   finish: $("finish-conversation"),
+  // The away mode (only with ComfyUI and Claude Code).
+  awayOpen: $("away-open"),
+  awayDialog: $("away-dialog"),
+  awayForm: $("away-form"),
+  awayUntil: $("away-until"),
+  awayInstructions: $("away-instructions"),
+  awayModel: $("away-model"),
+  awayError: $("away-error"),
+  awayCancel: $("away-cancel"),
+  awaySubmit: $("away-submit"),
 };
 
 const state = {
@@ -520,6 +530,10 @@ function renderAutonomy() {
     ui.autonomyBar.replaceChildren();
     return;
   }
+  if (working.kind === "away") {
+    renderAwayBar(conversation, working);
+    return;
+  }
   const used = `${working.images} de ${working.max_images} imágenes, ${dollars(working.cost)} de ${dollars(working.max_cost)}`;
   if (!working.active) {
     ui.autonomyBar.className = "autonomy-bar is-ended";
@@ -557,6 +571,156 @@ function renderAutonomy() {
     ].filter(Boolean)
   );
   ui.autonomyBar.hidden = false;
+}
+
+// ---------- the away mode ("Modo autónomo", away.py) ----------
+
+const AWAY_ENDED = {
+  until: "llegó la hora a la que dijiste que volvías",
+  limit: "no quedaba margen de Claude Code sin tocar lo que te deja a ti",
+  user: "has vuelto: lo has parado o has escrito en una conversación",
+  done: "lo dejó él: no tenía más ideas que merecieran la pena",
+  images: "llegó al máximo de imágenes",
+  error: "una de sus respuestas falló",
+};
+
+function clock(epochSeconds) {
+  return new Date(epochSeconds * 1000).toLocaleTimeString("es-ES", { hour: "numeric", minute: "2-digit", timeZone: TIME_ZONE });
+}
+
+function imagesCount(count) {
+  return `${count} ${count === 1 ? "imagen" : "imágenes"}`;
+}
+
+// The away conversation's bar: until when, what it has made, whether it waits for Claude Code's
+// 5-hour window, and Detener; once over, why.
+function renderAwayBar(conversation, working) {
+  if (!working.active) {
+    ui.autonomyBar.className = "autonomy-bar is-ended";
+    ui.autonomyBar.replaceChildren(
+      el("span", { class: "autonomy-state", text: "Modo autónomo terminado" }),
+      el("span", { class: "autonomy-detail", text: `${AWAY_ENDED[working.end_reason] || ""} (${imagesCount(working.images)}).` })
+    );
+    ui.autonomyBar.hidden = false;
+    return;
+  }
+  const stop = el("button", { type: "button", class: "btn-quiet", text: "Detener" });
+  stop.addEventListener("click", async () => {
+    setBusy(stop, true, "Deteniendo…");
+    try {
+      await request(`/api/conversations/${conversation.id}/autonomy/stop`, { method: "POST" });
+    } catch (err) {
+      toast(err.message, { error: true });
+    }
+    await refreshFromServer();
+    renderAutonomy();
+    loadSummaries({ quiet: true });
+  });
+  const detail = conversation.retry_at
+    ? `${imagesCount(working.images)}. En pausa: Claude Code no tiene margen hasta que se renueve su ventana de 5 h.`
+    : `${imagesCount(working.images)}. Si escribes aquí o en otra conversación, para.`;
+  ui.autonomyBar.className = "autonomy-bar";
+  ui.autonomyBar.replaceChildren(
+    ...[
+      el("span", { class: "autonomy-state", text: `Modo autónomo hasta las ${clock(working.until)}` }),
+      working.goal && el("span", { class: "autonomy-goal", text: `«${working.goal}»` }),
+      el("span", { class: "autonomy-detail", text: detail }),
+      stop,
+    ].filter(Boolean)
+  );
+  ui.autonomyBar.hidden = false;
+}
+
+// The next HH:MM on the app's clock (TIME_ZONE), today or else tomorrow, as epoch seconds.
+function nextClockTime(value) {
+  const [hours, minutes] = String(value || "").split(":").map(Number);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+  const format = new Intl.DateTimeFormat("en-US", {
+    timeZone: TIME_ZONE, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric",
+    hour: "numeric", minute: "numeric", second: "numeric",
+  });
+  // An instant's wall clock there, read as if it were UTC: the difference is the zone's offset.
+  const wall = (ms) => {
+    const p = Object.fromEntries(format.formatToParts(new Date(ms)).map((part) => [part.type, part.value]));
+    return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+  };
+  const now = Date.now();
+  const today = new Date(wall(now));
+  for (const days of [0, 1]) {
+    const target = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + days, hours, minutes);
+    let instant = target - (wall(target) - target);
+    instant = target - (wall(instant) - instant); // again, for a change of offset in between (summer time)
+    if (instant > now + 60_000) return Math.round(instant / 1000);
+  }
+  return null;
+}
+
+function activeAway() {
+  return state.summaries.find((s) => s.autonomy?.kind === "away") || null;
+}
+
+// Under "Nueva conversación": the mode's dialog, or, while it works, until when and its conversation.
+function renderAwayButton() {
+  if (!ui.awayOpen) return;
+  const working = activeAway();
+  ui.awayOpen.classList.toggle("is-active", !!working);
+  ui.awayOpen.textContent = working ? `Modo autónomo hasta las ${clock(working.autonomy.until)}` : "Modo autónomo";
+  ui.awayOpen.title = working
+    ? "Abre la conversación en la que trabaja por su cuenta"
+    : "Mientras estás fuera, el bot trabaja por su cuenta con la GPU y el Claude Code que sobran";
+}
+
+function setupAway() {
+  if (!ui.awayOpen) return;
+  const showError = (text) => {
+    ui.awayError.textContent = text;
+    ui.awayError.hidden = false;
+  };
+  ui.awayOpen.addEventListener("click", () => {
+    const working = activeAway();
+    if (working) {
+      openConversation(working.id, { push: true });
+      setThreadsOpen(false);
+      return;
+    }
+    const stored = readStored(localStorage, SETTINGS_KEY, {});
+    const known = [...ui.awayModel.options].map((o) => o.value);
+    ui.awayModel.value = known.includes(stored.claude_model) ? stored.claude_model
+      : known.includes(ui.claudeModel?.dataset.default) ? ui.claudeModel.dataset.default : known[0];
+    ui.awayError.hidden = true;
+    ui.awayDialog.showModal();
+  });
+  ui.awayCancel.addEventListener("click", () => ui.awayDialog.close());
+  ui.awayForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const until = nextClockTime(ui.awayUntil.value);
+    if (!until) {
+      showError("Pon la hora a la que vuelves.");
+      return;
+    }
+    ui.awayError.hidden = true;
+    setBusy(ui.awaySubmit, true, "Empezando…");
+    try {
+      const conversation = await request("/api/conversations/away", {
+        method: "POST",
+        json: {
+          until,
+          instructions: ui.awayInstructions.value.trim(),
+          claude_model: ui.awayModel.value,
+          claude_effort: readStored(localStorage, SETTINGS_KEY, {}).claude_effort || "",
+        },
+      });
+      ui.awayDialog.close();
+      ui.awayInstructions.value = "";
+      await loadSummaries({ quiet: true });
+      await openConversation(conversation.id, { push: true });
+      setThreadsOpen(false);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      setBusy(ui.awaySubmit, false);
+    }
+  });
 }
 
 function numberedImage(image, number, { reactable = false } = {}) {
@@ -1615,9 +1779,17 @@ function userMessage(message, previews = null) {
   const shots = previews
     ? previews.map((src) => el("figure", { class: "shot" }, el("img", { src, alt: "Imagen compartida" })))
     : images.map((image) => numberedImage(image, numbers.get(image.id)));
+  // The away mode's first message is the app's: what the bot starts from, plus the user's indications.
+  const away = message.away && el("p", {
+    class: "msg-away",
+    text: `Modo autónomo hasta las ${clock(message.away.until)}. ${message.away.favorites
+      ? `Parte de ${message.away.favorites === 1 ? "tu favorita" : `${message.away.favorites} de tus favoritas`}`
+      : "Aún no tienes favoritas: parte de lo que sabe de tus gustos"}${message.content ? ". Tus indicaciones:" : "."}`,
+  });
   return el(
     "article",
     { class: "msg msg-user" },
+    away,
     shots.length > 0 && el("div", { class: "msg-images" }, shots),
     ...(previews ? [] : images.map((image) => metadataPanel(image, numbers.get(image.id)))),
     reactionsSummary(message.reactions, numbers),
@@ -1800,6 +1972,10 @@ function renderLog() {
     ui.log.append(live.node);
   } else if (conversation.commenting || conversation.replying) {
     ui.log.append(pendingReply(conversation.commenting)); // until the chat picks the reply up
+  } else if (conversation.retry_at && ["user", "results"].includes(last.role) && conversation.autonomy?.active
+             && conversation.autonomy.kind === "away") {
+    // Away, out of room in Claude Code's 5-hour window: it goes on when it renews (the bar has Detener).
+    ui.log.append(el("p", { class: "chat-finished", text: `Sigue ${whenItComes(conversation.retry_at + RETRY_MARGIN_S)}, cuando se renueve la ventana de 5 h de Claude Code.` }));
   } else if (conversation.retry_at && ["user", "results"].includes(last.role)) {
     ui.log.append(limitWait(conversation.retry_at));
   } else if (last.role === "user") {
@@ -1846,13 +2022,22 @@ async function refreshFromServer() {
   if (fresh.messages.length !== current.messages.length || fresh.replying !== current.replying) loadSummaries();
 }
 
+// A run that has just finished is marked so a moment before its images land in the chat (and the bot,
+// maybe, starts commenting): a read in between sees nothing pending, and mustn't stop checking back.
+function resultsOnTheirWay(conversation) {
+  const shown = new Set(conversation.messages.filter((m) => m.role === "results").map((m) => m.run));
+  return (conversation.runs || []).some((run) => run.status !== "pending" && !run.discarded && !shown.has(run.n)
+    && run.finished_at && Date.now() - new Date(run.finished_at).getTime() < 60_000);
+}
+
 function schedulePoll() {
   clearTimeout(state.pollTimer);
   state.pollTimer = 0;
   const conversation = state.conversation;
   if (!conversation || state.live.has(conversation.id)) return;
   let wait = POLL_MS;
-  if (!(conversation.commenting || conversation.replying || hasPendingRuns() || hasActiveDownloads())) {
+  if (!(conversation.commenting || conversation.replying || hasPendingRuns() || hasActiveDownloads()
+        || resultsOnTheirWay(conversation))) {
     if (!conversation.retry_at) return;
     // Waiting for Claude Code's limit to reset: look again when the server retries the reply.
     wait = Math.min(Math.max((conversation.retry_at + RETRY_MARGIN_S) * 1000 - Date.now(), POLL_MS), 10 * 60_000);
@@ -1965,6 +2150,9 @@ function threadStatus(summary) {
   if (live || summary.replying || summary.commenting) {
     return { kind: "busy", text: live?.automatic || (!live && summary.commenting) ? "Comentando…" : "Respondiendo…" };
   }
+  if (summary.autonomy?.kind === "away") {
+    return { kind: "busy", text: `Modo autónomo hasta las ${clock(summary.autonomy.until)}: ${imagesCount(summary.autonomy.images)}` };
+  }
   if (summary.autonomy && !(summary.autonomy.kind === "initiative" && !summary.autonomy.images)) {
     return { kind: "busy", text: `Por su cuenta: ${summary.autonomy.images} de ${summary.autonomy.max_images} imágenes` };
   }
@@ -2046,6 +2234,7 @@ function threadItem(summary) {
 }
 
 function renderThreads() {
+  renderAwayButton();
   if (state.renaming) return; // redrawn when the title is done
   scheduleListPoll();
   if (!state.summaries.length) {
@@ -3038,6 +3227,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupThreads();
   setupAttachments();
   setupViewer();
+  setupAway();
   await loadSideData();
   // Back on the tab: catch up at once on whatever finished meanwhile.
   document.addEventListener("visibilitychange", () => {

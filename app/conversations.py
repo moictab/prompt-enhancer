@@ -155,7 +155,8 @@ def summary(conversation: dict) -> dict:
         "recent_images": _recent_images(conversation),
         "running": any(r["status"] == "pending" for r in conversation.get("runs") or []),
         # While the bot works on its own there: how much of its budget it has used.
-        "autonomy": ({k: working.get(k) for k in ("kind", "images", "max_images", "cost", "max_cost")}
+        "autonomy": ({**{k: working.get(k) for k in ("kind", "images", "max_images", "cost", "max_cost")},
+                      **({"until": working["until"]} if working.get("until") else {})}  # the away mode's end
                      if (working := autonomy(conversation)) else None),
         # The user ended it (Terminar: the bot's balance, when runs made images); writing reopens it.
         "finished_at": conversation.get("finished_at"),
@@ -657,6 +658,23 @@ def start_autonomy(conversation_id: str, goal: str, max_images: int, max_cost: f
         return conversation["autonomy"]
 
 
+def start_away(conversation_id: str, until: float, instructions: str, max_images: int,
+               root: str | None = None) -> dict | None:
+    """The away mode (away.py, kind "away"): the bot works on its own until `until` (epoch seconds),
+    within max_images and what Claude Code's allowance leaves (away.outlook). The subscription pays,
+    so there's no money budget: max_cost 0, which the budget checks skip for this kind."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return None
+        conversation["autonomy"] = {
+            "active": True, "kind": "away", "goal": instructions, "until": until, "max_images": max_images,
+            "max_cost": 0.0, "images": 0, "cost": 0.0, "last_turn_cost": 0.0, "started_at": _now(),
+        }
+        storage.write_json(_path(conversation_id, root), conversation)
+        return conversation["autonomy"]
+
+
 def add_autonomy_usage(conversation_id: str, images: int = 0, turn_cost: float | None = None,
                        root: str | None = None) -> dict | None:
     """Count images launched, or a reply's cost, against the budget (while the bot works alone)."""
@@ -675,7 +693,8 @@ def add_autonomy_usage(conversation_id: str, images: int = 0, turn_cost: float |
 
 def end_autonomy(conversation_id: str, reason: str, root: str | None = None) -> dict | None:
     """reason: "done" (the bot stopped: goal met, or no better idea), "images" or "cost" (the
-    budget ran out), "user" (the user stopped it, or cancelled a run)."""
+    budget ran out), "user" (the user stopped it, or cancelled a run); and for the away mode,
+    "until" (the user's time came), "limit" (Claude Code's allowance ran out), "error" (a turn failed)."""
     with _lock:
         conversation = get(conversation_id, root)
         current = autonomy(conversation or {})

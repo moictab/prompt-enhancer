@@ -6,8 +6,46 @@
   <aside class="threads" aria-labelledby="threads-title">
     <h2 id="threads-title" class="visually-hidden">Conversaciones</h2>
     <button type="button" class="btn-secondary threads-new" id="new-conversation">Nueva conversación</button>
+    {% if comfy_configured and claude_code_available %}
+    <button type="button" class="btn-quiet threads-away" id="away-open">Modo autónomo</button>
+    {% endif %}
     <ol class="thread-list" id="thread-list"></ol>
   </aside>
+
+  {% if comfy_configured and claude_code_available %}
+  <dialog class="away-dialog" id="away-dialog" aria-labelledby="away-title">
+    <form id="away-form" novalidate>
+      <h2 id="away-title">Modo autónomo</h2>
+      <p class="away-lead">Mientras estás fuera, el bot trabaja por su cuenta en una conversación nueva: parte de tus favoritas y prueba lo que cree que te gustaría.</p>
+      <ul class="away-rules">
+        <li>Usa la GPU solo cuando nada más la quiere, y la cede al momento.</li>
+        <li>De Claude Code gasta las ventanas de 5 horas que se renuevan antes de que vuelvas. De la que siga abierta a tu vuelta, como mucho un 25 %.</li>
+        <li>Si escribes en cualquier conversación, entiende que has vuelto y para.</li>
+      </ul>
+      <div class="field">
+        <label for="away-until">Vuelvo a las</label>
+        <input id="away-until" type="time" value="08:00" required>
+      </div>
+      <div class="field">
+        <label for="away-instructions">Indicaciones<span class="optional">opcional</span></label>
+        <textarea id="away-instructions" rows="3" maxlength="2000" placeholder="Por ejemplo: céntrate en Ramona, o prueba Anima con luz de tarde"></textarea>
+      </div>
+      <div class="field">
+        <label for="away-model">Modelo de Claude</label>
+        <select id="away-model">
+          {% for name in claude_code_models %}
+          <option value="{{ name }}">{{ name | capitalize }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <p class="notice is-error" id="away-error" role="alert" hidden></p>
+      <div class="away-actions">
+        <button type="button" class="btn-quiet" id="away-cancel">Cancelar</button>
+        <button type="submit" class="btn-primary" id="away-submit">Empezar</button>
+      </div>
+    </form>
+  </dialog>
+  {% endif %}
 
   <section class="chat" aria-labelledby="chat-title">
     <header class="chat-head">
