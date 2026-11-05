@@ -13,11 +13,13 @@ import time
 from datetime import datetime, timezone
 
 from . import comfy, conversations
+from .config import get_settings
 
 logger = logging.getLogger("app.runs")
 
 POLL_SECONDS = 2.0
-JOB_TIMEOUT_SECONDS = 45 * 60
+# A job given up for running too long (job_timeout_seconds); its images may come later.
+TIMED_OUT = "No result after"
 # A download that fails is tried again on the next polls (ComfyUI can stall for a while)
 # before the job is given up as failed.
 MAX_DOWNLOAD_ATTEMPTS = 5
@@ -30,19 +32,28 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def job_timeout_seconds(run: dict) -> int:
+    """How long a run's jobs may go without a result once they start: the run's own limit (12 h
+    for calibrations, which wait for a free GPU) or COMFY_JOB_TIMEOUT_MINUTES."""
+    return run.get("timeout_seconds") or get_settings().comfy_job_timeout_minutes * 60
+
+
 def _still_on_time(client: comfy.Comfy, job: dict, timeout: float) -> bool:
     """A job past its run's time limit that the gateway says is still waiting its turn, or running for
     less than the limit: the limit counts from when a job starts (the gateway's rule), since waiting in
     a long queue is no failure -- 13 jobs were given up on 2026-11-04 while still queued, and ComfyUI
-    made their images for nothing. Asked only once the run is past the limit."""
+    made their images for nothing. Waiting is "queued" (the gateway's queue, where a job bumped by a
+    more urgent one goes back, its start forgotten) and "dispatched" (handed to ComfyUI, not started:
+    a second or so -- on 2026-11-05 a job that had waited 50 minutes was given up in that second).
+    Asked only once the run is past the limit."""
     record = client.gateway_job(job["base_url"], job["prompt_id"])
     if not record:
         return False
-    if record.get("status") == "queued":
+    status = record.get("status")
+    if status in ("queued", "dispatched"):
         return True
-    started = record.get("started_at")
-    return (record.get("status") == "running" and isinstance(started, (int, float))
-            and time.time() - started < timeout)
+    started = record.get("started_at") or record.get("dispatched_at")
+    return status == "running" and (not isinstance(started, (int, float)) or time.time() - started < timeout)
 
 
 def _age_seconds(run: dict) -> float:
@@ -133,10 +144,12 @@ class RunTracker:
             logger.info("run history failed conversation_id=%s run=%s error=%r", conversation_id, run["n"], e)
             result = None
         if result is None:
-            timeout = run.get("timeout_seconds") or JOB_TIMEOUT_SECONDS  # idle runs wait for a free GPU
+            timeout = job_timeout_seconds(run)
             if _age_seconds(run) > timeout and not _still_on_time(client, job, timeout):
                 self._set_job(conversation_id, run["n"], index, status="error",
-                              error=f"No result after {timeout // 60} minutes")
+                              error=f"{TIMED_OUT} {timeout // 60} minutes")
+                logger.info("run job given up conversation_id=%s run=%s job=%d prompt_id=%s timeout=%ss",
+                            conversation_id, run["n"], index, job["prompt_id"], timeout)
             return
         images, error = [], result.error
         workflows = conversations.run_workflows(conversation_id, run["n"])
@@ -225,27 +238,52 @@ class RunTracker:
 tracker = RunTracker()
 
 
+def _fetchable(job: dict) -> bool:
+    """A job whose images ComfyUI may well have: they didn't come down, or the job was given up for
+    taking too long and finished later (as 14 did, given up while they waited their turn)."""
+    return job["status"] == "error" and (job.get("error") or "").startswith((DOWNLOAD_FAILED, TIMED_OUT))
+
+
+def _has_result(client: comfy.Comfy | None, job: dict) -> bool:
+    """Whether ComfyUI has the job's result now (its /history keeps it until ComfyUI restarts)."""
+    if client is None:
+        return False
+    try:
+        return comfy.result_from_history(client.history(job["base_url"], job["prompt_id"])) is not None
+    except Exception as e:  # unreachable, stalled: nothing to fetch now
+        logger.info("run history unavailable prompt_id=%s error=%r", job["prompt_id"], e)
+        return False
+
+
 def can_retry_downloads(run: dict) -> bool:
-    return run["status"] != "pending" and any(
-        j["status"] == "error" and (j.get("error") or "").startswith(DOWNLOAD_FAILED) for j in run["jobs"])
+    return run["status"] != "pending" and any(_fetchable(j) for j in run["jobs"])
 
 
 def retry_downloads(conversation_id: str, n: int) -> dict | None:
-    """Fetch again the images of a run's jobs whose download failed (ComfyUI keeps them):
-    those jobs go back to pending, and when they come down the run's results message gets
-    its images in place, with no new comment from the bot."""
+    """Fetch again the images of a run's jobs whose download failed or that were given up for
+    taking too long (ComfyUI keeps the images): those jobs go back to pending, and when they come
+    down the run's results message gets its images in place, with no new comment from the bot.
+    None when there is nothing to fetch."""
+    run = conversations.get_run(conversation_id, n)
+    if run is None or not can_retry_downloads(run):
+        return None
+    client = comfy.client()
+    # A job given up for its time is fetched only if it did finish: one ComfyUI never ran (or has
+    # forgotten, after a restart) would only wait out the limit again.
+    again = [index for index, job in enumerate(run["jobs"]) if _fetchable(job) and (
+        job["error"].startswith(DOWNLOAD_FAILED) or _has_result(client, job))]
+    if not again:
+        return None
+
     def change(run: dict) -> None:
-        for job in run["jobs"]:
-            if job["status"] == "error" and (job.get("error") or "").startswith(DOWNLOAD_FAILED):
-                job.update(status="pending", error=None, download_attempts=0)
-                job.pop("finished_at", None)
+        for index in again:
+            job = run["jobs"][index]
+            job.update(status="pending", error=None, download_attempts=0)
+            job.pop("finished_at", None)
         run["status"] = "pending"
         run["retried_at"] = _now()
         run.pop("finished_at", None)
 
-    run = conversations.get_run(conversation_id, n)
-    if run is None or not can_retry_downloads(run):
-        return None
     updated = conversations.update_run(conversation_id, n, change)
     tracker.watch(conversation_id, n)
     logger.info("run downloads retried conversation_id=%s run=%s", conversation_id, n)

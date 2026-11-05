@@ -344,23 +344,74 @@ def test_a_run_can_go_ahead_of_everything_waiting(api_client, auth_headers, tmp_
 
 
 def test_a_job_waiting_its_turn_is_not_given_up(api_client, auth_headers, tmp_path, fake_comfy, monkeypatch):
-    """The time limit counts from when a job starts: a long queue is no failure."""
+    """The time limit counts from when a job starts: a long queue is no failure, nor the second it
+    spends handed to ComfyUI before starting ("dispatched": a job was given up there on 2026-11-05)."""
     workflows.ensure_seeded()
     conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
     with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]))):
         _send(api_client, auth_headers, conversation_id)
-    monkeypatch.setattr(runs, "_age_seconds", lambda run: runs.JOB_TIMEOUT_SECONDS + 60)
+    limit = 45 * 60
+    monkeypatch.setattr(runs, "_age_seconds", lambda run: limit + 60)
     fake_comfy.gateway_jobs["prompt-1"] = {"status": "queued", "started_at": None}
     fake_comfy.gateway_jobs["prompt-2"] = {"status": "running", "started_at": time.time() - 60}
 
     runs.tracker.poll_once()
     assert [j["status"] for j in conversations.get_run(conversation_id, 1)["jobs"]] == ["pending", "pending"]
 
-    fake_comfy.gateway_jobs["prompt-2"]["started_at"] = time.time() - runs.JOB_TIMEOUT_SECONDS - 60
+    fake_comfy.gateway_jobs["prompt-1"] = {"status": "dispatched", "dispatched_at": time.time(), "started_at": None}
+    fake_comfy.gateway_jobs["prompt-2"]["started_at"] = time.time() - limit - 60
     runs.tracker.poll_once()
     jobs = conversations.get_run(conversation_id, 1)["jobs"]
     assert [j["status"] for j in jobs] == ["pending", "error"] and "No result after 45 minutes" in jobs[1]["error"]
     api_client.post(f"/api/conversations/{conversation_id}/runs/1/cancel", auth=auth_headers)
+
+
+def test_the_time_limit_is_a_setting(api_client, auth_headers, tmp_path, fake_comfy, monkeypatch):
+    workflows.ensure_seeded()
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
+    with patch("app.conversation_turn.stream_chat", Script(("", [RUN_CALL]))):
+        _send(api_client, auth_headers, conversation_id)
+    monkeypatch.setenv("COMFY_JOB_TIMEOUT_MINUTES", "90")
+    monkeypatch.setattr(runs, "_age_seconds", lambda run: 91 * 60)
+    for prompt_id, minutes in (("prompt-1", 60), ("prompt-2", 95)):
+        fake_comfy.gateway_jobs[prompt_id] = {"status": "running", "started_at": time.time() - minutes * 60}
+
+    runs.tracker.poll_once()
+
+    jobs = conversations.get_run(conversation_id, 1)["jobs"]
+    assert [j["status"] for j in jobs] == ["pending", "error"] and jobs[1]["error"] == "No result after 90 minutes"
+    monkeypatch.setenv("COMFY_JOB_TIMEOUT_MINUTES", "nonsense")
+    assert runs.job_timeout_seconds({}) == 45 * 60
+    assert runs.job_timeout_seconds({"timeout_seconds": 3600}) == 3600
+    api_client.post(f"/api/conversations/{conversation_id}/runs/1/cancel", auth=auth_headers)
+
+
+def test_a_job_given_up_that_finished_later_can_be_fetched(api_client, auth_headers, tmp_path, fake_comfy,
+                                                            monkeypatch):
+    """Given up for its time, a job ComfyUI then finished: its image is fetched into the run's
+    results message; one ComfyUI has no result for isn't revived (it would only wait out the limit)."""
+    conversation_id = _launch_two(api_client, auth_headers, tmp_path)
+    monkeypatch.setattr(runs, "_age_seconds", lambda run: 46 * 60)
+    with patch("app.conversation_turn.stream_chat", Script(("No han llegado.", []))):
+        runs.tracker.poll_once()  # neither in /history, and the gateway doesn't know them: given up
+        runs.wait_until_idle()
+    assert [j["status"] for j in conversations.get_run(conversation_id, 1)["jobs"]] == ["error", "error"]
+    retry = f"/api/conversations/{conversation_id}/runs/1/retry-downloads"
+    assert api_client.post(retry, auth=auth_headers).status_code == 409  # nothing in ComfyUI yet
+
+    fake_comfy.finish("prompt-1", "out-a")
+    assert api_client.post(retry, auth=auth_headers).json()["status"] == "pending"
+    monkeypatch.setattr(runs, "_age_seconds", lambda run: 60)
+    with patch("app.conversation_turn.stream_chat", Script()) as idle:
+        runs.tracker.poll_once()
+        runs.wait_until_idle()
+
+    run = conversations.get_run(conversation_id, 1)
+    assert [j["status"] for j in run["jobs"]] == ["success", "error"] and run["status"] == "done"
+    conversation = conversations.get(conversation_id)
+    assert [m["role"] for m in conversation["messages"]] == ["user", "assistant", "results", "assistant"]
+    assert len(conversation["messages"][2]["images"]) == 1
+    assert idle.calls == []
 
 
 def test_no_automatic_comment_once_the_user_has_written(api_client, auth_headers, tmp_path, fake_comfy):

@@ -241,8 +241,9 @@ class Comfy:
         return True
 
     def gateway_job(self, base: str, prompt_id: str) -> dict | None:
-        """The gateway's record of one of this app's jobs -- its status (queued, running, success...)
-        and when it was sent and started -- or None when it went to ComfyUI directly or can't be read."""
+        """The gateway's record of one of this app's jobs -- its status (queued, dispatched, running,
+        success...) and when it was sent, handed to ComfyUI and started -- or None when it went to
+        ComfyUI directly or can't be read."""
         if not self.gateway_url or base.rstrip("/") != self.gateway_url:
             return None
         try:
@@ -251,7 +252,7 @@ class Comfy:
             return None
         if not isinstance(record, dict):
             return None
-        return {key: record.get(key) for key in ("status", "submitted_at", "started_at")}
+        return {key: record.get(key) for key in ("status", "submitted_at", "dispatched_at", "started_at")}
 
     def cancel(self, base: str, prompt_id: str) -> None:
         """Take it off the queue if waiting, and stop it if running."""

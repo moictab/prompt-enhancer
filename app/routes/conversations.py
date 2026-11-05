@@ -438,14 +438,15 @@ def stop_autonomy(conversation_id: str):
 
 @router.post("/{conversation_id}/runs/{n}/retry-downloads")
 def retry_run_downloads(conversation_id: str, n: int):
-    """Fetch again the images of a run whose download failed (they are still in ComfyUI)."""
+    """Fetch again the images of a run whose download failed, or whose jobs were given up for their
+    time and finished later (they are still in ComfyUI)."""
     _require_conversation(conversation_id)
     run = conversations.get_run(conversation_id, n)
     if run is None:
         raise HTTPException(status_code=404, detail="Unknown run")
     retried = runs.retry_downloads(conversation_id, n)
     if retried is None:
-        raise HTTPException(status_code=409, detail="The run has no failed downloads to retry")
+        raise HTTPException(status_code=409, detail="Nothing of this run to fetch: ComfyUI has no images of it")
     return retried
 
 
