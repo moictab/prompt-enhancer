@@ -34,6 +34,12 @@ PRIORITY = "high"  # the first images of a reply the user asked for: they are wa
 PRIORITY_REST = "normal"  # the rest of that reply's images (an exploring batch)
 # What the bot launches by itself, looking at its own results: no one is waiting for it right now.
 PRIORITY_ON_ITS_OWN = "low"
+# Finishing an image (finish_image), even one the user just loved, and also when the bot does it on
+# its own: 4-5 minutes of GPU each, so at "high" three of them spent the project's 15 minutes an hour
+# there, and the drafts the user waits for dropped to "normal". Not "low" either: the gateway stops a
+# low job for a high one and runs it again from the start -- minutes of GPU thrown away each time; it
+# never stops a normal one. "Pasar delante" is there for one wanted sooner.
+PRIORITY_FINISH = "normal"
 # A run the user put ahead of everything else waiting ("Pasar delante"): the gateway owner's override,
 # which skips the hourly limits on urgent and high (Comfy.prioritize).
 PRIORITY_AHEAD = "urgent"
@@ -144,6 +150,10 @@ def result_from_gateway(record: dict | None) -> Result | None:
     started, finished = record.get("started_at"), record.get("finished_at")
     seconds = finished - started if all(isinstance(t, (int, float)) for t in (started, finished)) else None
     return Result("success", outputs, seconds=seconds)
+
+
+# Comfy.gateway_job when the gateway can't be asked right now (down, restarting, a bad answer).
+GATEWAY_UNKNOWN = {"status": "unknown"}
 
 
 class Comfy:
@@ -260,15 +270,18 @@ class Comfy:
         """The gateway's record of one of this app's jobs -- its status (queued, dispatched, running;
         success, error, interrupted, cancelled, rejected, lost), when it was sent, handed to ComfyUI,
         started and finished, and the images it saved -- or None when it went to ComfyUI directly or
-        can't be read."""
+        the gateway doesn't know it; GATEWAY_UNKNOWN when it can't be read now."""
         if not self.gateway_url or base.rstrip("/") != self.gateway_url:
             return None
         try:
             record = self._request("GET", f"{base}/gateway/jobs/{prompt_id}", timeout=(CONNECT_TIMEOUT, 10)).json()
-        except (ComfyError, requests.exceptions.RequestException, ValueError):
-            return None
+        except ComfyError as e:
+            # One it doesn't know is gone; any other answer, like no answer, says nothing yet.
+            return None if e.status == 404 else dict(GATEWAY_UNKNOWN)
+        except (requests.exceptions.RequestException, ValueError):
+            return dict(GATEWAY_UNKNOWN)  # restarting, say (5-20 s, on 2026-11-05): ask again next time
         if not isinstance(record, dict):
-            return None
+            return dict(GATEWAY_UNKNOWN)
         return {key: record.get(key)
                 for key in ("status", "submitted_at", "dispatched_at", "started_at", "finished_at", "outputs")}
 

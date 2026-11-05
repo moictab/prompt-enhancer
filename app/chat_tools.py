@@ -699,8 +699,9 @@ class ToolBox:
         return self._launch(workflow, changes, count, graph)
 
     def _launch(self, workflow: str | None, changes: dict | None, count, graph: dict | None,
-                run_fields: dict | None = None) -> tuple[dict, dict]:
-        """Launch a workflow with changes (run_workflow, finish_image); run_fields go on the run."""
+                run_fields: dict | None = None, priority: str | None = None) -> tuple[dict, dict]:
+        """Launch a workflow with changes (run_workflow, finish_image); run_fields go on the run;
+        priority, every job's (by default each one's by who is waiting for it)."""
         count = max(1, min(MAX_RUN_COUNT, _number(count or 1, int)))
         changes = changes or {}
         graph, label = self._source(workflow, graph)
@@ -734,7 +735,7 @@ class ToolBox:
             job_graph.set_output_prefix(comfy.output_prefix(folder, number, seed))
             variants.append((job_graph, seed, {}))
         size = graph.shape()
-        run = self._submit_run(label, changes, base, folder, variants,
+        run = self._submit_run(label, changes, base, folder, variants, priority=priority,
                                run_fields={**({"size": size} if size else {}), **(run_fields or {})} or None)
         result = {"run": run["n"], "status": "queued", "images": run["count"], "seeds": seeds[:run["count"]],
                   "model": ", ".join(run["base_models"]), "applied": done}
@@ -990,7 +991,9 @@ class ToolBox:
              **({"strength_clip": _number(lora["strength_clip"])} if lora.get("strength_clip") is not None else {})}
             for lora in info.get("loras") or [] if lora.get("name")]
         finish.update(changes or {})
-        result, part = self._launch(entry["name"], finish, 1, None, run_fields={"kind": "finish", "finish_of": image})
+        # Behind the drafts someone waits for, whoever asked for it (see PRIORITY_FINISH).
+        result, part = self._launch(entry["name"], finish, 1, None, run_fields={"kind": "finish", "finish_of": image},
+                                    priority=comfy.PRIORITY_FINISH)
         result["finishing"] = f"image {image}, with the prompt, model and LoRAs it was made with"
         return result, {**part, "finish_of": image}
 

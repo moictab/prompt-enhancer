@@ -46,11 +46,12 @@ def _still_on_time(record: dict | None, timeout: float) -> bool:
     queue, where a job bumped by a more urgent one goes back, its start forgotten) and "dispatched"
     (handed to ComfyUI, not started: milliseconds, unless something launched in ComfyUI itself goes
     first -- on 2026-11-05 a job that had waited 50 minutes was given up in that second). The gateway
-    doesn't notice a ComfyUI hung on a job: that's what the limit is for."""
+    doesn't notice a ComfyUI hung on a job: that's what the limit is for. A gateway that doesn't answer
+    (restarting) gives no reason to give up: it's asked again on the next poll."""
     if not record:
         return False
     status = record.get("status")
-    if status in ("queued", "dispatched"):
+    if status in ("queued", "dispatched", comfy.GATEWAY_UNKNOWN["status"]):  # unknown: can't tell yet
         return True
     started = record.get("started_at") or record.get("dispatched_at")
     return status == "running" and (not isinstance(started, (int, float)) or time.time() - started < timeout)
@@ -158,6 +159,11 @@ class RunTracker:
                                   error=f"{TIMED_OUT} {timeout // 60} minutes")
                     logger.info("run job given up conversation_id=%s run=%s job=%d prompt_id=%s timeout=%ss",
                                 conversation_id, run["n"], index, job["prompt_id"], timeout)
+                    # Stopped too: hung, it holds ComfyUI; left waiting, it would run for nothing.
+                    try:
+                        client.cancel(job["base_url"], job["prompt_id"])
+                    except Exception as e:
+                        logger.info("run job cancel failed prompt_id=%s error=%r", job["prompt_id"], e)
                 return
         images, error = [], result.error
         workflows = conversations.run_workflows(conversation_id, run["n"])

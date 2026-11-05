@@ -53,6 +53,20 @@ def test_finishing_an_image_runs_the_familys_finishing_workflow_on_it_with_its_r
     assert not [n for n in fake.submitted[1].values() if n["class_type"] == "LoraLoader"]
 
 
+def test_finishing_waits_behind_the_drafts_and_leaves_them_their_place(finishing):
+    """A finish is minutes of GPU: at "high" it spent the hour's budget the drafts the user waits for
+    need, and at "low" the gateway would stop it for them and start it over. So "normal", whoever
+    asked, and a draft launched after it in the same reply still goes at "high"."""
+    box, fake, conversation_id, image_id = finishing
+
+    box.run("finish_image", json.dumps({"image": 1}))
+    box.run("run_workflow", json.dumps({"workflow": "krea-2/txt2img", "changes": {"positive": "a witch"}}))
+    box.automatic = True
+    box.run("finish_image", json.dumps({"image": 1}))
+
+    assert fake.priorities == ["normal", "high", "normal"]
+
+
 def test_without_a_finishing_workflow_the_bot_is_told_what_to_do(finishing):
     box, fake, _, _ = finishing
     workflows.delete(workflows.find_by_name("krea-2/finish-image")["id"])

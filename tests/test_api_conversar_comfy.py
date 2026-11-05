@@ -358,11 +358,17 @@ def test_a_job_waiting_its_turn_is_not_given_up(api_client, auth_headers, tmp_pa
     runs.tracker.poll_once()
     assert [j["status"] for j in conversations.get_run(conversation_id, 1)["jobs"]] == ["pending", "pending"]
 
+    # Nor while the gateway doesn't answer (restarting): it's asked again on the next poll.
+    fake_comfy.gateway_jobs["prompt-1"] = dict(comfy.GATEWAY_UNKNOWN)
+    runs.tracker.poll_once()
+    assert conversations.get_run(conversation_id, 1)["jobs"][0]["status"] == "pending"
+
     fake_comfy.gateway_jobs["prompt-1"] = {"status": "dispatched", "dispatched_at": time.time(), "started_at": None}
     fake_comfy.gateway_jobs["prompt-2"]["started_at"] = time.time() - limit - 60
     runs.tracker.poll_once()
     jobs = conversations.get_run(conversation_id, 1)["jobs"]
     assert [j["status"] for j in jobs] == ["pending", "error"] and "No result after 45 minutes" in jobs[1]["error"]
+    assert fake_comfy.cancelled == ["prompt-2"]  # given up, it's stopped too: it would hold ComfyUI
     api_client.post(f"/api/conversations/{conversation_id}/runs/1/cancel", auth=auth_headers)
 
 
