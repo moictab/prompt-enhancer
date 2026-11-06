@@ -423,10 +423,14 @@ def set_reaction(
         if image is None:
             return None
         comment = " ".join((comment or "").split())[:MAX_REACTION_COMMENT]
+        before = image.get("reaction") or {}
         if rating is None and not comment:
             image.pop("reaction", None)
         else:
-            image["reaction"] = {"rating": rating, "comment": comment, "at": _now(), "sent": False}
+            # Taking back the bot's reading of their comment (Deshacer) leaves the comment as the bot
+            # already had it: nothing new to send.
+            undone = rating is None and before.get("inferred") and comment == before.get("comment")
+            image["reaction"] = {"rating": rating, "comment": comment, "at": _now(), "sent": bool(undone)}
             picked = [r for r in dict.fromkeys(reasons or []) if r in REACTION_REASONS]
             if rating == "down" and picked:
                 image["reaction"]["reasons"] = picked
@@ -437,9 +441,10 @@ def set_reaction(
 def set_inferred_reaction(conversation_id: str, image_id: str, rating: str, comment: str,
                           root: str | None = None) -> dict | None:
     """The bot's reading of the user's words as their reaction to a run's image ("they're all
-    great"): stored like a reaction, marked inferred and already sent (the bot knows). One the
-    user set themselves stands, and only a run's images take one. Returns {previous} when set
-    (the reaction it replaced, if any, to undo it), None otherwise."""
+    great"): stored like a reaction, marked inferred and already sent (the bot knows). A rating
+    the user set themselves stands; a comment they left without one is rated, keeping their
+    words. Only a run's images take one. Returns {previous} when set (the reaction it replaced,
+    if any, to undo it), None otherwise."""
     with _lock:
         conversation = get(conversation_id, root)
         if conversation is None:
@@ -450,7 +455,9 @@ def set_inferred_reaction(conversation_id: str, image_id: str, rating: str, comm
             return None
         previous = image.get("reaction")
         if previous and not previous.get("inferred"):
-            return None
+            if previous.get("rating"):
+                return None
+            comment = previous.get("comment") or comment  # their own words, rather than the bot's
         comment = " ".join((comment or "").split())[:MAX_REACTION_COMMENT]
         image["reaction"] = {"rating": rating, "comment": comment, "at": _now(), "sent": True, "inferred": True}
         storage.write_json(_path(conversation_id, root), conversation)

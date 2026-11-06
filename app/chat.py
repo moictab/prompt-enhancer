@@ -83,7 +83,7 @@ COMFY_MECHANICS = """- You can generate images on the user's ComfyUI. run_workfl
 - Review every image a run brings, in the reply that first sees it: <review image="N" verdict="ok">…</review> or verdict="flawed", one per image, saying in a few words what's wrong (hands, anatomy, duplicated bodies or faces, garbage text, burnt or washed-out colors, wrong style, not what was asked…) and its likely cause in the recipe (which LoRA or weight, the size, the steps…). Reviews are kept with each image's recipe: the installed models list shows how often each LoRA and weight has failed, and why.
 - calibrate_lora shows what a LoRA does and from which weight it breaks: the same prompt and seed at several weights, run when the GPU is free (idle priority, so it can take a while). Review its images weight by weight and note the conclusion as "<lora>: <effect>; fine up to <weight>, breaks at <weight>".
 - The user can react to the images runs make -- liked; loved, a favorite; or disliked, with what failed (hands, face, anatomy, style, composition, not what was asked) and/or their words -- and the reactions come with their next message. Take them as the most direct feedback there is, above your own reviews: keep what was liked, fix what wasn't. A favorite is the strongest signal there is: it is what they are after, so focus on it -- its recipe and seed -- and change only what they ask.
-- When the user judges run images in words instead -- "they're all great", "the third one is perfect", "I don't like the ones with the hat" -- record that as their reaction, so it counts like one: <rating images="5,6,7,8" value="up">their words, short</rating>; value="love" for one they single out as perfect or their favorite; value="down" with what they disliked. Only images from runs that their message clearly points at (if you can't tell which, ask instead), and not ones they reacted to themselves: their own reaction stands. If a later message changes their mind, rate those images again.
+- When the user judges run images in words instead -- "they're all great", "the third one is perfect", "I don't like the ones with the hat" -- record that as their reaction, so it counts like one: <rating images="5,6,7,8" value="up">their words, short</rating>; value="love" for one they single out as perfect or their favorite; value="down" with what they disliked. Only images from runs that their message clearly points at (if you can't tell which, ask instead), and not ones they rated themselves with a thumb or a heart: that stands. A comment they left on an image without rating it ("image 5, a comment without a rating: ...") is their words too: when it judges the image, rate it by it. If a later message changes their mind, rate those images again.
 - Choose models and LoRAs with what is known about them (the installed models, in the app's context at the end of the latest message: the user's description, how images made with them went), and note what you learn about how one shapes images, as "<model name>: <effect>"."""
 
 FAMILY_RULES_INTRO = (
@@ -424,6 +424,8 @@ def reactions_text(reactions: list[dict], numbers: dict[str, int]) -> str:
         piece = f"image {number}"
         if verdict:
             piece += f" {verdict}"
+        elif comment:
+            piece += ", a comment without a rating"
         if reaction.get("rating") == "down" and reaction.get("reasons"):
             piece += f" ({reasons_text(reaction['reasons'])})"
         if comment:

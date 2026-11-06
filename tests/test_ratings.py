@@ -68,6 +68,31 @@ def test_only_run_images_take_a_rating_and_a_thumb_replaces_it(api_client, auth_
     assert changed["reaction"]["rating"] == "up" and not changed["reaction"].get("inferred")
 
 
+def test_a_comment_left_without_a_rating_is_their_words_too(api_client, auth_headers, tmp_path, fake_comfy):
+    workflows.ensure_seeded()
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path), auto_comment=False)["id"]
+    script = Script(("Van tres:", [LAUNCH]), ('<rating images="1" value="up">espectacular</rating>¡Bien!', []))
+    put = f"/api/conversations/{conversation_id}/images"
+    with patch("app.conversation_turn.stream_chat", script):
+        _send(api_client, auth_headers, conversation_id, "hazme una bruja")
+        _deliver(fake_comfy, "prompt-1", "prompt-2", "prompt-3")
+        images = next(m for m in conversations.get(conversation_id)["messages"] if m["role"] == "results")["images"]
+        api_client.put(f"{put}/{images[0]['id']}/reaction", auth=auth_headers, json={"rating": None, "comment": "genial"})
+        _send(api_client, auth_headers, conversation_id, "")
+
+    assert 'image 1, a comment without a rating: "genial"' in message_text(script.calls[1]["messages"][-1])
+    first = next(m for m in conversations.get(conversation_id)["messages"] if m["role"] == "results")["images"][0]
+    # Rated by it, keeping their own words.
+    assert first["reaction"]["rating"] == "up" and first["reaction"]["inferred"]
+    assert first["reaction"]["comment"] == "genial"
+    assert next(record for record in catalog.stats().values() if record.get("images"))["liked"] == 1
+    # Deshacer: the comment stays, as the bot already had it -- not sent again.
+    undone = api_client.put(f"{put}/{images[0]['id']}/reaction", auth=auth_headers,
+                            json={"rating": None, "comment": "genial"}).json()["reaction"]
+    assert undone["rating"] is None and undone["comment"] == "genial" and undone["sent"]
+    assert conversations.unsent_reactions(conversations.get(conversation_id)) == []
+
+
 def test_a_favorite_is_the_strongest_like_and_a_dislike_can_be_a_tap(api_client, auth_headers, tmp_path, fake_comfy):
     workflows.ensure_seeded()
     conversation_id = _conversation(api_client, auth_headers, _family(tmp_path), auto_comment=False)["id"]

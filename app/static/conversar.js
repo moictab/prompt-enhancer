@@ -1021,7 +1021,7 @@ function reactionControls(image, number, { choosing = false, as = "figcaption", 
   });
   commentButton.addEventListener("click", () =>
     ask({
-      placeholder: disliked || choosing ? "¿Qué ha fallado?" : "Qué cambiarías",
+      placeholder: disliked || choosing ? "¿Qué ha fallado?" : reaction.rating ? "Qué cambiarías" : "Qué te parece",
       label: `Comentario sobre la imagen ${number}`,
       done: (text) => {
         if (choosing) return text ? save("down", text, []) : redraw({ choosing: true });
@@ -1178,9 +1178,11 @@ function ratingsLine(ratings) {
       setBusy(undo, true, "Deshaciendo…");
       try {
         for (const r of standing) {
+          // A comment they had left without a rating stays (the server keeps it as already sent).
+          const own = r.previous && !r.previous.inferred && !r.previous.rating ? r.previous.comment || "" : "";
           await request(`/api/conversations/${state.conversation.id}/images/${r.image_id}/reaction`, {
             method: "PUT",
-            json: { rating: null, comment: "" },
+            json: { rating: null, comment: own },
           });
         }
       } catch (err) {
