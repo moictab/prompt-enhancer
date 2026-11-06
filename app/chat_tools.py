@@ -271,8 +271,17 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "cancel_run",
-            "description": "Cancel a run still waiting or in progress.",
-            "parameters": {"type": "object", "properties": {"run": {"type": "integer"}}, "required": ["run"]},
+            "description": "Cancel a run still waiting or in progress, saying why.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "run": {"type": "integer"},
+                    "reason": {"type": "string", "description": (
+                        "Why you cancel it, in a few words in Spanish: the owner reads it on the GPU queue's "
+                        "panel and in the chat (\"Repetía la tanda anterior con otro encuadre\").")},
+                },
+                "required": ["run", "reason"],
+            },
         },
     },
     {
@@ -1100,14 +1109,17 @@ class ToolBox:
             result["note"] = "Waiting for the user to accept it in the chat; nothing is downloaded until then."
         return result, {"type": "download", "download": record["n"]}
 
-    def _tool_cancel_run(self, run: int) -> tuple[dict, dict]:
+    def _tool_cancel_run(self, run: int, reason: str = "") -> tuple[dict, dict]:
         number = _number(run, int)
+        reason = " ".join(str(reason or "").split())
+        if not reason:
+            raise ToolError("Say why you cancel it (reason): the owner reads it on the GPU queue's panel.")
         found = conversations.get_run(self.conversation_id, number)
         if found is None:
             raise ToolError(f"There is no run {number}.")
         if found["status"] != "pending":
             return ({"run": number, "status": found["status"], "note": "It had already finished."},
                     {"type": "tool", "tool": "cancel_run", "run": number})
-        cancelled = runs.cancel(self.conversation_id, number)
+        cancelled = runs.cancel(self.conversation_id, number, f"El bot: {reason}")
         return ({"run": number, "status": (cancelled or found)["status"]},
-                {"type": "tool", "tool": "cancel_run", "run": number})
+                {"type": "tool", "tool": "cancel_run", "run": number, "reason": reason})

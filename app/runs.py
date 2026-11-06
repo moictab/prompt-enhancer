@@ -161,7 +161,8 @@ class RunTracker:
                                 conversation_id, run["n"], index, job["prompt_id"], timeout)
                     # Stopped too: hung, it holds ComfyUI; left waiting, it would run for nothing.
                     try:
-                        client.cancel(job["base_url"], job["prompt_id"])
+                        client.cancel(job["base_url"], job["prompt_id"],
+                                      comfy.CANCEL_TIMED_OUT.format(minutes=timeout // 60))
                     except Exception as e:
                         logger.info("run job cancel failed prompt_id=%s error=%r", job["prompt_id"], e)
                 return
@@ -306,18 +307,23 @@ def retry_downloads(conversation_id: str, n: int) -> dict | None:
     return updated
 
 
-def cancel(conversation_id: str, n: int) -> dict | None:
-    """Cancel a run's pending jobs (taken off the queue, or stopped if running)."""
+def cancel(conversation_id: str, n: int, reason: str = "") -> dict | None:
+    """Cancel a run's pending jobs (taken off the queue, or stopped if running). reason: why, in a few
+    words in Spanish: it goes with the cancellation to the gateway's panel and stays on the run
+    (`cancel_reason`)."""
     run = conversations.get_run(conversation_id, n)
     if run is None:
         return None
+    reason = " ".join((reason or "").split())[:comfy.MAX_CANCEL_REASON]
+    if reason:
+        conversations.update_run(conversation_id, n, lambda r: r.update(cancel_reason=reason))
     client = comfy.client()
     for index, job in enumerate(run["jobs"]):
         if job["status"] != "pending":
             continue
         if client is not None:
             try:
-                client.cancel(job["base_url"], job["prompt_id"])
+                client.cancel(job["base_url"], job["prompt_id"], reason)
             except Exception as e:
                 logger.warning("run cancel failed conversation_id=%s run=%s error=%r", conversation_id, n, e)
         tracker._set_job(conversation_id, n, index, status="cancelled", error="Cancelled")

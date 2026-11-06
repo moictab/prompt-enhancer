@@ -236,12 +236,16 @@ def test_cancel_run(setup):
     box, fake, conversation_id = setup
     _run(box, workflow="image:1", changes={"remove": ["8"]})
 
-    result, _ = _run(box, _name="cancel_run", run=1)
+    # It must say why: the owner reads it on the gateway's panel.
+    assert "Say why" in _run(box, _name="cancel_run", run=1)[0]["error"] and fake.cancelled == []
+    result, part = _run(box, _name="cancel_run", run=1, reason="Repetía la tanda anterior")
 
     assert result == {"run": 1, "status": "cancelled"}
-    assert fake.cancelled == ["prompt-1"]
-    assert "already finished" in _run(box, _name="cancel_run", run=1)[0]["note"]
-    assert "no run 9" in _run(box, _name="cancel_run", run=9)[0]["error"]
+    assert part["reason"] == "Repetía la tanda anterior"
+    assert fake.cancelled == ["prompt-1"] and fake.cancel_reasons == ["El bot: Repetía la tanda anterior"]
+    assert conversations.get_run(conversation_id, 1)["cancel_reason"] == "El bot: Repetía la tanda anterior"
+    assert "already finished" in _run(box, _name="cancel_run", run=1, reason="x")[0]["note"]
+    assert "no run 9" in _run(box, _name="cancel_run", run=9, reason="x")[0]["error"]
 
 
 def test_a_frozen_comfyui_is_explained(setup):

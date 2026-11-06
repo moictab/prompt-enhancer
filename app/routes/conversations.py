@@ -166,7 +166,7 @@ def delete_conversation(conversation_id: str):
     # Its pending runs would only keep ComfyUI busy for images nobody will see.
     for run in (conversations.get(conversation_id) or {}).get("runs") or []:
         if run["status"] == "pending":
-            runs.cancel(conversation_id, run["n"])
+            runs.cancel(conversation_id, run["n"], comfy.CANCEL_DELETED)
     if not conversations.delete(conversation_id):
         raise HTTPException(status_code=404, detail="Unknown conversation")
     return {"deleted": True}
@@ -361,7 +361,7 @@ def redo_reply(conversation_id: str):
         raise HTTPException(status_code=409, detail=str(e))
     for n in launched:
         if (conversations.get_run(conversation_id, n) or {}).get("status") == "pending":
-            runs.cancel(conversation_id, n)
+            runs.cancel(conversation_id, n, comfy.CANCEL_REDO)
     for note in reply.get("notes") or []:
         memory.delete_note(note["id"])
     for change in reversed(reply.get("note_changes") or []):
@@ -430,8 +430,12 @@ def follow_reply(conversation_id: str):
     return _follow(live)
 
 
+class CancelRun(BaseModel):
+    reason: str = Field(default="", max_length=200)  # why, for the gateway's panel: the chat's own by default
+
+
 @router.post("/{conversation_id}/runs/{n}/cancel")
-def cancel_run(conversation_id: str, n: int):
+def cancel_run(conversation_id: str, n: int, req: CancelRun | None = None):
     _require_conversation(conversation_id)
     run = conversations.get_run(conversation_id, n)
     if run is None:
@@ -441,7 +445,7 @@ def cancel_run(conversation_id: str, n: int):
     # Cancelling is stopping: the bot doesn't carry on alone after it.
     away.user_active()
     conversations.end_autonomy(conversation_id, "user")
-    return runs.cancel(conversation_id, n)
+    return runs.cancel(conversation_id, n, (req.reason.strip() if req else "") or comfy.CANCEL_BY_USER)
 
 
 @router.post("/{conversation_id}/runs/{n}/prioritize")

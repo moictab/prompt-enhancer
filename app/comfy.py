@@ -46,6 +46,12 @@ PRIORITY_AHEAD = "urgent"
 # Everything the away mode launches (away.py): the one level the gateway still stops halfway, so it
 # runs only while nothing else wants the GPU and gives way at once to anything that comes.
 PRIORITY_AWAY = "idle"
+# Why a job was cancelled, sent with the cancellation for the gateway's panel (Comfy.cancel).
+MAX_CANCEL_REASON = 200
+CANCEL_BY_USER = "Cancelada por el usuario desde el chat"
+CANCEL_REDO = "El usuario pidió rehacer la respuesta que la lanzó"
+CANCEL_DELETED = "Conversación borrada"
+CANCEL_TIMED_OUT = "Sin resultado tras {minutes} min: se da por perdida"
 CONNECT_TIMEOUT = 4
 READ_TIMEOUT = 60
 MODELS_CACHE_SECONDS = 300
@@ -288,10 +294,12 @@ class Comfy:
         return {key: record.get(key)
                 for key in ("status", "submitted_at", "dispatched_at", "started_at", "finished_at", "outputs")}
 
-    def cancel(self, base: str, prompt_id: str) -> None:
-        """Take it off the queue if waiting, and stop it if running."""
-        self._request("POST", f"{base}/queue", json={"delete": [prompt_id]})
-        self._request("POST", f"{base}/interrupt", json={"prompt_id": prompt_id})
+    def cancel(self, base: str, prompt_id: str, reason: str = "") -> None:
+        """Take it off the queue if waiting, and stop it if running. reason: why, in a few words in
+        Spanish, for the gateway's panel (ComfyUI itself ignores it)."""
+        extra = {"reason": reason[:MAX_CANCEL_REASON]} if reason else {}
+        self._request("POST", f"{base}/queue", json={"delete": [prompt_id], **extra})
+        self._request("POST", f"{base}/interrupt", json={"prompt_id": prompt_id, **extra})
 
     def metadata(self, folder: str, filename: str) -> dict | None:
         """A model file's own metadata (the .safetensors header), or None if it has none."""

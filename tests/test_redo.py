@@ -1,7 +1,7 @@
 """Rehacer: the user discards the bot's last reply and has it answer again."""
 from unittest.mock import patch
 
-from app import chat, conversations, history, memory, runs, workflows
+from app import chat, comfy, conversations, history, memory, runs, workflows
 
 from .conftest import message_text
 from .test_api_conversar_comfy import RUN_CALL, Script, _conversation, _events, _family, _send
@@ -31,6 +31,7 @@ def test_a_discarded_reply_takes_its_runs_notes_and_history_with_it(api_client, 
     run = stored["runs"][0]
     assert run["discarded"] is True and run["status"] == "cancelled"
     assert sorted(fake_comfy.cancelled) == ["prompt-1", "prompt-2"]
+    assert set(fake_comfy.cancel_reasons) == {comfy.CANCEL_REDO}
     # Its note went, its history entry too; the new reply's change stands.
     assert [n["text"] for n in memory.list_notes()] == ["prefers 3:2"] and memory.list_notes()[0]["id"] == kept["id"]
     assert all(e["id"] != first["history_id"] for e in history.list_entries())

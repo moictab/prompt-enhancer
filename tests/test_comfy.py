@@ -50,6 +50,18 @@ def test_pick_base_reports_both_down(mock_request):
 
 
 @patch("app.comfy.requests.request")
+def test_a_cancellation_says_why_for_the_gateways_panel(mock_request):
+    mock_request.return_value = _response(body={})
+    comfy.Comfy("http://gw").cancel("http://gw", "abc", "El bot: repetía la tanda anterior")
+    assert [(c.args[1], c.kwargs["json"]) for c in mock_request.call_args_list] == [
+        ("http://gw/queue", {"delete": ["abc"], "reason": "El bot: repetía la tanda anterior"}),
+        ("http://gw/interrupt", {"prompt_id": "abc", "reason": "El bot: repetía la tanda anterior"})]
+    mock_request.reset_mock()
+    comfy.Comfy("http://gw").cancel("http://gw", "abc")  # none: as before
+    assert mock_request.call_args_list[0].kwargs["json"] == {"delete": ["abc"]}
+
+
+@patch("app.comfy.requests.request")
 def test_submit_declares_project_priority_and_tag(mock_request):
     mock_request.return_value = _response(body={"prompt_id": "abc", "number": 3})
     client = comfy.Comfy("http://gw")

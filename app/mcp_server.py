@@ -624,9 +624,13 @@ async def delete_conversation(conversation_id: str) -> dict:
 
 
 @server.tool(annotations=WRITE)
-async def cancel_run(conversation_id: str, run: Annotated[int, Field(ge=1)]) -> dict:
-    """Cancel a pending ComfyUI run (it also ends the bot's work on its own)."""
-    return await _json("POST", f"/api/conversations/{conversation_id}/runs/{run}/cancel")
+async def cancel_run(conversation_id: str, run: Annotated[int, Field(ge=1)],
+                     reason: Annotated[str, Field(max_length=180)] = "") -> dict:
+    """Cancel a pending ComfyUI run (it also ends the bot's work on its own). reason: why, in a few
+    words in Spanish -- the owner reads it on the GPU queue's panel."""
+    said = " ".join(reason.split())
+    return await _json("POST", f"/api/conversations/{conversation_id}/runs/{run}/cancel",
+                       json={"reason": f"Un agente (MCP){f': {said}' if said else ''}"})
 
 
 @server.tool(annotations=WRITE)

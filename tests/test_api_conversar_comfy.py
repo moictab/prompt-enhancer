@@ -313,6 +313,7 @@ def test_cancelled_runs_get_no_comment(api_client, auth_headers, tmp_path, fake_
 
     assert response.json()["status"] == "cancelled"
     assert fake_comfy.cancelled == ["prompt-1", "prompt-2"]
+    assert fake_comfy.cancel_reasons == [comfy.CANCEL_BY_USER] * 2  # why, for the gateway's panel
     assert idle.calls == []
     stored = conversations.get(conversation_id)
     assert [m["role"] for m in stored["messages"]] == ["user", "assistant"]
@@ -369,6 +370,7 @@ def test_a_job_waiting_its_turn_is_not_given_up(api_client, auth_headers, tmp_pa
     jobs = conversations.get_run(conversation_id, 1)["jobs"]
     assert [j["status"] for j in jobs] == ["pending", "error"] and "No result after 45 minutes" in jobs[1]["error"]
     assert fake_comfy.cancelled == ["prompt-2"]  # given up, it's stopped too: it would hold ComfyUI
+    assert fake_comfy.cancel_reasons == ["Sin resultado tras 45 min: se da por perdida"]
     api_client.post(f"/api/conversations/{conversation_id}/runs/1/cancel", auth=auth_headers)
 
 
@@ -560,6 +562,7 @@ def test_deleting_a_conversation_cancels_its_pending_runs(api_client, auth_heade
     runs.wait_until_idle()
 
     assert fake_comfy.cancelled == ["prompt-1", "prompt-2"]
+    assert fake_comfy.cancel_reasons == [comfy.CANCEL_DELETED] * 2
     assert conversations.get(conversation_id) is None
 
 

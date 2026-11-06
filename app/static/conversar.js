@@ -1775,7 +1775,7 @@ function toolLine(part) {
   } else if (part.tool === "save_workflow") {
     text = `${part.replaced ? "Ha reemplazado" : "Ha guardado"} «${part.name}» en la biblioteca de workflows`;
   } else if (part.tool === "cancel_run") {
-    text = `Ha cancelado la ejecución ${part.run}`;
+    text = `Ha cancelado la ejecución ${part.run}${part.reason ? `: ${part.reason}` : ""}`;
   } else if (part.tool === "keep_going") {
     text = part.stop
       ? "Ha dejado de trabajar por su cuenta"

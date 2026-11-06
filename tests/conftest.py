@@ -67,6 +67,7 @@ class FakeComfy:
         self.files: dict[str, bytes] = {}
         self.uploads: list[str] = []
         self.cancelled: list[str] = []
+        self.cancel_reasons: list[str] = []  # why each was cancelled, as sent to the gateway
         self.prioritized: list[tuple[str, str]] = []
         self.gateway_jobs: dict[str, dict] = {}  # the gateway's record of a job: {status, started_at}
         self.model_files = {"loras": ["krea-2\\style-ink_v1.safetensors", "krea-2\\base-real_v3.safetensors",
@@ -99,8 +100,9 @@ class FakeComfy:
         self.uploads.append(filename)
         return f"{comfy.UPLOAD_SUBFOLDER}/{filename}"
 
-    def cancel(self, base, prompt_id):
+    def cancel(self, base, prompt_id, reason=""):
         self.cancelled.append(prompt_id)
+        self.cancel_reasons.append(reason)
 
     def prioritize(self, base, prompt_id, priority=comfy.PRIORITY_AHEAD):
         """True for a job the gateway still holds (gateway_jobs status "queued"; any not set is)."""
