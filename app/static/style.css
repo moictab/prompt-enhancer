@@ -859,6 +859,20 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .catalog-item { grid-template-columns: minmax(0, 1fr); }
 .catalog-item .item-text { -webkit-line-clamp: 3; }
 .catalog-description { grid-column: 1 / -1; margin-top: 0.35rem; font-size: var(--step--1); }
+#disk-state { max-width: 52rem; margin: 0 0 1rem; }
+.disk-list { max-width: 52rem; }
+.disk-item .item-text { -webkit-line-clamp: 3; }
+.disk-state {
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--paper-dim);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.disk-state.is-candidate { color: var(--safelight); border-color: var(--safelight); }
 .memory-list .memory-text { font-weight: 450; }
 .memory-list .item.is-editing { gap: 0.6rem; padding-right: 0.85rem; }
 .memory-list .item.is-editing > * { grid-column: 1 / -1; }

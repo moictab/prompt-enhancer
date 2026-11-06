@@ -2,7 +2,8 @@ import requests
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from .. import catalog, comfy, families, image_metadata, memory, memory_tidy, references, system_prompt, workflows
+from .. import (catalog, comfy, disk, families, image_metadata, memory, memory_tidy, references, system_prompt,
+               workflows)
 from ..seed import DEFAULT_SYSTEM_PROMPTS
 from .api import read_image
 
@@ -308,3 +309,32 @@ def set_model_description(payload: DescriptionPayload):
     """The owner's description of what a model or LoRA does, for the bot."""
     catalog.set_description(payload.file, payload.text)
     return catalog.details(payload.file)
+
+
+@router.get("/disk")
+def disk_report(refresh: bool = False):
+    """The models folder against each file's use (disk.report): what can go when space runs short."""
+    if not disk.configured():
+        return {"configured": False}
+    try:
+        return {"configured": True, **disk.report(refresh=refresh)}
+    except (disk.DiskError, OSError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/disk/files")
+def delete_model_file(folder: str, name: str):
+    """Delete a model file for good, as the owner asks from Ajustes; the catalog's list follows."""
+    try:
+        removed = disk.delete(folder, name)
+    except disk.DiskError as e:
+        raise HTTPException(status_code=409 if "library" in str(e) else 400, detail=str(e))
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"It couldn't be deleted: {e}")
+    client = comfy.client()
+    if client is not None:
+        try:
+            catalog.refresh_files(client)
+        except Exception:  # ComfyUI busy: the list catches up before the next turn
+            pass
+    return removed

@@ -153,6 +153,23 @@
   <ul class="item-list catalog-list" id="catalog-list"></ul>
 </section>
 
+<section class="settings-section" id="disk" aria-labelledby="disk-title">
+  <h2 id="disk-title">Espacio en disco</h2>
+  <p class="section-intro">Lo que ocupa cada modelo y LoRA frente a lo que se usa: cada trabajo que ha pasado por ComfyUI desde que el gateway lleva registro, de este bot, de tus otros proyectos y lo que lanzas a mano. El uso se mide sobre el tiempo que el archivo lleva en disco, así que lo recién descargado no se marca hasta pasadas dos semanas, ni lo que carga algún workflow de la biblioteca. Borrar es para siempre: para recuperarlo habría que volver a descargarlo.</p>
+  <div class="catalog-bar">
+    <button type="button" class="btn-secondary" id="disk-refresh">Leer el uso otra vez</button>
+    <label class="visually-hidden" for="disk-show">Mostrar</label>
+    <select id="disk-show">
+      <option value="candidates">Candidatos a borrar</option>
+      <option value="all">Todos</option>
+    </select>
+    <label class="visually-hidden" for="disk-filter">Filtrar</label>
+    <input type="search" id="disk-filter" placeholder="Filtrar por nombre" autocomplete="off">
+  </div>
+  <p class="catalog-state" id="disk-state" aria-live="polite"></p>
+  <ul class="item-list disk-list" id="disk-list"></ul>
+</section>
+
 <section class="settings-section" id="requests" aria-labelledby="requests-title">
   <h2 id="requests-title">Peticiones</h2>
   <p class="section-intro">Cada petición enviada a OpenRouter, tal cual salió, con lo que volvió: modelo, mensajes, imágenes, coste, tiempo y errores. Cada respuesta de Conversar y cada entrada del historial enlazan a la suya.</p>

@@ -75,6 +75,22 @@ def aggregate(jobs: list) -> dict:
             "from": _day(min(times)) if times else None, "to": _day(max(times)) if times else None}
 
 
+MAX_JOBS = 1_000_000
+FETCH_TIMEOUT = 60
+
+
+def fetch(base_url: str) -> dict:
+    """The gateway's successful jobs, aggregated as above, read straight from it: `/gateway/jobs` (an
+    admin endpoint the gateway answers only on its own PC). Its rows carry no prompts or images, but
+    projects, tags and output names: none of that is kept, only what aggregate() reads."""
+    import requests
+    response = requests.get(f"{base_url.rstrip('/')}/gateway/jobs", params={"status": "success", "limit": MAX_JOBS},
+                            timeout=FETCH_TIMEOUT)
+    response.raise_for_status()
+    jobs = response.json()
+    return aggregate(jobs if isinstance(jobs, list) else [])
+
+
 def main(argv: list[str]) -> int:
     if len(argv) == 3 and argv[0] == "aggregate":
         with open(argv[1], encoding="utf-8") as f:

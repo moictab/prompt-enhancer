@@ -874,6 +874,123 @@ function setupCatalog() {
   load();
 }
 
+// ---------- disk space: models against their use ----------
+
+const DISK_STATES = {
+  unused: { label: "Sin usar", candidate: true },
+  stale: { label: "Olvidado", candidate: true },
+  rare: { label: "Poco usado", candidate: true },
+  used: { label: "En uso" },
+  new: { label: "Recién llegado" },
+  library: { label: "En la biblioteca" },
+};
+const DISK_FOLDERS = { checkpoints: "Checkpoint", diffusion_models: "Modelo de difusión", loras: "LoRA" };
+
+function gigabytes(bytes) {
+  const gb = bytes / 1024 ** 3;
+  return gb >= 1 ? `${gb.toLocaleString("es-ES", { maximumFractionDigits: 1 })} GB`
+    : `${Math.max(1, Math.round(bytes / 1024 ** 2)).toLocaleString("es-ES")} MB`;
+}
+
+function day(iso) {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" });
+}
+
+function setupDisk() {
+  const list = $("disk-list");
+  const stateLine = $("disk-state");
+  const show = $("disk-show");
+  const filter = $("disk-filter");
+  const refreshButton = $("disk-refresh");
+  let report = null;
+
+  function usage(file) {
+    const jobs = `${file.jobs.toLocaleString("es-ES")} ${file.jobs === 1 ? "trabajo" : "trabajos"}`;
+    const span = `${file.observed_days} ${file.observed_days === 1 ? "día" : "días"}`;
+    if (file.state === "unused") return `Ningún trabajo en los ${span} con registro.`;
+    if (!file.jobs) return `Aún sin usar (${span} con registro).`;
+    const last = file.last_used ? `, el último el ${day(file.last_used)}` : "";
+    return `${jobs} en ${span} (${file.per_month.toLocaleString("es-ES")} al mes)${last}.`;
+  }
+
+  function item(file) {
+    const state = DISK_STATES[file.state] || { label: file.state };
+    const facts = [
+      `${DISK_FOLDERS[file.folder] || file.folder}, ${gigabytes(file.bytes)}`,
+      `en disco desde el ${day(file.on_disk_since)}`,
+    ].join(", ");
+    const why = file.library.length ? `Lo carga ${file.library.join(", ")}.` : usage(file);
+    const remove = file.library.length
+      ? null
+      : confirmButton("Borrar", async (button) => {
+          setBusy(button, true, "Borrando…");
+          try {
+            await request(`/api/admin/disk/files?folder=${encodeURIComponent(file.folder)}&name=${encodeURIComponent(file.name)}`,
+              { method: "DELETE" });
+            toast(`Borrado: ${file.name} (${gigabytes(file.bytes)}).`);
+            report.files = report.files.filter((f) => f !== file);
+            report.free_bytes += file.bytes;
+            if (state.candidate) report.candidate_bytes -= file.bytes;
+            render();
+          } catch (err) {
+            toast(err.message, { error: true });
+            setBusy(button, false);
+          }
+        }, { confirmLabel: `¿Borrar ${gigabytes(file.bytes)}? No se deshace` });
+    return el(
+      "li",
+      { class: "item disk-item" },
+      el("span", { class: "item-title" }, file.name, " ",
+        el("span", { class: `disk-state${state.candidate ? " is-candidate" : ""}`, text: state.label })),
+      remove || el("span"),
+      el("span", { class: "item-text", text: `${facts}. ${why}` })
+    );
+  }
+
+  function render() {
+    if (!report) return;
+    if (!report.configured) {
+      stateLine.textContent = "La carpeta de modelos no está configurada en este servidor (COMFY_MODELS_DIR).";
+      refreshButton.disabled = true;
+      return;
+    }
+    const total = report.files.reduce((sum, f) => sum + f.bytes, 0);
+    const candidates = report.files.filter((f) => DISK_STATES[f.state]?.candidate);
+    const read = report.usage_read_at
+      ? ` Uso: ${Number(report.records_jobs || 0).toLocaleString("es-ES")} trabajos desde el ${day(report.records_from)}, leído el ${new Date(report.usage_read_at).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short", timeZone: TIME_ZONE })}.`
+      : " Aún no se ha podido leer el uso del gateway.";
+    stateLine.textContent = `Libre: ${gigabytes(report.free_bytes)} de ${gigabytes(report.total_bytes)}. `
+      + `Modelos y LoRAs: ${report.files.length} archivos, ${gigabytes(total)}; candidatos a borrar: `
+      + `${candidates.length}, ${gigabytes(candidates.reduce((sum, f) => sum + f.bytes, 0))}.${read}`;
+    const words = filter.value.toLowerCase().split(/\s+/).filter(Boolean);
+    const shown = (show.value === "all" ? report.files : candidates)
+      .filter((f) => words.every((word) => f.name.toLowerCase().includes(word)));
+    list.replaceChildren(...(shown.length ? shown.map(item)
+      : [el("li", { class: "item-empty", text: words.length ? "Nada coincide con el filtro." : "Nada que borrar." })]));
+  }
+
+  async function load(refresh = false) {
+    try {
+      report = await request(`/api/admin/disk${refresh ? "?refresh=true" : ""}`);
+    } catch (err) {
+      toast(err.message, { error: true });
+    }
+    render();
+  }
+
+  refreshButton.addEventListener("click", async () => {
+    setBusy(refreshButton, true, "Leyendo el gateway…");
+    await load(true);
+    setBusy(refreshButton, false);
+  });
+  show.addEventListener("change", render);
+  filter.addEventListener("input", render);
+  stateLine.textContent = "Midiendo…";
+  load();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   setupSystemPrompts();
   setupTidy(setupMemory());
@@ -881,4 +998,5 @@ document.addEventListener("DOMContentLoaded", () => {
   setupFamilies();
   setupWorkflows();
   setupCatalog();
+  setupDisk();
 });
