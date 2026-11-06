@@ -1002,7 +1002,7 @@ function setupDisk() {
     const candidates = report.files.filter((f) => DISK_STATES[f.state]?.candidate);
     const total = (files) => gigabytes(files.reduce((sum, f) => sum + f.bytes, 0));
     const read = report.usage_read_at
-      ? `uso desde el ${day(report.records_from)} (${number(Number(report.records_jobs || 0))} trabajos), leído el ${new Date(report.usage_read_at).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: TIME_ZONE })}`
+      ? `uso desde el ${day(report.records_from)} (${number(Number(report.records_jobs || 0))} trabajos), leído a las ${new Date(report.usage_read_at).toLocaleTimeString("es-ES", { timeStyle: "short", timeZone: TIME_ZONE })}`
       : "aún no se ha podido leer el uso del gateway";
     stateLine.replaceChildren(
       el("span", {}, "Libre ", el("strong", { text: gigabytes(report.free_bytes) }), ` de ${gigabytes(report.total_bytes)}`),
@@ -1038,11 +1038,19 @@ function setupDisk() {
   }
 
   refreshButton.addEventListener("click", async () => {
-    setBusy(refreshButton, true, "Leyendo el gateway…");
+    setBusy(refreshButton, true, "Leyendo…");
     await load(true);
     setBusy(refreshButton, false);
   });
-  show.addEventListener("change", render);
+  const SHOW_KEY = "disk-show";
+  try {
+    const remembered = localStorage.getItem(SHOW_KEY);
+    if ([...show.options].some((o) => o.value === remembered)) show.value = remembered;
+  } catch {}
+  show.addEventListener("change", () => {
+    try { localStorage.setItem(SHOW_KEY, show.value); } catch {}
+    render();
+  });
   filter.addEventListener("input", render);
   stateLine.textContent = "Midiendo…";
   load();

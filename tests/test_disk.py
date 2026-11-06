@@ -27,6 +27,7 @@ def _job(names, days_ago, loras=()):
 
 
 def _setup(tmp_path, monkeypatch):
+    monkeypatch.setattr(disk, "_fresh", {"at": 0.0, "usage": None})  # no reading left from another test
     root = tmp_path / "models"
     monkeypatch.setenv("COMFY_MODELS_DIR", str(root))
     monkeypatch.setenv("COMFY_GATEWAY_URL", "http://gateway.test")
@@ -70,13 +71,18 @@ def test_each_file_is_judged_by_its_use_over_the_time_it_was_there(tmp_path, mon
     assert report["records_from"] == (TODAY - timedelta(days=59)).isoformat()
     assert report["candidate_bytes"] == 5000 + 1000 + 1000  # the -alt file was written just now: new
     assert report["files"][0]["name"] == "sdxl\\forgotten-mix_v1.safetensors"  # biggest first
-    # Read once a day: the record is the catalog's past use, which keeps no project, tag or output.
+    # Read again after a few minutes, or when asked; the catalog's past use (what the bot sees, with
+    # no project, tag or output) only once a day.
     disk.report()
     assert len(fetched) == 1
     kept = catalog.load()["history"]["krea-2\\style-daily_v1.safetensors"]
     assert kept["jobs"] == 29 and set(kept) <= {"jobs", "weight", "used_with", "last_used"}
+    imported = catalog.load()["history_source"]["imported_at"]
     disk.report(refresh=True)
-    assert len(fetched) == 2
+    assert len(fetched) == 2 and catalog.load()["history_source"]["imported_at"] == imported
+    monkeypatch.setattr(disk, "_fresh", {**disk._fresh, "at": time.time() - disk.FRESH_SECONDS - 1})
+    disk.report()
+    assert len(fetched) == 3 and report["usage_read_at"]
 
 
 def test_the_owner_deletes_a_file_with_its_side_files_but_not_what_the_library_loads(

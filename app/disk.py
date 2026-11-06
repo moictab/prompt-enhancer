@@ -50,25 +50,35 @@ def _key(name: str) -> str:
     return name.replace("/", "\\").lower()
 
 
-def refresh_usage(force: bool = False) -> dict | None:
-    """Read the gateway's record again when it is older than a day (or forced): it becomes the
-    catalog's past use. Returns the record's source, or None if the gateway can't be read."""
-    source = catalog.load()["history_source"] or {}
-    imported = source.get("imported_at")
-    fresh = imported and time.time() - datetime.fromisoformat(imported).timestamp() < USAGE_MAX_AGE_SECONDS
-    if fresh and not force:
-        return source
+FRESH_SECONDS = 300  # the report's own reading of the gateway's record serves this long
+_fresh: dict = {"at": 0.0, "usage": None}
+
+
+def usage(force: bool = False) -> tuple[dict, dict]:
+    """Each file's use (by name) and where it comes from ({jobs, from, read_at}): the gateway's
+    record read for the report itself, at most every FRESH_SECONDS (or forced), so it counts what
+    was made minutes ago. The catalog's past use -- what the bot sees -- is replaced from it at
+    most once a day (USAGE_MAX_AGE_SECONDS), so the bot's context doesn't change with every look.
+    With the gateway unreadable, the catalog's."""
+    now = time.time()
     url = get_settings().comfy_gateway_url
-    if not url:
-        return source or None
-    try:
-        usage = gateway_history.fetch(url)
-    except Exception as e:  # the gateway down or restarting: what was read before stands
-        logger.warning("model usage not read from the gateway: %s", e)
-        return source or None
-    data = catalog.set_history(usage)
-    logger.info("model usage read from the gateway: %s jobs, %s files", usage.get("jobs"), len(usage.get("files") or {}))
-    return data["history_source"]
+    if url and (force or _fresh["usage"] is None or now - _fresh["at"] > FRESH_SECONDS):
+        try:
+            _fresh.update(usage=gateway_history.fetch(url), at=now)
+            logger.info("model usage read from the gateway: %s jobs", _fresh["usage"].get("jobs"))
+        except Exception as e:  # the gateway down or restarting: what was read before stands
+            logger.warning("model usage not read from the gateway: %s", e)
+    stored = catalog.load()
+    source = stored["history_source"] or {}
+    read = _fresh["usage"]
+    if read is None:
+        return stored["history"], {"jobs": source.get("jobs"), "from": source.get("from"),
+                                   "read_at": source.get("imported_at")}
+    imported = source.get("imported_at")
+    if not imported or now - datetime.fromisoformat(imported).timestamp() >= USAGE_MAX_AGE_SECONDS:
+        catalog.set_history(read)
+    return read.get("files") or {}, {"jobs": read.get("jobs"), "from": read.get("from"),
+                                     "read_at": datetime.fromtimestamp(_fresh["at"]).astimezone().isoformat()}
 
 
 def _library() -> dict[str, list[str]]:
@@ -106,8 +116,8 @@ def report(refresh: bool = False, today: date | None = None) -> dict:
     """Every model file with its size, time on disk, use and verdict (_state), biggest first; and
     the disk's free space."""
     root = _root()
-    source = refresh_usage(force=refresh) or {}
-    history = {_key(name): entry for name, entry in catalog.load()["history"].items()}
+    used_files, source = usage(force=refresh)
+    history = {_key(name): entry for name, entry in used_files.items()}
     library = _library()
     today = today or date.today()
     records_from = date.fromisoformat(source["from"]) if source.get("from") else today
@@ -137,7 +147,7 @@ def report(refresh: bool = False, today: date | None = None) -> dict:
     disk = shutil.disk_usage(root)
     return {
         "root": str(root), "free_bytes": disk.free, "total_bytes": disk.total,
-        "records_from": source.get("from"), "records_jobs": source.get("jobs"), "usage_read_at": source.get("imported_at"),
+        "records_from": source.get("from"), "records_jobs": source.get("jobs"), "usage_read_at": source.get("read_at"),
         "new_days": NEW_DAYS, "stale_days": STALE_DAYS, "rare_per_month": RARE_PER_MONTH,
         "files": files,
         "candidate_bytes": sum(f["bytes"] for f in files if f["state"] in CANDIDATES),
