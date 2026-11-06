@@ -165,7 +165,7 @@ BRIEF = """[Away mode] The user is away until {until} and left you working on yo
 How it works:
 - In rounds: launch a batch, look at its images when they come back, launch the next. Everything you launch runs at idle priority, only while ComfyUI has nothing else to do, so it never gets in anyone's way (a job may be stopped and redone when something else comes).
 - Every turn tells you the time and how much Claude Code allowance is left. Each turn uses some, the images you look at most of all: batches of 4-8 images, zooms only where they matter, no lookups the context already answers.
-- When the time or the allowance is about to run out you get a last turn: sum up the night then. If you run out of good ideas before, launch nothing and make that reply the summary.
+- The allowance you're shown is only what is spare: what the user will need when they're back is already set aside, so don't save any of it for them. Don't plan your own ending either: when the time or the allowance is about to run out, the app tells you the turn is your last, and you sum up the night then. Until then, keep launching -- the sparks, your own ideas, what worked tonight taken further; stop earlier only if there is truly nothing left worth trying.
 - The user isn't here to confirm anything: note facts you saw about models, LoRAs and workflows, with how many images back them; a hunch only as one; nothing about their taste until they have reacted. Review every image (<review>), but rate none for them: <rating> is for their own words.
 
 {sections}"""
@@ -175,12 +175,12 @@ FOCUS = {
     "explore": ("Tonight is for surprising them: original images they wouldn't have thought to ask for, only loosely "
                 "based on their taste -- not variations of what they have made, but new subjects, settings, styles "
                 "and models."),
-    "mix": ("Split the night: about half the rounds on their favorites (variations, finishing), half on surprising "
+    "mix": ("Split the night: about half the rounds on their favorites (variations of them), half on surprising "
             "them -- original images they wouldn't have thought to ask for, only loosely based on their taste."),
 }
 
 FAVORITES_SECTION = """Their favorites -- where to start is your call:
-- Variations of them (image:N with changes -- other seeds, proportions, situations, settings, light), or finishing one that isn't finished (finish_image).
+- Variations of them (image:N with changes -- other seeds, proportions, situations, settings, light). Not finishing them: that belongs to their own conversation, where the user works on them.
 - Calibrating the LoRAs they use that were never calibrated{loras}.
 - Something of your own you think they would like, from their notes and what they loved.
 {favorites}"""
@@ -202,7 +202,7 @@ def favorites_text(favorites: list[dict]) -> str:
     for number, item in enumerate(favorites, 1):
         what = "a favorite (loved)" if item["rating"] == "love" else "liked"
         line = (f"- #{number}: {what}, from the conversation \"{item['title']}\", run with {item['workflow']}"
-                f"; {'a finished image' if item['finished'] else 'not finished'}.")
+                f"; {'a finished image' if item['finished'] else 'a draft'}.")
         if item.get("comment"):
             line += f' They said: "{item["comment"]}"'
         lines.append(line)
@@ -241,6 +241,9 @@ def context_text(working: dict, seen: Outlook, now: float, first: bool) -> str:
                      f"at {_clock(seen.resets_at)}, with more.")
     else:
         lines.append(f"Claude Code: about {seen.turns} turns left, this one included.")
+    if seen.action != "last":
+        lines.append("That is only what's spare -- the user's share is set aside already -- so use it; the app will "
+                     "tell you when a turn is your last.")
     focus = working.get("focus") or "favorites"
     if focus == "mix":
         lines.append("Tonight's split: about half the rounds on their favorites, half on surprising them.")
@@ -259,7 +262,8 @@ def context_text(working: dict, seen: Outlook, now: float, first: bool) -> str:
     lines.append("Start: say what you'll try tonight and why, and launch the first round in this same reply."
                  if first else
                  "Review these images, decide the next round (focus or explore, and say which) and launch it in this "
-                 "same reply, without asking -- or launch nothing and sum up the night, if you're out of good ideas.")
+                 "same reply, without asking. Keep going until the app gives you your last turn: stop earlier only "
+                 "if nothing is left worth trying.")
     return "\n".join(lines)
 
 
@@ -280,7 +284,7 @@ def current() -> str | None:
 
 def _scan() -> tuple[list[dict], list[str], list[str]]:
     """One pass over every conversation: the user's favorites among the runs' images (loved first, then
-    liked, newest first within each; with where they come from), the titles of their latest conversations
+    liked, newest first within each; with where they come from; reactions already sent only), the titles of their latest conversations
     (what they usually make; away ones aside), and the sparks of the latest away nights."""
     found, titled, nights = [], [], []
     root = Path(get_settings().data_dir, "conversations")
@@ -304,7 +308,8 @@ def _scan() -> tuple[list[dict], list[str], list[str]]:
             run = runs.get(message.get("run")) or {}
             for image in message.get("images") or []:
                 reaction = image.get("reaction") or {}
-                if reaction.get("rating") not in ("love", "up"):
+                # One not sent yet is the user's next message there, for that conversation's bot to act on.
+                if reaction.get("rating") not in ("love", "up") or not reaction.get("sent"):
                     continue
                 job = next((j for j in run.get("jobs") or [] if image["id"] in (j.get("images") or [])), {})
                 found.append({

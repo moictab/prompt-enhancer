@@ -970,6 +970,10 @@ class ToolBox:
         record = chat.image_by_number(conversation["messages"], image) if isinstance(image, int) else None
         if record is None:
             raise ToolError(f"There is no image {image} in this conversation.")
+        first = conversation["messages"][0]
+        if self.away and first.get("away") and record["id"] in {i["id"] for i in first.get("images") or []}:
+            raise ToolError(f"Image {image} is a favorite from another conversation: finishing it belongs there, "
+                            "where the user works on it. Make variations of it instead.")
         source = conversations.image_workflow(self.conversation_id, record["id"])
         if not is_api_workflow(source):
             raise ToolError(f"Image {image} carries no workflow to take its prompt, model and LoRAs from: finish it "

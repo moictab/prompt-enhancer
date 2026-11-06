@@ -28,8 +28,9 @@ def _limits(**windows):
     storage.write_json(str(claude_code.limits_path()), {"status": "allowed", "windows": windows})
 
 
-def _favorite(family, rating="love", comment="justo así"):
-    """A conversation whose run made an image the user marked: the away mode starts from it."""
+def _favorite(family, rating="love", comment="justo así", title="Bruja en el bosque", sent=True):
+    """A conversation whose run made an image the user marked: the away mode starts from it -- once the
+    reaction has gone with a message of theirs there."""
     workflows.ensure_seeded()
     graph = workflows.find_by_name("krea-2/txt2img")["workflow"]
     source = conversations.create(family["id"], "vendor/model", 0.7)
@@ -39,8 +40,10 @@ def _favorite(family, rating="love", comment="justo así"):
         "jobs": [{"prompt_id": "p-old", "status": "done", "images": [image["id"]],
                   "loras": [{"name": LORA, "strength": 0.6}]}]}, [graph])
     conversations.append_message(source["id"], {"role": "results", "run": 1, "content": "", "images": [image]})
-    conversations.update_settings(source["id"], {"title": "Bruja en el bosque"})
+    conversations.update_settings(source["id"], {"title": title})
     conversations.set_reaction(source["id"], image["id"], rating, comment)
+    if sent:
+        conversations.append_message(source["id"], {"role": "user", "content": "me encanta", "images": []})
     return source
 
 
@@ -117,9 +120,11 @@ def test_it_starts_a_conversation_of_its_own_from_the_favorites_and_launches_at_
         api_client, auth_headers, tmp_path, fake_comfy, claude):
     family = _family(tmp_path)
     _favorite(family)
+    # Marked but not sent yet: that is the user's next message there, for that conversation's bot.
+    _favorite(family, title="Elfa pendiente", sent=False)
     fake_comfy.model_files["diffusion_models"] = [MODEL]
     fake = claude([init(), text("Esta noche, variaciones de #1."), tool("c1", "run_workflow", RUN_INPUT),
-                   RATE_LIMIT, result()])
+                   tool("c2", "finish_image", {"image": 1}), RATE_LIMIT, result()])
 
     response = _start(api_client, auth_headers, instructions="céntrate en brujas", claude_model="sonnet")
     assert response.status_code == 200, response.text
@@ -136,7 +141,12 @@ def test_it_starts_a_conversation_of_its_own_from_the_favorites_and_launches_at_
     sent = fake.sent()
     assert "[Away mode]" in sent and "What the user asked for this time: céntrate en brujas" in sent
     assert 'a favorite (loved), from the conversation "Bruja en el bosque"' in sent and "justo así" in sent
+    assert 'from the conversation "Elfa pendiente"' not in sent
     assert "style-ink_v1" in sent  # the LoRA it uses, never calibrated
+    # Finishing a favorite is for its own conversation.
+    refused = next(p for p in stored["messages"][1]["parts"] if p.get("tool") == "finish_image")
+    assert "belongs there" in refused["error"]
+    assert "don't save any of it for them" in sent and "the app will tell you when a turn is your last" in sent
     assert "## Away Mode" in sent and "about 19 turns left" in sent and "Start:" in sent
     # By default the night is half and half: their favorites, and surprising them from a few sparks.
     assert "Split the night" in sent and "Sparks for tonight:" in sent

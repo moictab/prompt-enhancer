@@ -581,7 +581,7 @@ const AWAY_ENDED = {
   until: "llegó la hora a la que dijiste que volvías",
   limit: "no quedaba margen de Claude Code sin tocar lo que te deja a ti",
   user: "has vuelto: lo has parado o has escrito en una conversación",
-  done: "lo dejó él: no tenía más ideas que merecieran la pena",
+  done: "lo dio por terminado él",
   images: "llegó al máximo de imágenes",
   error: "una de sus respuestas falló",
 };
