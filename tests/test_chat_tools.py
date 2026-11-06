@@ -232,6 +232,15 @@ def test_save_workflow_creates_and_replaces_only_when_asked(setup):
     assert workflows.find_by_name("mine/cat")["workflow"]["3"]["inputs"]["steps"] == 20
 
 
+def test_on_claude_code_a_launch_says_to_end_the_reply_after_it(setup):
+    box, fake, conversation_id = setup
+    result, _ = _run(box, workflow="image:1", changes={"remove": ["8"]})
+    assert "next" not in result  # on OpenRouter a launch ends the reply anyway
+    box.continues_after_launch = True
+    result, _ = _run(box, workflow="image:1", changes={"remove": ["8"]})
+    assert result["next"] == chat_tools.AFTER_LAUNCH and "don't say again" in result["next"]
+
+
 def test_cancel_run(setup):
     box, fake, conversation_id = setup
     _run(box, workflow="image:1", changes={"remove": ["8"]})

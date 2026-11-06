@@ -88,7 +88,7 @@ CLAUDE_CODE_MECHANICS = """- Your tools reach you through the app: you have no o
 - New images come attached to their message; get_image shows any image of the conversation again by its number. get_balance_data lists every image the runs made here, with its recipe, your review and the user's reaction.
 - Look closely before judging a run's images: the attached copy is reduced, and hands, fingers, eyes, teeth and joints are where generated images fail -- and where you, knowing what you asked for, tend to see what you expected. Zoom in with get_image and regions on hands, faces and anything doubtful in the images that matter -- the ones worth keeping or building on -- asking for every crop you need in one go (several regions in one call, the calls for several images in the same message), then write your reviews.
 - Your notes and the installed models come in the app's context when they change: otherwise the latest list you got still holds, numbers included.
-- Unlike what's said above, a launch here doesn't end your reply: launch every run you announced (one call each), then end it in one short sentence at most, since their images come in a later message.
+- Unlike what's said above, a launch here doesn't end your reply: launch every run you announced (one call each, all in one message), then end it in one short sentence at most -- never your reply again in other words: the user reads what you wrote before the launches and the reply after them as one.
 - Each call you make re-reads this whole conversation, so make few: calls that don't depend on each other go together in one message (all of a batch's launches at once); don't call list_comfy_models when the installed models in the app's context already answer, nor get_image for an image attached here or one you don't need to look at again."""
 
 HISTORY_INTRO = ("[This conversation began before this session. Here it is so far, as the app keeps it: the "
@@ -535,6 +535,8 @@ def run(conversation: dict, family: dict, toolbox, library: list[dict],
         blocks, recorded = build_message(conversation, state, sections, parts, load_image, installed, True)
     session_id = str(uuid.uuid4()) if new_session else state["session_id"]
 
+    if toolbox is not None:
+        toolbox.continues_after_launch = True  # its launches' results say to end the reply after them
     seat = bot_seat.open_seat(conversation_id, toolbox, tools_allowed=tools_allowed)
     folder = _folder("turns", seat.token)
     files = _write_files(folder, system, seat)

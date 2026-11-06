@@ -40,6 +40,10 @@ TAG_TITLE_CHARS = 40
 # Of a reply the user asked for, how many images go to ComfyUI at high priority (they are waiting
 # for them); the rest of its batch, at normal.
 WAITED_FOR_IMAGES = 2
+# A launch's result on Claude Code (ToolBox.continues_after_launch), where the reply goes on after it.
+AFTER_LAUNCH = ("Launched; its images come in a later message. Launch any other run you announced now, all "
+                "together in one message. Then end your reply: one short sentence at most, or nothing -- don't "
+                "say again what you said before the launches.")
 # Calibrations run at idle priority: only when nothing else wants the GPU, so they may wait long.
 CALIBRATION_TIMEOUT_SECONDS = 12 * 3600
 
@@ -463,6 +467,9 @@ class ToolBox:
         self.automatic = False
         # A turn of the away mode (away.py): everything it launches goes at idle, behind anything else.
         self.away = False
+        # On Claude Code a launch doesn't end the reply (claude_code.run): each launch's result says to
+        # finish the launches together and end there -- the bot went on to repeat its reply in other words.
+        self.continues_after_launch = False
         # In a turn someone asked for, the images they are waiting for go first; the rest of a big
         # batch goes behind other conversations' few (comfy.PRIORITY_REST).
         self.waited_for = WAITED_FOR_IMAGES
@@ -752,6 +759,8 @@ class ToolBox:
                   "model": ", ".join(run["base_models"]), "applied": done}
         if size:
             result["size"] = size
+        if self.continues_after_launch:
+            result["next"] = AFTER_LAUNCH
         return result, {"type": "run", "run": run["n"], "workflow": label, "count": run["count"]}
 
     def _priority(self) -> str:
@@ -883,6 +892,8 @@ class ToolBox:
         result = {"run": run["n"], "status": "queued at idle priority: it runs when the GPU is free", "lora": lora_file,
                   "workflow": label, "weights": weights[:run["count"]], "seed": seed,
                   "other_loras": [o["name"] for o in others]}
+        if self.continues_after_launch:
+            result["next"] = AFTER_LAUNCH
         return result, {"type": "run", "run": run["n"], "workflow": label, "count": run["count"],
                         "calibration": lora_file}
 
