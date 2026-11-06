@@ -7,6 +7,7 @@ import time
 from unittest.mock import patch
 
 import pytest
+import requests
 
 from app import chat, conversations, downloads, workflows
 
@@ -64,19 +65,39 @@ def civitai_api(monkeypatch):
 
 
 class FakeFile:
-    def __init__(self, body=SAFETENSORS, status=200):
-        self.body, self.status_code = body, status
-        self.headers = {"Content-Length": str(len(body))}
+    """A response with the file from `start` on (206 with its range when start > 0); `cut`: the
+    connection drops after that many bytes."""
+    def __init__(self, body=SAFETENSORS, status=200, start=0, cut=None):
+        self.body, self.status_code, self.cut = body[start:], status, cut
+        self.headers = {"Content-Length": str(len(self.body))}
+        if start:
+            self.status_code = 206
+            self.headers["Content-Range"] = f"bytes {start}-{len(body) - 1}/{len(body)}"
 
     def iter_content(self, size):
+        sent = 0
         for i in range(0, len(self.body), 16):
+            if self.cut is not None and sent >= self.cut:
+                raise requests.exceptions.ChunkedEncodingError("connection broken")
             yield self.body[i:i + 16]
+            sent += 16
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         return False
+
+
+class FlakyHost:
+    """Civitai's file host, cutting the connection after so many bytes on its first tries (`cuts`);
+    it takes a byte range, unless `ranges` is off."""
+    def __init__(self, body=SAFETENSORS, cuts=(), ranges=True):
+        self.body, self.cuts, self.ranges, self.offsets = body, list(cuts), ranges, []
+
+    def __call__(self, url, offset=0):
+        self.offsets.append(offset)
+        return FakeFile(self.body, start=offset if self.ranges else 0, cut=self.cuts.pop(0) if self.cuts else None)
 
 
 def _wait(conversation_id, n, timeout=5):
@@ -106,7 +127,7 @@ def test_the_bot_prepares_and_only_the_user_starts_it(api_client, auth_headers, 
         reply = conversations.get(conversation_id)["messages"][-1]
         assert {"type": "download", "download": 1} in reply["parts"]
 
-        def fake_open(url):
+        def fake_open(url, offset=0):
             opened.append(url)
             return FakeFile()
 
@@ -151,15 +172,15 @@ def test_it_never_overwrites_and_never_takes_a_pickle(api_client, auth_headers, 
 def test_a_file_that_isnt_what_civitai_said_is_thrown_away(api_client, auth_headers, tmp_path, models, civitai_api):
     conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
     record = downloads.prepare(conversation_id, {"url": "https://civitai.com/models/123?modelVersionId=456"})
-    with patch("app.downloads._open", lambda url: FakeFile(SAFETENSORS + b"tampered")):
+    with patch("app.downloads._open", lambda url, offset=0: FakeFile(SAFETENSORS + b"tampered")):
         downloads.accept(conversation_id, record["n"])
         failed = _wait(conversation_id, record["n"])
     assert failed["status"] == "failed" and "checksum" in failed["error"]
     assert not list(models.rglob("*.safetensors*"))
-    with patch("app.downloads._open", lambda url: FakeFile(b"<html>sign in</html>" + b"\0" * 64)):
+    with patch("app.downloads._open", lambda url, offset=0: FakeFile(b"<html>sign in</html>" + b"\0" * 64)):
         downloads.accept(conversation_id, record["n"])  # a failed one can be accepted again
         assert "isn't a SafeTensors file" in _wait(conversation_id, record["n"])["error"]
-    with patch("app.downloads._open", lambda url: FakeFile(status=401)):
+    with patch("app.downloads._open", lambda url, offset=0: FakeFile(status=401)):
         downloads.accept(conversation_id, record["n"])
         assert "sign in" in _wait(conversation_id, record["n"])["error"]
 
@@ -179,6 +200,69 @@ def test_a_checkpoint_goes_to_its_family_and_can_be_turned_down(api_client, auth
     assert chat.turn_context([], downloads=downloads.news_text([declined.json()])).count("turned it down") == 1
     folders = api_client.get("/api/model-folders", auth=auth_headers).json()
     assert folders["loras"] == ["illustrious", "krea-2"] and folders["diffusion_models"] == ["anima"]
+
+
+def test_a_cut_connection_carries_on_from_where_it_stopped(api_client, auth_headers, tmp_path, models, civitai_api,
+                                                           monkeypatch):
+    monkeypatch.setattr(downloads, "RETRY_WAITS", (0, 0))
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
+    record = downloads.prepare(conversation_id, {"version_id": 456})
+    target = models / "loras" / "illustrious" / "char-ramona-flowers_v1.0.safetensors"
+
+    # Cut twice: it tries again by itself, each time from what came down.
+    host = FlakyHost(cuts=(32, 16))
+    with patch("app.downloads._open", host):
+        downloads.accept(conversation_id, record["n"])
+        assert _wait(conversation_id, record["n"])["status"] == "done"
+    assert host.offsets == [0, 32, 48] and target.read_bytes() == SAFETENSORS  # Civitai's checksum held
+
+    # Cut more times than it tries: it fails keeping what came down; downloading it again carries on.
+    target.unlink()
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
+    again = downloads.prepare(conversation_id, {"version_id": 456})
+    host = FlakyHost(cuts=(16, 16, 16))
+    with patch("app.downloads._open", host):
+        downloads.accept(conversation_id, again["n"])
+        failed = _wait(conversation_id, again["n"])
+    assert failed["status"] == "failed" and failed["kept_bytes"] == 48 and "carry on" in failed["error"]
+    assert target.with_name(target.name + ".part").stat().st_size == 48
+    host = FlakyHost()
+    with patch("app.downloads._open", host):
+        downloads.accept(conversation_id, again["n"], name="char-ramona_v1.0")  # renamed meanwhile: the part follows
+        done = _wait(conversation_id, again["n"])
+    assert done["status"] == "done" and host.offsets == [48] and not done.get("kept_bytes")
+    assert (models / "loras" / "illustrious" / "char-ramona_v1.0.safetensors").read_bytes() == SAFETENSORS
+    assert not list(models.rglob("*.part"))
+
+
+def test_a_host_that_wont_carry_on_sends_it_all_again(api_client, auth_headers, tmp_path, models, civitai_api,
+                                                      monkeypatch):
+    monkeypatch.setattr(downloads, "RETRY_WAITS", (0,))
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
+    record = downloads.prepare(conversation_id, {"version_id": 456})
+    host = FlakyHost(cuts=(32,), ranges=False)
+    with patch("app.downloads._open", host):
+        downloads.accept(conversation_id, record["n"])
+        assert _wait(conversation_id, record["n"])["status"] == "done"
+    assert host.offsets == [0, 32]  # asked for the rest, got all of it: written from the start
+    assert (models / "loras" / "illustrious" / "char-ramona-flowers_v1.0.safetensors").read_bytes() == SAFETENSORS
+
+
+def test_a_restart_keeps_what_came_down(api_client, auth_headers, tmp_path, models, civitai_api):
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path))["id"]
+    record = downloads.prepare(conversation_id, {"version_id": 456})
+    conversations.update_download(conversation_id, record["n"], lambda d: d.update(status="downloading"))
+    part = models / "loras" / "illustrious" / "char-ramona-flowers_v1.0.safetensors.part"
+    part.write_bytes(SAFETENSORS[:40])
+    downloads.after_restart()
+    failed = conversations.get_download(conversation_id, record["n"])
+    assert failed["status"] == "failed" and failed["kept_bytes"] == 40 and "restarted" in failed["error"]
+    assert part.exists()
+    host = FlakyHost()
+    with patch("app.downloads._open", host):
+        downloads.accept(conversation_id, record["n"])
+        assert _wait(conversation_id, record["n"])["status"] == "done"
+    assert host.offsets == [40]
 
 
 def test_without_a_models_folder_there_are_no_downloads(api_client, auth_headers, tmp_path, civitai_api):

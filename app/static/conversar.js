@@ -1677,10 +1677,16 @@ function downloadCard(part, live) {
     const got = record.progress?.bytes || 0;
     const total = record.progress?.total || record.size_bytes;
     const share = total ? Math.min(100, Math.round((got / total) * 100)) : 0;
+    const retry = record.progress?.retry;
+    const doing = record.progress?.checking
+      ? `Comprobando lo ya descargado (${formatBytes(got)})…`
+      : retry
+        ? `Se cortó la conexión en ${formatBytes(got) || "0 MB"} de ${formatBytes(total)}: sigue en ${retry.seconds} s (intento ${retry.attempt} de ${retry.of})`
+        : `Descargando: ${formatBytes(got) || "0 MB"} de ${formatBytes(total)} (${share} %)`;
     card.append(
       el("span", { class: "download-progress", role: "progressbar", "aria-valuenow": share, "aria-valuemin": 0, "aria-valuemax": 100 },
         el("span", { style: `width: ${share}%` })),
-      el("span", { class: "run-status", text: `Descargando: ${formatBytes(got) || "0 MB"} de ${formatBytes(total)} (${share} %)` }),
+      el("span", { class: "run-status", text: doing }),
       el("span", { class: "run-actions" },
         el("button", { type: "button", class: "btn-quiet", text: "Cancelar",
           onclick: (event) => act(event.currentTarget, "cancel", null, "Cancelando…") }))
@@ -1718,7 +1724,13 @@ function downloadCard(part, live) {
   familySelect.addEventListener("change", () => (choice.family = familySelect.value));
   const nameInput = el("input", { type: "text", value: choice.name, spellcheck: "false", "aria-label": "Nombre del archivo",
     oninput: () => (choice.name = nameInput.value.trim()) });
-  const accept = el("button", { type: "button", class: "btn-primary", text: record.status === "proposed" ? "Descargar" : "Reintentar" });
+  // A download cut short keeps what came down: accepting it again carries on from there.
+  if (record.kept_bytes) {
+    card.append(el("span", { class: "run-folder",
+      text: `Conservado: ${formatBytes(record.kept_bytes)} de ${formatBytes(record.size_bytes)}. Sigue desde ahí.` }));
+  }
+  const accept = el("button", { type: "button", class: "btn-primary",
+    text: record.status === "proposed" ? "Descargar" : record.kept_bytes ? "Seguir descargando" : "Reintentar" });
   accept.addEventListener("click", () => {
     if (!choice.family) {
       familySelect.focus();

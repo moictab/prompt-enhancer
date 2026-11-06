@@ -20,9 +20,12 @@ there (`accept`), with the folder and name as they left them, and then only:
 - into an existing family folder under COMFY_MODELS_DIR, written to a ".part" file and
   renamed when complete, never overwriting a file.
 
-One download runs at a time. Progress is kept in memory (`progress`). A download cut short by
-a restart is marked failed (`after_restart`) and can be accepted again. Once installed, the
-catalog's file list is refreshed, so the next turn sees the file.
+One download runs at a time. Progress is kept in memory (`progress`). What came down is kept
+when the connection fails: the download carries on from there (an HTTP Range request), by
+itself a few times (`RETRY_WAITS`), and then when the user accepts it again -- also after a
+restart cut it short (`after_restart`). Only a cancel, a bad file or a checksum that doesn't
+match throws it away. Once installed, the catalog's file list is refreshed, so the next turn
+sees the file.
 """
 import hashlib
 import logging
@@ -30,6 +33,7 @@ import re
 import shutil
 import struct
 import threading
+import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +52,9 @@ DOWNLOAD_URL = "https://civitai.com/api/download/models/"
 CHUNK = 1 << 20
 SPACE_MARGIN = 1 << 30  # free space left after the file, at least
 TIMEOUT = (15, 120)
+# Seconds to wait before each new try when the connection fails, carrying on from what came down;
+# past the last, the download fails keeping it, for the user to carry on later.
+RETRY_WAITS = (5, 15, 30, 60, 120, 120)
 MAX_NAME_LENGTH = 120
 NAME = re.compile(r"^[a-z0-9][a-z0-9._+-]*$")
 # Civitai's categories (among a model's tags), as the owner's LoRA names begin.
@@ -77,6 +84,14 @@ class DownloadError(ValueError):
 
 class _Cancelled(Exception):
     pass
+
+
+class _Cut(Exception):
+    """The file stopped coming before it was whole: try again from where it stopped."""
+
+
+class _Kept(DownloadError):
+    """A failure that keeps what came down: accepting it again carries on from there."""
 
 
 def models_root() -> Path | None:
@@ -274,15 +289,21 @@ def accept(conversation_id: str, n: int, folder: str | None = None, family: str 
         raise DownloadError("That download is under way or done.")
     folder, family, name = folder or record["folder"], family or record["family"], name or record["name"]
     target = _target(record, folder, family, name)
+    part = _part(target)
+    # What came down before goes where it now goes, if the user changed the folder or the name.
+    earlier = _part_of(record)
+    if earlier is not None and earlier != part and earlier.is_file() and not part.exists():
+        earlier.rename(part)
+    kept = part.stat().st_size if part.is_file() else 0
     free = shutil.disk_usage(target.parent).free
-    if record["size_bytes"] and free < record["size_bytes"] + SPACE_MARGIN:
-        raise DownloadError(f"Not enough free space: it needs {record['size_bytes'] / 1e9:.1f} GB and leaves "
-                            f"{free / 1e9:.1f} GB.")
+    if record["size_bytes"] and free < record["size_bytes"] - kept + SPACE_MARGIN:
+        raise DownloadError(f"Not enough free space: it needs {(record['size_bytes'] - kept) / 1e9:.1f} GB more and "
+                            f"leaves {free / 1e9:.1f} GB.")
     stored = conversations.update_download(conversation_id, n, lambda d: d.update(
-        status="downloading", folder=folder, family=family, name=target.stem, error=None,
+        status="downloading", folder=folder, family=family, name=target.stem, error=None, kept_bytes=None,
         accepted_at=datetime.now(timezone.utc).isoformat()))
     with _lock:
-        _progress[(conversation_id, n)] = {"bytes": 0, "total": record["size_bytes"]}
+        _progress[(conversation_id, n)] = {"bytes": kept, "total": record["size_bytes"]}
         _cancelled.discard((conversation_id, n))
     threading.Thread(target=_download, args=(conversation_id, n, record, target),
                      name=f"download-{conversation_id[:8]}-{n}", daemon=True).start()
@@ -310,13 +331,27 @@ def progress(conversation_id: str, n: int) -> dict | None:
         return dict(found) if found else None
 
 
-def _open(url: str):
-    """The file's response, streaming (tests replace it)."""
+def _open(url: str, offset: int = 0):
+    """The file's response, streaming, from byte `offset` on (tests replace it)."""
     headers = {"User-Agent": "prompt-enhancer"}
+    if offset:
+        headers["Range"] = f"bytes={offset}-"  # kept on the redirect: the file's host answers 206 with the rest
     key = get_settings().civitai_api_key
     if key:
         headers["Authorization"] = f"Bearer {key}"  # dropped by requests on the redirect to another host
     return requests.get(url, headers=headers, stream=True, timeout=TIMEOUT, allow_redirects=True)
+
+
+def _part(target: Path) -> Path:
+    return target.with_name(target.name + ".part")
+
+
+def _part_of(record: dict) -> Path | None:
+    """Where a download's file is being written, by its record's folder, family and name."""
+    root = models_root()
+    if root is None or not record.get("family") or not record.get("name"):
+        return None
+    return root / record["folder"] / record["family"] / f"{record['name']}.safetensors.part"
 
 
 def _check_header(path: Path) -> None:
@@ -327,29 +362,87 @@ def _check_header(path: Path) -> None:
         raise DownloadError("What came down isn't a SafeTensors file.")
 
 
+def _fetch(key: tuple, url: str, part: Path, got: dict) -> None:
+    """One try: what's missing of the file into `part`, from `got["bytes"]` on (the whole file when
+    the host doesn't take a range). got: {"bytes", "total", "digest"}, kept up to date."""
+    with _open(url, got["bytes"]) as response:
+        if response.status_code in (401, 403):
+            raise DownloadError("Civitai asks to sign in for it (CIVITAI_API_KEY), or it is early access.")
+        if response.status_code == 429 or response.status_code >= 500:
+            raise _Cut(f"Civitai answered {response.status_code}")  # busy or down for a moment: try again
+        if response.status_code == 416 and got["bytes"]:
+            return  # nothing left to send: it is whole already (checked after)
+        if got["bytes"] and response.status_code == 200:  # the range wasn't taken: from the start again
+            got.update(bytes=0, digest=hashlib.sha256())
+        elif response.status_code not in (200, 206):
+            raise DownloadError(f"Civitai answered {response.status_code}.")
+        whole = re.search(r"/(\d+)$", response.headers.get("Content-Range") or "")
+        length = int(response.headers.get("Content-Length") or 0)
+        got["total"] = int(whole.group(1)) if whole else (got["bytes"] + length if length else got["total"])
+        with _lock:
+            _progress[key] = {"bytes": got["bytes"], "total": got["total"]}
+        with open(part, "ab" if got["bytes"] else "wb") as out:
+            for chunk in response.iter_content(CHUNK):
+                if key in _cancelled:
+                    raise _Cancelled()
+                out.write(chunk)
+                got["digest"].update(chunk)
+                got["bytes"] += len(chunk)
+                with _lock:
+                    _progress[key]["bytes"] = got["bytes"]
+    if got["total"] and got["bytes"] < got["total"]:
+        raise _Cut(f"{got['bytes']} of {got['total']} bytes")
+
+
+def _wait_to_retry(key: tuple, seconds: int, attempt: int) -> None:
+    with _lock:
+        _progress[key] = {**_progress.get(key, {}), "retry": {"attempt": attempt, "of": len(RETRY_WAITS),
+                                                               "seconds": seconds}}
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if key in _cancelled:
+            raise _Cancelled()
+        time.sleep(0.2)
+    with _lock:
+        _progress.get(key, {}).pop("retry", None)
+
+
+def _kept_so_far(part: Path) -> dict:
+    """What came down in earlier tries (a part file), with its SHA256 so far."""
+    digest = hashlib.sha256()
+    size = 0
+    if part.is_file():
+        with open(part, "rb") as f:
+            while chunk := f.read(CHUNK):
+                digest.update(chunk)
+                size += len(chunk)
+    return {"bytes": size, "total": 0, "digest": digest}
+
+
 def _download(conversation_id: str, n: int, record: dict, target: Path) -> None:
     key = (conversation_id, n)
-    part = target.with_name(target.name + ".part")
+    part = _part(target)
     url = f"{DOWNLOAD_URL}{record['version_id']}?type=Model&format=SafeTensor"
     try:
         with _one_at_a_time:
-            digest = hashlib.sha256()
-            with _open(url) as response:
-                if response.status_code in (401, 403):
-                    raise DownloadError("Civitai asks to sign in for it (CIVITAI_API_KEY), or it is early access.")
-                if response.status_code != 200:
-                    raise DownloadError(f"Civitai answered {response.status_code}.")
-                total = int(response.headers.get("Content-Length") or record["size_bytes"] or 0)
+            # Civitai's size is an estimate (its sizeKB): the file's host says the exact one. A part that
+            # isn't this file fails the checksum after, and goes then.
+            if part.is_file():
                 with _lock:
-                    _progress[key] = {"bytes": 0, "total": total}
-                with open(part, "xb") as out:
-                    for chunk in response.iter_content(CHUNK):
-                        if key in _cancelled:
-                            raise _Cancelled()
-                        out.write(chunk)
-                        digest.update(chunk)
-                        with _lock:
-                            _progress[key]["bytes"] += len(chunk)
+                    _progress[key] = {**_progress.get(key, {}), "checking": True}  # hashing what's there
+            got = {**_kept_so_far(part), "total": record["size_bytes"] or 0}
+            for attempt in range(len(RETRY_WAITS) + 1):
+                try:
+                    _fetch(key, url, part, got)
+                    break
+                except (requests.RequestException, _Cut) as e:  # the connection failed: carry on from there
+                    logger.info("download cut conversation_id=%s n=%s at=%s error=%r", conversation_id, n,
+                                got["bytes"], e)
+                    if attempt == len(RETRY_WAITS):
+                        raise _Kept(f"The connection kept failing ({e.__class__.__name__}). What came down is "
+                                    f"kept: download it again to carry on from there.")
+                    _wait_to_retry(key, RETRY_WAITS[attempt], attempt + 1)
+            digest = got["digest"]
             _check_header(part)
             if record["sha256"] and digest.hexdigest() != record["sha256"]:
                 raise DownloadError("The file doesn't match Civitai's checksum: it was thrown away.")
@@ -365,10 +458,16 @@ def _download(conversation_id: str, n: int, record: dict, target: Path) -> None:
         part.unlink(missing_ok=True)
         conversations.update_download(conversation_id, n, lambda d: d.update(status="cancelled", told=False))
         logger.info("download cancelled conversation_id=%s n=%s", conversation_id, n)
+    except _Kept as e:
+        kept = part.stat().st_size if part.is_file() else 0
+        conversations.update_download(conversation_id, n, lambda d: d.update(
+            status="failed", error=str(e), kept_bytes=kept, told=False))
+        logger.warning("download failed, kept conversation_id=%s n=%s bytes=%d", conversation_id, n, kept)
     except Exception as e:
         part.unlink(missing_ok=True)
         detail = str(e) if isinstance(e, DownloadError) else f"The download failed: {e.__class__.__name__}."
-        conversations.update_download(conversation_id, n, lambda d: d.update(status="failed", error=detail, told=False))
+        conversations.update_download(conversation_id, n, lambda d: d.update(
+            status="failed", error=detail, kept_bytes=None, told=False))
         logger.warning("download failed conversation_id=%s n=%s error=%r", conversation_id, n, e)
     finally:
         with _lock:
@@ -393,18 +492,19 @@ def _refresh_catalog() -> None:
 
 
 def after_restart() -> None:
-    """Downloads cut short by a restart: their .part files go, and they can be accepted again."""
-    root = models_root()
+    """Downloads cut short by a restart: failed, keeping what came down, to carry on from there when
+    accepted again."""
     for summary in conversations.list_summaries():
         conversation = conversations.get(summary["id"]) or {}
         for record in conversation.get("downloads") or []:
             if record["status"] != "downloading":
                 continue
-            if root is not None and record.get("family"):
-                part = root / record["folder"] / record["family"] / f"{record['name']}.safetensors.part"
-                part.unlink(missing_ok=True)
+            part = _part_of(record)
+            kept = part.stat().st_size if part is not None and part.is_file() else 0
             conversations.update_download(summary["id"], record["n"], lambda d: d.update(
-                status="failed", error="The app restarted during the download.", told=False))
+                status="failed", told=False, kept_bytes=kept or None,
+                error="The app restarted during the download." + (
+                    " What came down is kept: download it again to carry on from there." if kept else "")))
 
 
 def news_text(records: list[dict]) -> str | None:
