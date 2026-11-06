@@ -1876,11 +1876,15 @@ function proposal(entry, part, number, live) {
     {
       class: "proposal",
       open: state.openProposals.has(key),
-      ontoggle: () => (details.open ? state.openProposals.add(key) : state.openProposals.delete(key)),
+      ontoggle: () => {
+        if (details.open) state.openProposals.add(key);
+        else state.openProposals.delete(key);
+        item.classList.toggle("is-open", details.open); // unfolded, it takes the whole row
+      },
     },
     el(
       "summary",
-      {},
+      { title: [part.positive_prompt?.slice(0, 240), models.map(modelName).join(", ")].filter(Boolean).join("\n\n") },
       el("span", { class: "proposal-no", text: String(number) }),
       el(
         "span",
@@ -1897,12 +1901,13 @@ function proposal(entry, part, number, live) {
     ),
     frameBody(entry, part)
   );
-  return el(
+  const item = el(
     "li",
-    { class: "proposal-item", "aria-label": `Propuesta ${number}` },
+    { class: details.open ? "proposal-item is-open" : "proposal-item", "aria-label": `Propuesta ${number}` },
     details,
     copyButton("Copiar", () => part.positive_prompt, "btn-quiet btn-copy proposal-copy")
   );
+  return item;
 }
 
 // The base model a proposal is for: what its runs used (the same prompt, launched), or else

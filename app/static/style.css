@@ -1361,23 +1361,34 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 }
 .memory-chip-done { color: var(--paper-faint); font-size: 0.75rem; }
 
-.msg-bot { display: flex; flex-direction: column; gap: 0.75rem; max-width: 46rem; }
+.msg-bot { display: flex; flex-direction: column; gap: 0.75rem; }
 .msg-bot .msg-text { display: flex; flex-direction: column; gap: 0.6rem; max-width: 70ch; line-height: 1.6; overflow-wrap: anywhere; }
 .msg-bot .msg-text ul, .msg-bot .msg-text ol { display: flex; flex-direction: column; gap: 0.25rem; margin: 0; padding-left: 1.3rem; }
 .msg-bot code { padding: 0.05rem 0.3rem; background: var(--raised); border-radius: var(--radius-sm); font-size: 0.875em; }
 
-/* The proposals a reply makes one after another are one list, each folded to a line -- its
-   number, the start of the prompt, the model -- with Copiar at hand; unfolded, the whole prompt. */
-.proposals { margin: 0; padding: 0; list-style: none; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); }
-.proposal-item { position: relative; }
-.proposal-item + .proposal-item { border-top: 1px solid var(--line); }
+/* The proposals a reply makes one after another sit side by side, each folded to a tile -- its
+   number, the start of the prompt, the model (all of it on hover) -- with Copiar at hand; unfolded,
+   one takes the whole row, with the whole prompt. */
+.proposals { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0; padding: 0; list-style: none; }
+.proposal-item {
+  position: relative;
+  flex: 1 1 14rem;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.proposal-item.is-open { flex-basis: 100%; }
+.proposal-item { container-type: inline-size; }
+/* A narrow tile has no room for the model's name: it is in the tile's tooltip, and unfolded. */
+@container (max-width: 24rem) { .proposal:not([open]) .proposal-model { display: none; } }
 .proposal > summary {
   display: grid;
   /* The number's column grows with it: a long conversation reaches proposal 100 and beyond. */
   grid-template-columns: 0.4rem minmax(1.1rem, max-content) minmax(0, 1fr);
   align-items: center;
   gap: 0.6rem;
-  padding: 0.3rem 5.5rem 0.3rem 0.85rem;
+  padding: 0.3rem 4.6rem 0.3rem 0.85rem;
   border-radius: var(--radius-lg);
   cursor: pointer;
   list-style: none;
