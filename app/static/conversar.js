@@ -769,20 +769,22 @@ function numberedImage(image, number, { reactable = false } = {}) {
 
 // ---------- the image viewer ----------
 
-// Every image of the conversation, in order, browsable with the arrow keys.
-const viewer = { dialog: null, image: null, caption: null, open: null, index: 0, images: [] };
+// Every image of the conversation, in order, browsable with the arrow keys; a run's images with
+// their reactions, as under them in the chat.
+const viewer = { dialog: null, image: null, caption: null, open: null, react: null, foot: null, index: 0, items: [] };
 
 function setupViewer() {
   viewer.image = el("img", { class: "viewer-image", alt: "" });
   viewer.caption = el("p", { class: "viewer-caption" });
   viewer.open = el("a", { class: "btn-quiet", target: "_blank", rel: "noopener", text: "Abrir el original" });
+  viewer.react = el("div", { class: "viewer-react" });
   const step = (delta) => showInViewer(viewer.index + delta);
   viewer.prev = el("button", { type: "button", class: "btn-icon viewer-nav", "aria-label": "Imagen anterior", text: "‹", onclick: () => step(-1) });
   viewer.next = el("button", { type: "button", class: "btn-icon viewer-nav", "aria-label": "Imagen siguiente", text: "›", onclick: () => step(1) });
-  viewer.dialog = el(
-    "dialog",
-    { class: "viewer", "aria-label": "Imagen" },
-    el("div", { class: "viewer-stage" }, viewer.prev, viewer.image, viewer.next),
+  viewer.foot = el(
+    "div",
+    { class: "viewer-foot" },
+    viewer.react,
     el(
       "div",
       { class: "viewer-bar" },
@@ -791,11 +793,29 @@ function setupViewer() {
       el("button", { type: "button", class: "btn-secondary", text: "Cerrar", onclick: () => viewer.dialog.close() })
     )
   );
+  viewer.dialog = el(
+    "dialog",
+    { class: "viewer", "aria-label": "Imagen" },
+    el("div", { class: "viewer-stage" }, viewer.prev, viewer.image, viewer.next),
+    viewer.foot
+  );
+  // The image takes the height the foot leaves, which changes with the reactions (a dislike's reasons).
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => viewer.dialog.style.setProperty("--viewer-foot", `${viewer.foot.offsetHeight}px`))
+      .observe(viewer.foot);
+  }
   // A click on the dark space around the image closes it.
   viewer.dialog.addEventListener("click", (event) => {
     if (event.target === viewer.dialog || event.target.classList.contains("viewer-stage")) viewer.dialog.close();
   });
-  viewer.dialog.addEventListener("keydown", (event) => {
+  // On the page, not the dialog: a reaction redraws its buttons, and the focus falls back to the page.
+  document.addEventListener("keydown", (event) => {
+    if (!viewer.dialog.open) return;
+    // Writing a comment: the arrows move in the text, and Escape drops the comment, not the viewer.
+    if (event.target.matches?.("input, textarea")) {
+      if (event.key === "Escape") event.preventDefault();
+      return;
+    }
     if (event.key === "ArrowLeft") step(-1);
     else if (event.key === "ArrowRight") step(1);
   });
@@ -803,23 +823,50 @@ function setupViewer() {
 }
 
 function showInViewer(index) {
-  if (index < 0 || index >= viewer.images.length) return;
+  if (index < 0 || index >= viewer.items.length) return;
   viewer.index = index;
-  const image = viewer.images[index];
-  viewer.image.src = imageUrl(image);
-  viewer.image.alt = `Imagen ${index + 1}`;
-  viewer.caption.textContent = `Imagen ${index + 1} de ${viewer.images.length}`;
-  viewer.open.href = imageUrl(image);
+  const { image, reactable } = viewer.items[index];
+  const number = index + 1;
+  // The small copy first -- the chat has it already --, the original once it has come down.
+  const original = imageUrl(image);
+  const small = imageUrl(image, { small: true });
+  viewer.image.src = small;
+  if (small !== original) {
+    const full = new Image();
+    full.onload = () => {
+      if (viewer.items[viewer.index]?.image === image) viewer.image.src = original;
+    };
+    full.src = original;
+  }
+  viewer.image.alt = `Imagen ${number}`;
+  viewer.caption.textContent = `Imagen ${number} de ${viewer.items.length}`;
+  viewer.open.href = original;
+  viewer.react.replaceChildren(...(reactable ? [reactionControls(image, number, { as: "div", onSaved: reactedInViewer })] : []));
+  viewer.react.hidden = !reactable;
   viewer.prev.disabled = index === 0;
-  viewer.next.disabled = index === viewer.images.length - 1;
+  viewer.next.disabled = index === viewer.items.length - 1;
 }
 
 function openViewer(imageId) {
-  viewer.images = (state.conversation?.messages || []).flatMap((m) => m.images || []);
-  const index = viewer.images.findIndex((image) => image.id === imageId);
+  viewer.items = (state.conversation?.messages || []).flatMap((m) =>
+    (m.images || []).map((image) => ({ image, reactable: m.role === "results" }))
+  );
+  const index = viewer.items.findIndex(({ image }) => image.id === imageId);
   if (index === -1) return;
   showInViewer(index);
   if (!viewer.dialog.open) viewer.dialog.showModal();
+}
+
+// A reaction given in the viewer, into the chat: on the image as the chat holds it now (a poll may have
+// read the conversation again since the viewer opened), and in its frame's controls.
+function reactedInViewer(image) {
+  const current = findImage(image.id);
+  if (current && current !== image) {
+    if (image.reaction) current.reaction = image.reaction;
+    else delete current.reaction;
+  }
+  const controls = ui.log.querySelector(`figure[data-image="${image.id}"] > .reactions`);
+  if (controls) controls.replaceWith(reactionControls(current || image, imageNumbers().get(image.id)));
 }
 
 // A thumbs up is one click; a thumbs down asks why -- a dislike is only worth learning from
@@ -848,12 +895,13 @@ function heartIcon() {
 
 // An image's reaction: like, favorite (the strongest like: "this is it"), or dislike with what failed --
 // a tap on its reasons, and/or a comment. choosing: the dislike pressed, its reasons not picked yet.
-function reactionControls(image, number, { choosing = false } = {}) {
+// as: the element (a figcaption under a frame in the chat); onSaved(image): after a reaction is stored.
+function reactionControls(image, number, { choosing = false, as = "figcaption", onSaved = null } = {}) {
   const reaction = image.reaction || {};
   const reasons = reaction.reasons || [];
   const disliked = reaction.rating === "down";
-  const wrap = el("figcaption", { class: "reactions" });
-  const redraw = (options) => wrap.replaceWith(reactionControls(image, number, options));
+  const wrap = el(as, { class: "reactions" });
+  const redraw = (options) => wrap.replaceWith(reactionControls(image, number, { as, onSaved, ...options }));
   const save = async (rating, comment, picked, button) => {
     if (button) setBusy(button, true, "…");
     try {
@@ -865,8 +913,11 @@ function reactionControls(image, number, { choosing = false } = {}) {
       else delete image.reaction;
     } catch (err) {
       toast(err.message, { error: true });
+      redraw();
+      return;
     }
     redraw();
+    onSaved?.(image);
     renderReactionHint();
   };
   // Swaps the comment button for a text field; done(text) with the text, or done(null) if dropped.
