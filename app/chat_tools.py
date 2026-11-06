@@ -59,6 +59,15 @@ GRAPH_PARAM = {
                    "in a SaveImage node. Only node types available here (describe_nodes lists them and shows each "
                    "one's inputs).",
 }
+# A lower place in ComfyUI's queue, when the user asks for one: never higher than the app's own choice.
+LOWER_PRIORITIES = ("low", "idle")
+PRIORITY_PARAM = {
+    "type": "string",
+    "enum": list(LOWER_PRIORITIES),
+    "description": ("Only when the user asks for it not to get in the way: low (behind what anyone is waiting for) "
+                    "or idle (only when the GPU is free, giving way at once; it may wait long). Leave it out "
+                    "otherwise: the app gives what the user waits for its place."),
+}
 # The model folder each base model input loads from.
 LOADER_FOLDERS = {"ckpt_name": "checkpoints", "unet_name": "diffusion_models"}
 MAX_DESCRIBED_NODES = 12
@@ -169,6 +178,7 @@ TOOLS = [
                     "changes": CHANGES_PARAM,
                     "count": {"type": "integer", "description": f"Images to make, 1-{MAX_RUN_COUNT} (default 1), "
                                                                 "each its own job and seed."},
+                    "priority": PRIORITY_PARAM,
                 },
             },
         },
@@ -355,6 +365,9 @@ TOOLS = [
                     "image": {"type": "integer", "minimum": 1, "description": "Its number."},
                     "workflow": {"type": "string", "description": "Another finishing workflow of the library."},
                     "changes": CHANGES_PARAM,
+                    "priority": {**PRIORITY_PARAM, "enum": ["idle"],
+                                 "description": "Only when the user asks for it to wait for a free GPU: idle. Finishing "
+                                                "goes at low already."},
                 },
                 "required": ["image"],
             },
@@ -378,6 +391,18 @@ TOOLS = [
 
 class ToolError(Exception):
     pass
+
+
+def _lower(priority, default: str | None) -> str | None:
+    """The priority the bot asked for, only if it lowers the launch's (LOWER_PRIORITIES; idle the
+    lowest); otherwise `default` (None: the app's own choice per image)."""
+    if priority in (None, ""):
+        return default
+    if priority not in LOWER_PRIORITIES:
+        raise ToolError(f"priority can only be {' or '.join(LOWER_PRIORITIES)}: the app sets a higher one itself.")
+    if default == "idle":
+        return default
+    return priority
 
 
 def _number(value, kind=float):
@@ -713,8 +738,8 @@ class ToolBox:
     # --- the tools -------------------------------------------------------------------------------
 
     def _tool_run_workflow(self, workflow: str | None = None, changes: dict | None = None, count: int = 1,
-                           graph: dict | None = None) -> tuple[dict, dict]:
-        return self._launch(workflow, changes, count, graph)
+                           graph: dict | None = None, priority: str | None = None) -> tuple[dict, dict]:
+        return self._launch(workflow, changes, count, graph, priority=_lower(priority, None))
 
     def _launch(self, workflow: str | None, changes: dict | None, count, graph: dict | None,
                 run_fields: dict | None = None, priority: str | None = None) -> tuple[dict, dict]:
@@ -759,6 +784,8 @@ class ToolBox:
                   "model": ", ".join(run["base_models"]), "applied": done}
         if size:
             result["size"] = size
+        if priority:
+            result["priority"] = comfy.PRIORITY_AWAY if self.away else priority
         if self.continues_after_launch:
             result["next"] = AFTER_LAUNCH
         return result, {"type": "run", "run": run["n"], "workflow": label, "count": run["count"]}
@@ -985,7 +1012,9 @@ class ToolBox:
         return result, {"type": "tool", "tool": "list_comfy_models", "folder": folder, "search": search or "",
                         "found": len(matches)}
 
-    def _tool_finish_image(self, image, workflow: str | None = None, changes: dict | None = None) -> tuple[dict, dict]:
+    def _tool_finish_image(self, image, workflow: str | None = None, changes: dict | None = None,
+                           priority: str | None = None) -> tuple[dict, dict]:
+        priority = _lower(priority, comfy.PRIORITY_FINISH)
         conversation = self._conversation()
         record = chat.image_by_number(conversation["messages"], image) if isinstance(image, int) else None
         if record is None:
@@ -1024,7 +1053,7 @@ class ToolBox:
         finish.update(changes or {})
         # Behind the drafts someone waits for, whoever asked for it (see PRIORITY_FINISH).
         result, part = self._launch(entry["name"], finish, 1, None, run_fields={"kind": "finish", "finish_of": image},
-                                    priority=comfy.PRIORITY_FINISH)
+                                    priority=priority)
         result["finishing"] = f"image {image}, with the prompt, model and LoRAs it was made with"
         return result, {**part, "finish_of": image}
 

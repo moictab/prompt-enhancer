@@ -232,6 +232,20 @@ def test_save_workflow_creates_and_replaces_only_when_asked(setup):
     assert workflows.find_by_name("mine/cat")["workflow"]["3"]["inputs"]["steps"] == 20
 
 
+def test_the_bot_may_lower_a_launchs_priority_when_asked_never_raise_it(setup):
+    box, fake, conversation_id = setup
+    _run(box, workflow="krea-2/txt2img", count=3)
+    assert fake.priorities == ["high", "high", "normal"]  # the app's own choice: what the user waits for first
+    result, _ = _run(box, workflow="krea-2/txt2img", count=2, priority="idle")
+    assert fake.priorities[3:] == ["idle", "idle"] and result["priority"] == "idle"
+    _run(box, workflow="krea-2/txt2img", priority="low")
+    assert fake.priorities[5:] == ["low"]
+    refused, _ = _run(box, workflow="krea-2/txt2img", priority="high")
+    assert "only be low or idle" in refused["error"] and len(fake.priorities) == 6
+    assert chat_tools.PRIORITY_PARAM["enum"] == ["low", "idle"]
+    assert chat_tools._lower("low", "idle") == "idle"  # where the app's choice is idle already, it stays
+
+
 def test_on_claude_code_a_launch_says_to_end_the_reply_after_it(setup):
     box, fake, conversation_id = setup
     result, _ = _run(box, workflow="image:1", changes={"remove": ["8"]})
