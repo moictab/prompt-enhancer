@@ -792,7 +792,9 @@ function numberedImage(image, number, { reactable = false } = {}) {
           openViewer(image.id);
         },
       },
-      el("img", { src: imageUrl(image, { small: true }), alt: `Imagen ${number}`, loading: "lazy" })
+      // Its size reserves the frame before it loads (and while it waits to, being lazy).
+      el("img", { src: imageUrl(image, { small: true }), alt: `Imagen ${number}`, loading: "lazy",
+        width: image.width, height: image.height })
     ),
     el("span", { class: "shot-no", text: String(number) })
   );
@@ -837,6 +839,15 @@ function setupViewer() {
     new ResizeObserver(() => viewer.dialog.style.setProperty("--viewer-foot", `${viewer.foot.offsetHeight}px`))
       .observe(viewer.foot);
   }
+  // Closed, the chat is where it was when the viewer opened: neither the browser putting the focus back
+  // on the image's link nor the chat redrawn meanwhile moves it (LibreWolf was found far up).
+  viewer.dialog.addEventListener("close", () => {
+    const { top, stuck: atEnd } = viewer.chat || {};
+    requestAnimationFrame(() => {
+      if (atEnd) scrollToBottom();
+      else if (top !== undefined) ui.scroll.scrollTop = top;
+    });
+  });
   // A click on the dark space around the image closes it.
   viewer.dialog.addEventListener("click", (event) => {
     if (event.target === viewer.dialog || event.target.classList.contains("viewer-stage")) viewer.dialog.close();
@@ -887,7 +898,10 @@ function openViewer(imageId) {
   const index = viewer.items.findIndex(({ image }) => image.id === imageId);
   if (index === -1) return;
   showInViewer(index);
-  if (!viewer.dialog.open) viewer.dialog.showModal();
+  if (!viewer.dialog.open) {
+    viewer.chat = { top: ui.scroll.scrollTop, stuck: stuck.on };
+    viewer.dialog.showModal();
+  }
 }
 
 // A reaction given in the viewer, into the chat: on the image as the chat holds it now (a poll may have

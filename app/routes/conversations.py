@@ -138,7 +138,7 @@ def get_conversation(conversation_id: str):
     if claude_code.engine(conversation):
         # The subscription's usage as the latest turn reported it (any conversation's: it's the account's).
         conversation["claude_code_limits"] = claude_code.limits()
-    return _with_activity(conversation)
+    return _with_activity(conversations.with_sizes(conversation))
 
 
 @router.patch("/{conversation_id}")

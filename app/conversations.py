@@ -357,6 +357,24 @@ def image_file(
     return None
 
 
+_sizes: dict[str, tuple[int, int] | None] = {}
+
+
+def with_sizes(conversation: dict, root: str | None = None) -> dict:
+    """Each image's width and height as the chat shows it (its small copy, if it has one), so the
+    chat keeps its place before the image loads: a frame with no height until then moved the view
+    whenever the chat redrew. Read from the files once (an image never changes) and not stored."""
+    for message in conversation.get("messages") or []:
+        for image in message.get("images") or []:
+            key = f"{conversation['id']}/{image['id']}"
+            if key not in _sizes:
+                found = image_file(conversation["id"], image["id"], root, small=True)
+                _sizes[key] = image_metadata.displayed_size(found[0]) if found else None
+            if _sizes[key]:
+                image["width"], image["height"] = _sizes[key]
+    return conversation
+
+
 def image_workflow(conversation_id: str, image_id: str, root: str | None = None) -> dict | None:
     """The ComfyUI workflow an image embeds (or a run's output was made with)."""
     if not _valid_image_id(conversation_id, image_id):

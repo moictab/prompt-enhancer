@@ -294,6 +294,19 @@ def describe(metadata: dict, number: int, installed: dict | None = None) -> str:
     return "\n".join(lines)
 
 
+def displayed_size(path: str) -> tuple[int, int] | None:
+    """An image file's width and height as a browser shows it (EXIF rotation applied), from its
+    header only; None if it can't be read."""
+    try:
+        with Image.open(path) as image:
+            width, height = image.size
+            if image.getexif().get(0x0112) in (5, 6, 7, 8):  # rotated a quarter turn
+                width, height = height, width
+            return width, height
+    except Exception:
+        return None
+
+
 def small_copy(data: bytes) -> bytes | None:
     """A JPEG no larger than SMALL_MAX_SIDE, or None when the original is small enough already."""
     try:
