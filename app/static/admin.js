@@ -877,14 +877,26 @@ function setupCatalog() {
 // ---------- disk space: models against their use ----------
 
 const DISK_STATES = {
-  unused: { label: "Sin usar", candidate: true },
-  stale: { label: "Olvidado", candidate: true },
-  rare: { label: "Poco usado", candidate: true },
-  used: { label: "En uso" },
-  new: { label: "Recién llegado" },
-  library: { label: "En la biblioteca" },
+  unused: { label: "Sin usar", candidate: true, rank: 0 },
+  stale: { label: "Olvidado", candidate: true, rank: 1 },
+  rare: { label: "Poco usado", candidate: true, rank: 2 },
+  used: { label: "En uso", rank: 3 },
+  new: { label: "Nuevo", rank: 4, title: "Lleva menos de dos semanas: aún no se juzga" },
+  library: { label: "Biblioteca", rank: 5 },
 };
-const DISK_FOLDERS = { checkpoints: "Checkpoint", diffusion_models: "Modelo de difusión", loras: "LoRA" };
+const DISK_FOLDERS = { checkpoints: "Checkpoint", diffusion_models: "Difusión", loras: "LoRA" };
+// The table's columns: header, how to sort by it (a value, ascending), and whether it is a number.
+const DISK_COLUMNS = [
+  { key: "name", label: "Archivo", value: (f) => f.short.toLowerCase() },
+  { key: "family", label: "Familia", value: (f) => f.family },
+  { key: "type", label: "Tipo", value: (f) => DISK_FOLDERS[f.folder] || f.folder },
+  { key: "bytes", label: "Tamaño", value: (f) => f.bytes, number: true },
+  { key: "age", label: "En disco", value: (f) => f.age_days, number: true, title: "Días desde que llegó al disco" },
+  { key: "jobs", label: "Usos", value: (f) => f.jobs, number: true, title: "Trabajos de ComfyUI que lo cargaron, desde que hay registro" },
+  { key: "month", label: "Al mes", value: (f) => f.per_month, number: true, title: "Usos por cada 30 días que ha estado en disco con registro" },
+  { key: "last", label: "Último uso", value: (f) => f.idle ?? Infinity, number: true, title: "Días desde el último uso" },
+  { key: "state", label: "Estado", value: (f) => DISK_STATES[f.state]?.rank ?? 9 },
+];
 
 function gigabytes(bytes) {
   const gb = bytes / 1024 ** 3;
@@ -899,54 +911,85 @@ function day(iso) {
 }
 
 function setupDisk() {
-  const list = $("disk-list");
+  const table = $("disk-table");
   const stateLine = $("disk-state");
   const show = $("disk-show");
   const filter = $("disk-filter");
   const refreshButton = $("disk-refresh");
   let report = null;
+  let sort = { key: "bytes", desc: true };
+  const number = (value, digits = 0) => value.toLocaleString("es-ES", { maximumFractionDigits: digits });
 
-  function usage(file) {
-    const jobs = `${file.jobs.toLocaleString("es-ES")} ${file.jobs === 1 ? "trabajo" : "trabajos"}`;
-    const span = `${file.observed_days} ${file.observed_days === 1 ? "día" : "días"}`;
-    if (file.state === "unused") return `Ningún trabajo en los ${span} con registro.`;
-    if (!file.jobs) return `Aún sin usar (${span} con registro).`;
-    const last = file.last_used ? `, el último el ${day(file.last_used)}` : "";
-    return `${jobs} en ${span} (${file.per_month.toLocaleString("es-ES")} al mes)${last}.`;
+  // What the table compares, worked out once per file.
+  function prepare(file) {
+    const parts = file.name.split(/[\\/]/);
+    const today = new Date();
+    const [y, m, d] = (file.last_used || "").split("-").map(Number);
+    file.short = parts.at(-1).replace(/\.[a-z0-9]+$/i, "");
+    file.family = parts.length > 1 ? parts.slice(0, -1).join("/") : "—";
+    file.idle = file.last_used ? Math.max(0, Math.floor((today - new Date(y, m - 1, d)) / 86400000)) : null;
+    return file;
   }
 
-  function item(file) {
+  function remove(file) {
+    return confirmButton("Borrar", async (button) => {
+      setBusy(button, true, "…");
+      try {
+        await request(`/api/admin/disk/files?folder=${encodeURIComponent(file.folder)}&name=${encodeURIComponent(file.name)}`,
+          { method: "DELETE" });
+        toast(`Borrado: ${file.name} (${gigabytes(file.bytes)}).`);
+        report.files = report.files.filter((f) => f !== file);
+        report.free_bytes += file.bytes;
+        render();
+      } catch (err) {
+        toast(err.message, { error: true });
+        setBusy(button, false);
+      }
+    }, { confirmLabel: "¿Seguro?", title: `Borra ${file.name} para siempre: para recuperarlo habría que volver a descargarlo` });
+  }
+
+  function row(file) {
     const state = DISK_STATES[file.state] || { label: file.state };
-    const facts = [
-      `${DISK_FOLDERS[file.folder] || file.folder}, ${gigabytes(file.bytes)}`,
-      `en disco desde el ${day(file.on_disk_since)}`,
-    ].join(", ");
-    const why = file.library.length ? `Lo carga ${file.library.join(", ")}.` : usage(file);
-    const remove = file.library.length
-      ? null
-      : confirmButton("Borrar", async (button) => {
-          setBusy(button, true, "Borrando…");
-          try {
-            await request(`/api/admin/disk/files?folder=${encodeURIComponent(file.folder)}&name=${encodeURIComponent(file.name)}`,
-              { method: "DELETE" });
-            toast(`Borrado: ${file.name} (${gigabytes(file.bytes)}).`);
-            report.files = report.files.filter((f) => f !== file);
-            report.free_bytes += file.bytes;
-            if (state.candidate) report.candidate_bytes -= file.bytes;
-            render();
-          } catch (err) {
-            toast(err.message, { error: true });
-            setBusy(button, false);
-          }
-        }, { confirmLabel: `¿Borrar ${gigabytes(file.bytes)}? No se deshace` });
+    const title = [
+      file.name,
+      `En disco desde el ${day(file.on_disk_since)}; ${file.observed_days} días con registro.`,
+      file.library.length && `Lo carga: ${file.library.join(", ")}.`,
+    ].filter(Boolean).join("\n");
+    const cell = (text, className) => el("td", { class: className, text });
     return el(
-      "li",
-      { class: "item disk-item" },
-      el("span", { class: "item-title" }, file.name, " ",
-        el("span", { class: `disk-state${state.candidate ? " is-candidate" : ""}`, text: state.label })),
-      remove || el("span"),
-      el("span", { class: "item-text", text: `${facts}. ${why}` })
+      "tr",
+      { title },
+      el("td", { class: "disk-name" }, el("span", { text: file.short })),
+      cell(file.family, "disk-dim"),
+      cell(DISK_FOLDERS[file.folder] || file.folder, "disk-dim"),
+      cell(gigabytes(file.bytes), "disk-num"),
+      cell(`${number(file.age_days)} d`, "disk-num"),
+      cell(file.jobs ? number(file.jobs) : "—", "disk-num"),
+      cell(file.jobs ? number(file.per_month, 1) : "—", "disk-num"),
+      cell(file.idle === null ? "—" : file.idle === 0 ? "hoy" : `${number(file.idle)} d`, "disk-num"),
+      el("td", {}, el("span", { class: `disk-state is-${file.state}`, title: state.title || null, text: state.label })),
+      el("td", { class: "disk-action" }, file.library.length ? null : remove(file))
     );
+  }
+
+  function head() {
+    return el("tr", {}, ...DISK_COLUMNS.map((column) => {
+      const active = sort.key === column.key;
+      const button = el("button", {
+        type: "button",
+        class: "disk-sort",
+        title: column.title || null,
+        text: `${column.label}${active ? (sort.desc ? " ↓" : " ↑") : ""}`,
+      });
+      button.addEventListener("click", () => {
+        sort = active ? { key: column.key, desc: !sort.desc } : { key: column.key, desc: !!column.number };
+        render();
+      });
+      return el("th", {
+        class: column.number ? "disk-num" : null,
+        "aria-sort": active ? (sort.desc ? "descending" : "ascending") : "none",
+      }, button);
+    }), el("th", {}, el("span", { class: "visually-hidden", text: "Acciones" })));
   }
 
   function render() {
@@ -956,24 +999,38 @@ function setupDisk() {
       refreshButton.disabled = true;
       return;
     }
-    const total = report.files.reduce((sum, f) => sum + f.bytes, 0);
     const candidates = report.files.filter((f) => DISK_STATES[f.state]?.candidate);
+    const total = (files) => gigabytes(files.reduce((sum, f) => sum + f.bytes, 0));
     const read = report.usage_read_at
-      ? ` Uso: ${Number(report.records_jobs || 0).toLocaleString("es-ES")} trabajos desde el ${day(report.records_from)}, leído el ${new Date(report.usage_read_at).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short", timeZone: TIME_ZONE })}.`
-      : " Aún no se ha podido leer el uso del gateway.";
-    stateLine.textContent = `Libre: ${gigabytes(report.free_bytes)} de ${gigabytes(report.total_bytes)}. `
-      + `Modelos y LoRAs: ${report.files.length} archivos, ${gigabytes(total)}; candidatos a borrar: `
-      + `${candidates.length}, ${gigabytes(candidates.reduce((sum, f) => sum + f.bytes, 0))}.${read}`;
+      ? `uso desde el ${day(report.records_from)} (${number(Number(report.records_jobs || 0))} trabajos), leído el ${new Date(report.usage_read_at).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: TIME_ZONE })}`
+      : "aún no se ha podido leer el uso del gateway";
+    stateLine.replaceChildren(
+      el("span", {}, "Libre ", el("strong", { text: gigabytes(report.free_bytes) }), ` de ${gigabytes(report.total_bytes)}`),
+      el("span", {}, "Modelos ", el("strong", { text: total(report.files) }), ` en ${report.files.length}`),
+      el("span", {}, "Candidatos ", el("strong", { text: total(candidates) }), ` en ${candidates.length}`),
+      el("span", { class: "disk-dim", text: read })
+    );
     const words = filter.value.toLowerCase().split(/\s+/).filter(Boolean);
+    const column = DISK_COLUMNS.find((c) => c.key === sort.key);
     const shown = (show.value === "all" ? report.files : candidates)
-      .filter((f) => words.every((word) => f.name.toLowerCase().includes(word)));
-    list.replaceChildren(...(shown.length ? shown.map(item)
-      : [el("li", { class: "item-empty", text: words.length ? "Nada coincide con el filtro." : "Nada que borrar." })]));
+      .filter((f) => words.every((word) => f.name.toLowerCase().includes(word)))
+      .sort((a, b) => {
+        const [x, y] = [column.value(a), column.value(b)];
+        const order = x < y ? -1 : x > y ? 1 : b.bytes - a.bytes;
+        return sort.desc && x !== y ? -order : order;
+      });
+    table.replaceChildren(
+      el("thead", {}, head()),
+      el("tbody", {}, ...(shown.length ? shown.map(row)
+        : [el("tr", {}, el("td", { colspan: DISK_COLUMNS.length + 1, class: "disk-empty",
+            text: words.length ? "Nada coincide con el filtro." : "Nada que borrar." }))]))
+    );
   }
 
   async function load(refresh = false) {
     try {
       report = await request(`/api/admin/disk${refresh ? "?refresh=true" : ""}`);
+      (report.files || []).forEach(prepare);
     } catch (err) {
       toast(err.message, { error: true });
     }

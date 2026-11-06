@@ -155,7 +155,7 @@
 
 <section class="settings-section" id="disk" aria-labelledby="disk-title">
   <h2 id="disk-title">Espacio en disco</h2>
-  <p class="section-intro">Lo que ocupa cada modelo y LoRA frente a lo que se usa: cada trabajo que ha pasado por ComfyUI desde que el gateway lleva registro, de este bot, de tus otros proyectos y lo que lanzas a mano. El uso se mide sobre el tiempo que el archivo lleva en disco, así que lo recién descargado no se marca hasta pasadas dos semanas, ni lo que carga algún workflow de la biblioteca. Borrar es para siempre: para recuperarlo habría que volver a descargarlo.</p>
+  <p class="section-intro">Cuánto ocupa cada modelo y LoRA y cuánto se usa en ComfyUI (este bot, tus otros proyectos y lo que lanzas a mano). Pulsa una cabecera para ordenar. Lo de menos de dos semanas y lo que usa la biblioteca no se marca. Borrar es para siempre.</p>
   <div class="catalog-bar">
     <button type="button" class="btn-secondary" id="disk-refresh">Leer el uso otra vez</button>
     <label class="visually-hidden" for="disk-show">Mostrar</label>
@@ -166,8 +166,8 @@
     <label class="visually-hidden" for="disk-filter">Filtrar</label>
     <input type="search" id="disk-filter" placeholder="Filtrar por nombre" autocomplete="off">
   </div>
-  <p class="catalog-state" id="disk-state" aria-live="polite"></p>
-  <ul class="item-list disk-list" id="disk-list"></ul>
+  <p class="disk-summary" id="disk-state" aria-live="polite"></p>
+  <div class="disk-wrap"><table class="disk-table" id="disk-table"></table></div>
 </section>
 
 <section class="settings-section" id="requests" aria-labelledby="requests-title">

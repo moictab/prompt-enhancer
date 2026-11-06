@@ -859,20 +859,29 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 .catalog-item { grid-template-columns: minmax(0, 1fr); }
 .catalog-item .item-text { -webkit-line-clamp: 3; }
 .catalog-description { grid-column: 1 / -1; margin-top: 0.35rem; font-size: var(--step--1); }
-#disk-state { max-width: 52rem; margin: 0 0 1rem; }
-.disk-list { max-width: 52rem; }
-.disk-item .item-text { -webkit-line-clamp: 3; }
-.disk-state {
-  margin-left: 0.35rem;
-  padding: 0.05rem 0.45rem;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  color: var(--paper-dim);
-  font-size: 0.75rem;
-  font-weight: 500;
-  white-space: nowrap;
-}
-.disk-state.is-candidate { color: var(--safelight); border-color: var(--safelight); }
+/* Disk space: one row per file, columns to compare and sort by. */
+.disk-summary { display: flex; flex-wrap: wrap; gap: 0.3rem 1.5rem; margin: 0 0 0.9rem; color: var(--paper-dim); font-size: var(--step--1); }
+.disk-summary strong { color: var(--paper); font-variant-numeric: tabular-nums; }
+.disk-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--ink); }
+.disk-table { width: 100%; border-collapse: collapse; font-size: var(--step--1); }
+.disk-table th, .disk-table td { padding: 0.32rem 0.5rem; text-align: left; white-space: nowrap; }
+.disk-table thead th { position: sticky; top: 0; background: var(--panel); border-bottom: 1px solid var(--line-strong); }
+.disk-table tbody tr + tr td { border-top: 1px solid var(--line); }
+.disk-table tbody tr:hover td { background: var(--raised); }
+.disk-table .disk-num { text-align: right; font-variant-numeric: tabular-nums; }
+.disk-table .disk-name { color: var(--paper); font-weight: 560; }
+.disk-name span { display: block; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; }
+.disk-dim { color: var(--paper-faint); }
+.disk-sort { padding: 0; background: none; border: 0; color: var(--paper-dim); font: inherit; font-weight: 600; cursor: pointer; }
+.disk-sort:hover { color: var(--paper); }
+th[aria-sort="ascending"] .disk-sort, th[aria-sort="descending"] .disk-sort { color: var(--safelight); }
+.disk-action { width: 1%; text-align: right; }
+.disk-action .btn-quiet { padding-block: 0.1rem; }
+.disk-empty { padding: 1rem 0.6rem; color: var(--paper-faint); }
+.disk-state { display: inline-block; padding: 0 0.45rem; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--paper-faint); font-size: 0.75rem; }
+.disk-state.is-unused, .disk-state.is-stale { color: var(--stop-text); border-color: var(--stop); }
+.disk-state.is-rare { color: var(--safelight); border-color: var(--safelight); }
+.disk-state.is-used { color: var(--go); border-color: var(--go); }
 .memory-list .memory-text { font-weight: 450; }
 .memory-list .item.is-editing { gap: 0.6rem; padding-right: 0.85rem; }
 .memory-list .item.is-editing > * { grid-column: 1 / -1; }
