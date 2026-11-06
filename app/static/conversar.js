@@ -151,6 +151,11 @@ function onClaude(values = settings()) {
   return values.engine === CLAUDE_CODE;
 }
 
+// Whether the conversation's replies cost money: on OpenRouter, or on Claude Code after OpenRouter spent some.
+function paysPerRequest(conversation, spent = 0) {
+  return !conversation || conversation.engine !== CLAUDE_CODE || spent > 0;
+}
+
 // "Claude Code · Sonnet", or the OpenRouter model's short name.
 function engineLabel(values = settings()) {
   if (!onClaude(values)) return shortModel(values.llm_model);
@@ -261,7 +266,32 @@ function nearBottom() {
   return ui.scroll.scrollHeight - ui.scroll.scrollTop - ui.scroll.clientHeight < 120;
 }
 
+// At the end, the chat stays there while what's under way below grows -- above all thumbnails, which
+// have no height until they load, so a scroll to the end made before they came left the view screens
+// above it. Only the user scrolling up unsticks it; a scroll while the content changed size was the
+// browser keeping the view in place, not them.
+const stuck = { on: true, height: 0 };
+
+function setupStickToBottom() {
+  const follow = () => {
+    if (stuck.on) ui.scroll.scrollTop = ui.scroll.scrollHeight;
+    stuck.height = ui.scroll.scrollHeight;
+  };
+  ui.scroll.addEventListener("scroll", () => {
+    if (ui.scroll.scrollHeight === stuck.height) stuck.on = nearBottom();
+  });
+  ui.scroll.addEventListener("wheel", (event) => {
+    if (event.deltaY < 0) stuck.on = false;
+  }, { passive: true });
+  if (window.ResizeObserver) {
+    const observer = new ResizeObserver(follow);
+    observer.observe(ui.log);
+    observer.observe(ui.scroll);
+  }
+}
+
 function scrollToBottom() {
+  stuck.on = true;
   ui.scroll.scrollTop = ui.scroll.scrollHeight;
 }
 
@@ -536,7 +566,9 @@ function renderAutonomy() {
     renderAwayBar(conversation, working);
     return;
   }
-  const used = `${working.images} de ${working.max_images} imágenes, ${dollars(working.cost)} de ${dollars(working.max_cost)}`;
+  // Dollars only where they are spent: on Claude Code the subscription pays, and they never move.
+  const used = `${working.images} de ${working.max_images} imágenes`
+    + (paysPerRequest(conversation, working.cost) ? `, ${dollars(working.cost)} de ${dollars(working.max_cost)}` : "");
   if (!working.active) {
     ui.autonomyBar.className = "autonomy-bar is-ended";
     ui.autonomyBar.replaceChildren(
@@ -1644,7 +1676,8 @@ function toolLine(part) {
   } else if (part.tool === "keep_going") {
     text = part.stop
       ? "Ha dejado de trabajar por su cuenta"
-      : `Sigue por su cuenta hasta conseguirlo: «${part.goal}» (como mucho ${part.max_images} imágenes y ${dollars(part.max_cost)})`;
+      : `Sigue por su cuenta hasta conseguirlo: «${part.goal}» (como mucho ${part.max_images} imágenes`
+        + `${paysPerRequest(state.conversation) ? ` y ${dollars(part.max_cost)}` : ""})`;
   } else if (part.tool === "use_family") {
     text = `Ya trabajaba con la familia ${part.family}`;
   } else if (part.tool === "get_prompt") {
@@ -3305,6 +3338,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupAttachments();
   setupViewer();
   setupAway();
+  setupStickToBottom();
   await loadSideData();
   // Back on the tab: catch up at once on whatever finished meanwhile.
   document.addEventListener("visibilitychange", () => {
