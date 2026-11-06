@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import storage
+from .conversations import likes_text
 from .conversations import reasons_text as chat_reasons
 from .config import get_settings
 
@@ -308,13 +309,16 @@ def stats() -> dict[str, dict]:
                     for file in set(strengths) | set(job.get("models") or []):
                         record = totals.setdefault(file, {"images": 0, "liked": 0, "loved": 0, "disliked": 0,
                                                           "flawed": 0, "weights": [], "flaws": [], "reasons": [],
-                                                          "why": Counter()})
+                                                          "why": Counter(), "liked_for": Counter(),
+                                                          "liked_flaws": Counter()})
                         weight = strengths.get(file)
                         at = f"at {weight:g}: " if isinstance(weight, (int, float)) else ""
                         record["images"] += 1
                         if rating in ("up", "love"):  # a favorite is a like too, the strongest
                             record["liked"] += 1
                             record["loved"] += rating == "love"
+                            record["liked_for"].update(reaction.get("reasons") or [])  # what they liked in it
+                            record["liked_flaws"].update(reaction.get("flaws") or [])  # wrong all the same
                         elif rating == "down":
                             record["disliked"] += 1
                             picked = reaction.get("reasons") or []
@@ -338,6 +342,10 @@ def stats() -> dict[str, dict]:
         out = {k: record[k] for k in ("images", "liked", "loved", "disliked", "flawed") if record[k] or k == "images"}
         if record["why"]:
             out["dislike_reasons"] = dict(record["why"].most_common())
+        if record["liked_for"]:
+            out["liked_for"] = dict(record["liked_for"].most_common())
+        if record["liked_flaws"]:
+            out["liked_flaws"] = dict(record["liked_flaws"].most_common())
         if record["weights"]:
             out["flawed_weights"] = [min(record["weights"]), max(record["weights"])]
         for key, label in (("flaws", "latest_flaws"), ("reasons", "latest_dislike_reasons")):
@@ -396,8 +404,14 @@ def _record_text(record: dict | None) -> str:
     if record.get("images"):
         parts.append(f"{record['images']} image{'s' if record['images'] != 1 else ''}")
         if record.get("liked"):
-            loved = f" ({record['loved']} a favorite)" if record.get("loved") else ""
-            parts.append(f"{record['liked']} liked{loved}")
+            detail = "; ".join(filter(None, [
+                record.get("loved") and f"{record['loved']} a favorite",
+                record.get("liked_for") and "for " + ", ".join(f"{likes_text([k])} {n}"
+                                                               for k, n in record["liked_for"].items()),
+                record.get("liked_flaws") and "but " + ", ".join(f"{chat_reasons([k])} {n}"
+                                                                 for k, n in record["liked_flaws"].items()),
+            ]))
+            parts.append(f"{record['liked']} liked" + (f" ({detail})" if detail else ""))
         if record.get("disliked"):
             why = record.get("dislike_reasons") or {}
             detail = f" ({', '.join(f'{chat_reasons([k])} {n}' for k, n in why.items())})" if why else ""

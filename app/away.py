@@ -342,14 +342,19 @@ def _taste(stats: dict, entries: dict) -> str:
                          for count, loved, file in rows[:4])
 
     reasons: Counter = Counter()
+    likes: Counter = Counter()
     for file, record in stats.items():
         if (entries.get(file) or {}).get("folder") in BASE_FOLDERS:  # an image counts once: by its base model
             reasons.update(record.get("dislike_reasons") or {})
+            likes.update(record.get("liked_for") or {})
     parts = []
     if models := liked(BASE_FOLDERS):
         parts.append(f"the base models they liked most: {models}")
     if loras := liked(("loras",)):
         parts.append(f"LoRAs: {loras}")
+    if likes:
+        parts.append("what they like most in an image: " + ", ".join(
+            f"{conversations.LIKE_WORDS.get(r, r)} ({n})" for r, n in likes.most_common(3)))
     if reasons:
         parts.append("what puts them off most: " + ", ".join(f"{REASON_WORDS.get(r, r)} ({n})"
                                                              for r, n in reasons.most_common(3)))

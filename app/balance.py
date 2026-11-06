@@ -154,6 +154,7 @@ def _rows(conversation: dict) -> tuple[list[dict], int]:
                     "seed": job.get("seed") if job.get("seed") is not None else settings.get("seed"),
                     "rating": reaction.get("rating"),
                     "reasons": reaction.get("reasons") or [],
+                    "flaws": reaction.get("flaws") or [],
                     "in_words": bool(reaction.get("inferred")),  # said in a message, not a thumb
                     "comment": " ".join((reaction.get("comment") or "").split()),
                     "verdict": review.get("verdict"),
@@ -199,9 +200,13 @@ def _settings(row: dict) -> str:
 
 def _verdicts(row: dict) -> str:
     from .chat import RATING_WORDS, reasons_text
+    from .conversations import LIKES, likes_text
     user = "user " + RATING_WORDS.get(row["rating"], "no reaction")
     if row["rating"] == "down" and row.get("reasons"):
         user += f" ({reasons_text(row['reasons'])})"
+    elif row["rating"] in LIKES and (row.get("reasons") or row.get("flaws")):
+        user += " (" + "; ".join(filter(None, [row.get("reasons") and "for " + likes_text(row["reasons"]),
+                                               row.get("flaws") and "but " + reasons_text(row["flaws"])])) + ")"
     if row["rating"] and row.get("in_words"):
         user += " (said so in a message)"
     if row["comment"]:

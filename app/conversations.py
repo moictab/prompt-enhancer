@@ -407,13 +407,35 @@ def reasons_text(reasons: list[str] | None) -> str:
     return ", ".join(REASON_WORDS.get(r, r) for r in reasons or [])
 
 
+# What they liked in an image they liked, picked with a tap too.
+LIKE_REASONS = ("face", "body", "pose", "style", "light", "composition", "as_asked")
+LIKE_WORDS = {"face": "face", "body": "body", "pose": "pose", "style": "style", "light": "light",
+              "composition": "composition", "as_asked": "what was asked"}
+# What is wrong in an image they liked all the same ("fine, but the hands came out wrong"): the bot
+# reads it from their comment (set_inferred_flaws).
+FLAW_REASONS = ("hands", "face", "anatomy", "style", "composition")
+LIKES = ("up", "love")
+
+
+def likes_text(reasons: list[str] | None) -> str:
+    return ", ".join(LIKE_WORDS.get(r, r) for r in reasons or [])
+
+
+def picked_reasons(rating: str | None, reasons: list[str] | None) -> list[str]:
+    allowed = REACTION_REASONS if rating == "down" else LIKE_REASONS if rating in LIKES else ()
+    return [r for r in dict.fromkeys(reasons or []) if r in allowed]
+
+
 def set_reaction(
     conversation_id: str, image_id: str, rating: str | None, comment: str, root: str | None = None,
-    reasons: list[str] | None = None,
+    reasons: list[str] | None = None, flaws: list[str] | None = None,
 ) -> dict | None:
     """Set (or, with no rating and no comment, clear) the reaction to an image: "up", "love" (a
-    favorite: the strongest like) or "down" (with its reasons and/or a comment). It stays
-    unsent until the user's next message carries it to the bot. Returns the image."""
+    favorite: the strongest like) or "down" (with its reasons and/or a comment). reasons: for a
+    dislike, what failed; for a like, what they liked. flaws, on a like: what the bot read as wrong
+    in it from their words, which the user can only take away. It stays unsent until the user's
+    next message carries it to the bot -- unless all it did was take away what the bot had read.
+    Returns the image."""
     with _lock:
         conversation = get(conversation_id, root)
         if conversation is None:
@@ -427,13 +449,22 @@ def set_reaction(
         if rating is None and not comment:
             image.pop("reaction", None)
         else:
-            # Taking back the bot's reading of their comment (Deshacer) leaves the comment as the bot
-            # already had it: nothing new to send.
+            picked = picked_reasons(rating, reasons)
+            kept = [f for f in dict.fromkeys(flaws or []) if f in (before.get("flaws") or [])] \
+                if rating in LIKES and before.get("rating") in LIKES else []
+            # Taking back the bot's reading of their comment (Deshacer), or a flaw it read there, leaves
+            # the rest as the bot already had it: nothing new to send.
             undone = rating is None and before.get("inferred") and comment == before.get("comment")
-            image["reaction"] = {"rating": rating, "comment": comment, "at": _now(), "sent": bool(undone)}
-            picked = [r for r in dict.fromkeys(reasons or []) if r in REACTION_REASONS]
-            if rating == "down" and picked:
+            fewer_flaws = (before.get("sent") and rating == before.get("rating") and comment == before.get("comment")
+                           and picked == (before.get("reasons") or []))
+            image["reaction"] = {"rating": rating, "comment": comment, "at": _now(),
+                                 "sent": bool(undone or fewer_flaws)}
+            if fewer_flaws and before.get("inferred"):
+                image["reaction"]["inferred"] = True
+            if picked:
                 image["reaction"]["reasons"] = picked
+            if kept:
+                image["reaction"]["flaws"] = kept
         storage.write_json(_path(conversation_id, root), conversation)
         return image
 
@@ -464,10 +495,29 @@ def set_inferred_reaction(conversation_id: str, image_id: str, rating: str, comm
         return {"previous": previous}
 
 
+def set_inferred_flaws(conversation_id: str, image_id: str, flaws: list[str], root: str | None = None) -> list[str]:
+    """What the bot read as wrong, from the user's words, in a run image they liked all the same
+    ("fine, but the hands came out wrong"): added to their like, already sent (the bot knows); the
+    user can take each away. Returns the flaws set ([] when the image isn't a liked run image)."""
+    with _lock:
+        conversation = get(conversation_id, root)
+        if conversation is None:
+            return []
+        image = next((img for m in conversation["messages"] if m["role"] == "results"
+                      for img in m.get("images") or [] if img["id"] == image_id), None)
+        reaction = (image or {}).get("reaction") or {}
+        found = [f for f in dict.fromkeys(flaws) if f in FLAW_REASONS]
+        if reaction.get("rating") not in LIKES or not found:
+            return []
+        reaction["flaws"] = list(dict.fromkeys([*(reaction.get("flaws") or []), *found]))
+        storage.write_json(_path(conversation_id, root), conversation)
+        return found
+
+
 def unsent_reactions(conversation: dict) -> list[dict]:
     return [
         {"image_id": img["id"], "rating": img["reaction"].get("rating"), "comment": img["reaction"].get("comment", ""),
-         **({"reasons": img["reaction"]["reasons"]} if img["reaction"].get("reasons") else {})}
+         **{key: img["reaction"][key] for key in ("reasons", "flaws") if img["reaction"].get(key)}}
         for m in conversation["messages"] for img in m.get("images") or []
         if img.get("reaction") and not img["reaction"].get("sent")
     ]

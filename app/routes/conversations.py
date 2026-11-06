@@ -184,20 +184,23 @@ def get_image(conversation_id: str, image_id: str, small: bool = False):
 class Reaction(BaseModel):
     rating: Literal["up", "love", "down"] | None = None  # love: a favorite, the strongest like
     comment: str = ""
-    # Why it was disliked, picked with a tap: hands, face, anatomy, style, composition, not_asked.
-    reasons: list[Literal["hands", "face", "anatomy", "style", "composition", "not_asked"]] = Field(
-        default_factory=list, max_length=6)
+    # Picked with a tap: why it was disliked (conversations.REACTION_REASONS), or what they liked in it
+    # (LIKE_REASONS); the ones that don't go with the rating are dropped.
+    reasons: list[Literal["hands", "face", "anatomy", "style", "composition", "not_asked", "body", "pose", "light",
+                          "as_asked"]] = Field(default_factory=list, max_length=10)
+    # On a like: the flaws the bot read in their words still standing (one can only be taken away).
+    flaws: list[Literal["hands", "face", "anatomy", "style", "composition"]] = Field(default_factory=list, max_length=5)
 
 
 @router.put("/{conversation_id}/images/{image_id}/reaction")
 def react_to_image(conversation_id: str, image_id: str, reaction: Reaction):
     """Like, dislike or comment on an image; it reaches the bot with the next message."""
     _require_conversation(conversation_id)
-    if reaction.rating == "down" and not reaction.comment.strip() and not reaction.reasons:
+    if reaction.rating == "down" and not reaction.comment.strip() and not conversations.picked_reasons("down", reaction.reasons):
         # A dislike is only worth learning from with its reason.
         raise HTTPException(status_code=400, detail="A thumbs down needs its reason: say what went wrong")
     image = conversations.set_reaction(conversation_id, image_id, reaction.rating, reaction.comment,
-                                       reasons=reaction.reasons)
+                                       reasons=reaction.reasons, flaws=reaction.flaws)
     if image is None:
         raise HTTPException(status_code=404, detail="Unknown image")
     catalog.invalidate_stats()

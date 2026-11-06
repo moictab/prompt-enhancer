@@ -1192,6 +1192,9 @@ a.btn-secondary { display: inline-block; color: var(--paper); text-decoration: n
 }
 .react-reason:hover { color: var(--paper); border-color: var(--paper-faint); }
 .react-reason[aria-pressed="true"] { color: var(--stop-text); background: var(--stop-soft); border-color: var(--stop); }
+.react-reason.is-like[aria-pressed="true"] { color: var(--safelight); background: var(--safelight-soft); border-color: var(--safelight); }
+.react-likes { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--step--1); color: var(--safelight); }
+.react-flaws-label { align-self: center; color: var(--paper-faint); font-size: 0.75rem; }
 .msg-reactions .heart { color: var(--stop); fill: currentColor; }
 .msg-reactions-reasons { color: var(--paper-faint); }
 

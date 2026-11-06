@@ -561,7 +561,7 @@ def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, 
     conversation = conversations.get(conversation_id)
     if conversation is None:
         return None
-    parts, new_notes, updates, forgets, title, contents, reviews, ratings = [], [], [], [], "", [], [], []
+    parts, new_notes, updates, forgets, title, contents, reviews, ratings, flaws = [], [], [], [], "", [], [], [], []
     refused, note_meta, update_meta, confirms, topics = [], [], {}, [], None
     stored_steps = []
     for step in steps:
@@ -577,6 +577,7 @@ def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, 
         forgets += reply.note_forgets
         reviews += reply.reviews
         ratings += reply.ratings
+        flaws += reply.flaws
         refused += [{"text": text, "reason": reason, **({"id": number} if number else {})}
                     for text, reason, number in reply.refused_notes]
         if reply.content:
@@ -587,6 +588,7 @@ def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, 
                for note, meta in zip(new_notes, note_meta)]
     _store_reviews(conversation_id, conversation, reviews)
     rated = _store_ratings(conversation_id, conversation, ratings)
+    flawed = _store_flaws(conversation_id, conversation, flaws)
     note_changes = _apply_note_changes(updates, forgets, notes_at_start, conversation_id, update_meta)
     shown = {i: n for i, n in enumerate(notes_at_start, 1)}
     confirmed = [memory.confirm_note(shown[n]["id"]) for n in dict.fromkeys(confirms) if n in shown]
@@ -637,6 +639,8 @@ def _store_reply(conversation_id, family, notes_at_start, steps, ends, failure, 
         message["note_changes"] = note_changes
     if rated:
         message["ratings"] = rated
+    if flawed:
+        message["flaws"] = flawed
     if refused:
         message["notes_refused"] = refused
     if any(s["tool_calls"] for s in stored_steps):
@@ -693,6 +697,23 @@ def _store_ratings(conversation_id: str, conversation: dict, ratings: list) -> l
         catalog.invalidate_stats()
         logger.info("conversation ratings from words conversation_id=%s images=%d", conversation_id, len(rated))
     return rated
+
+
+def _store_flaws(conversation_id: str, conversation: dict, flaws: list) -> list[dict]:
+    """What the user said is wrong in run images they liked, as the bot read it: added to their likes.
+    Returns what was set, for the chat to show."""
+    by_number = {n: image_id for image_id, n in chat.image_numbers(conversation["messages"]).items()}
+    noted = []
+    for numbers, keys in flaws:
+        for number in numbers:
+            image_id = by_number.get(number)
+            found = conversations.set_inferred_flaws(conversation_id, image_id, keys) if image_id else []
+            if found:
+                noted.append({"image_id": image_id, "number": number, "flaws": found})
+    if noted:
+        catalog.invalidate_stats()
+        logger.info("conversation flaws from words conversation_id=%s images=%d", conversation_id, len(noted))
+    return noted
 
 
 def on_run_finished(conversation_id: str, run: dict) -> None:

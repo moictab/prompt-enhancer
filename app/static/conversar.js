@@ -451,9 +451,10 @@ function liveParts(raw) {
     .replace(/<forget\b[^>]*>(?:\s*<\/forget>)?/gi, "")
     .replace(/<review\b[^>]*>[\s\S]*?(?:<\/review>|(?=\n)|$)/gi, "")
     .replace(/<rating\b[^>]*>[\s\S]*?(?:<\/rating>|(?=\n)|$)/gi, "")
+    .replace(/<flaws\b[^>]*>[\s\S]*?(?:<\/flaws>|(?=\n)|$)/gi, "")
     .replace(/<topics>[\s\S]*?(?:<\/topics>|(?=\n)|$)/gi, "")
     .replace(/<confirm\b[^>]*>(?:\s*<\/confirm>)?/gi, "")
-    .replace(/<\/?(?:title|remember|forget|review|rating|confirm|topics)\b[^>]*>/gi, "")
+    .replace(/<\/?(?:title|remember|forget|review|rating|flaws|confirm|topics)\b[^>]*>/gi, "")
     .replace(/^[ \t]*```[\w-]*[ \t]*$\n?/gm, "")
     .replace(/<\/?[a-z]*$/i, "");
   const parts = [];
@@ -873,7 +874,7 @@ function showInViewer(index) {
   viewer.image.alt = `Imagen ${number}`;
   viewer.caption.textContent = `Imagen ${number} de ${viewer.items.length}`;
   viewer.open.href = original;
-  viewer.react.replaceChildren(...(reactable ? [reactionControls(image, number, { as: "div", onSaved: reactedInViewer })] : []));
+  viewer.react.replaceChildren(...(reactable ? [reactionControls(image, number, { as: "div", open: true, onSaved: reactedInViewer })] : []));
   viewer.react.hidden = !reactable;
   viewer.prev.disabled = index === 0;
   viewer.next.disabled = index === viewer.items.length - 1;
@@ -913,6 +914,17 @@ const REASONS = [
   ["not_asked", "No es lo que pedí"],
 ];
 const REASON_LABELS = Object.fromEntries(REASONS);
+// What they liked, for a like or a favorite: one tap each too (conversations.LIKE_REASONS).
+const LIKES = [
+  ["face", "Cara"],
+  ["body", "Cuerpo"],
+  ["pose", "Pose"],
+  ["style", "Estilo"],
+  ["light", "Luz"],
+  ["composition", "Composición"],
+  ["as_asked", "Lo que pedí"],
+];
+const LIKE_LABELS = Object.fromEntries(LIKES);
 
 function heartIcon() {
   const svg = document.createElementNS(SVG_NS, "svg");
@@ -927,19 +939,25 @@ function heartIcon() {
 
 // An image's reaction: like, favorite (the strongest like: "this is it"), or dislike with what failed --
 // a tap on its reasons, and/or a comment. choosing: the dislike pressed, its reasons not picked yet.
+// A like offers what they liked, one tap each: right after it is pressed (liking), or always (open,
+// in the viewer); once picked, they show in a line that opens them again. What the bot read as wrong
+// in a liked image, from their words, shows as red chips they can take away.
 // as: the element (a figcaption under a frame in the chat); onSaved(image): after a reaction is stored.
-function reactionControls(image, number, { choosing = false, as = "figcaption", onSaved = null } = {}) {
+function reactionControls(image, number, { choosing = false, liking = false, open = false, as = "figcaption", onSaved = null } = {}) {
   const reaction = image.reaction || {};
   const reasons = reaction.reasons || [];
   const disliked = reaction.rating === "down";
+  const liked = reaction.rating === "up" || reaction.rating === "love";
   const wrap = el(as, { class: "reactions" });
-  const redraw = (options) => wrap.replaceWith(reactionControls(image, number, { as, onSaved, ...options }));
-  const save = async (rating, comment, picked, button) => {
+  const redraw = (options) => wrap.replaceWith(reactionControls(image, number, { as, onSaved, open, ...options }));
+  // flaws: the ones still standing (by default, all, while it stays a like); then: how to draw it after.
+  const save = async (rating, comment, picked, button, { flaws = null, then = {} } = {}) => {
     if (button) setBusy(button, true, "…");
+    const stillLiked = rating === "up" || rating === "love";
     try {
       const updated = await request(`/api/conversations/${state.conversation.id}/images/${image.id}/reaction`, {
         method: "PUT",
-        json: { rating, comment, reasons: rating === "down" ? picked : [] },
+        json: { rating, comment, reasons: picked, flaws: flaws ?? (stillLiked ? reaction.flaws || [] : []) },
       });
       if (updated.reaction) image.reaction = updated.reaction;
       else delete image.reaction;
@@ -948,7 +966,7 @@ function reactionControls(image, number, { choosing = false, as = "figcaption", 
       redraw();
       return;
     }
-    redraw();
+    redraw(then);
     onSaved?.(image);
     renderReactionHint();
   };
@@ -986,7 +1004,11 @@ function reactionControls(image, number, { choosing = false, as = "figcaption", 
       { type: "button", class: `btn-icon react${extra}`, "aria-pressed": String(on), "aria-label": label, title },
       icon
     );
-    button.addEventListener("click", () => save(on ? null : rating, reaction.comment || "", [], button));
+    button.addEventListener("click", () => {
+      // Just liked: what they liked, to pick. A like turned favorite (or back) keeps what was picked.
+      const keep = !on && liked ? reasons : [];
+      save(on ? null : rating, reaction.comment || "", keep, button, { then: on ? {} : { liking: true } });
+    });
     return button;
   };
   const up = toggle("up", { label: `Me gusta la imagen ${number}`, title: "Me gusta", icon: thumbIcon(false) });
@@ -1030,11 +1052,61 @@ function reactionControls(image, number, { choosing = false, as = "figcaption", 
           toast("Un «no me gusta» necesita su motivo: quítalo o di qué ha fallado.", { error: true });
           return redraw();
         }
-        save(reaction.rating ?? null, text, reasons);
+        save(reaction.rating ?? null, text, reasons, null, { then: { liking } });
       },
     })
   );
   wrap.append(up, love, down, commentButton);
+
+  if (liked && (liking || open)) {
+    wrap.append(
+      el(
+        "span",
+        { class: "react-reasons", role: "group", "aria-label": `Qué te gusta de la imagen ${number}` },
+        LIKES.map(([key, label]) => {
+          const on = reasons.includes(key);
+          const chip = el("button", { type: "button", class: "react-reason is-like", "aria-pressed": String(on), text: label });
+          chip.addEventListener("click", () => {
+            const picked = on ? reasons.filter((r) => r !== key) : [...reasons, key];
+            save(reaction.rating, reaction.comment || "", picked, chip, { then: { liking: true } });
+          });
+          return chip;
+        })
+      )
+    );
+  } else if (liked && reasons.length) {
+    wrap.append(
+      el("button", {
+        type: "button",
+        class: "btn-quiet react-likes",
+        text: `Te gusta: ${reasons.map((k) => (LIKE_LABELS[k] || k).toLowerCase()).join(", ")}`,
+        title: "Cambiar qué te gusta",
+        onclick: () => redraw({ liking: true }),
+      })
+    );
+  }
+  const flaws = liked ? reaction.flaws || [] : [];
+  if (flaws.length) {
+    wrap.append(
+      el(
+        "span",
+        { class: "react-reasons", role: "group", "aria-label": `Lo que falla en la imagen ${number}, aunque te guste` },
+        el("span", { class: "react-flaws-label", text: "Falla:" }),
+        flaws.map((key) => {
+          const chip = el("button", {
+            type: "button",
+            class: "react-reason",
+            "aria-pressed": "true",
+            text: REASON_LABELS[key] || key,
+            title: "Lo apuntó el bot por lo que dijiste. Púlsalo para quitarlo.",
+          });
+          chip.addEventListener("click", () =>
+            save(reaction.rating, reaction.comment || "", reasons, chip, { flaws: flaws.filter((f) => f !== key), then: { liking } }));
+          return chip;
+        })
+      )
+    );
+  }
 
   if (disliked || choosing) {
     wrap.append(
@@ -1135,10 +1207,25 @@ function reactionsSummary(reactions, numbers) {
         {},
         r.rating && (r.rating === "love" ? heartIcon() : thumbIcon(r.rating === "down")),
         ...withImageRefs(`#${numbers.get(r.image_id)}`),
-        r.reasons?.length > 0 && el("span", { class: "msg-reactions-reasons", text: r.reasons.map((k) => REASON_LABELS[k] || k).join(", ") }),
+        r.reasons?.length > 0 && el("span", {
+          class: "msg-reactions-reasons",
+          text: r.reasons.map((k) => (r.rating === "down" ? REASON_LABELS : LIKE_LABELS)[k] || k).join(", "),
+        }),
         r.comment && el("span", { class: "msg-reactions-comment", text: `«${r.comment}»` })
       )
     )
+  );
+}
+
+// What the bot read as wrong, from the user's words, in images they liked all the same: each stays as
+// a chip under its image, where the user takes it away if the bot read them wrong.
+function flawsLine(flaws) {
+  if (!flaws?.length) return null;
+  const said = flaws.map((f) => `#${f.number}: ${f.flaws.map((k) => REASON_LABELS[k]?.toLowerCase() || k).join(", ")}`);
+  return el(
+    "p",
+    { class: "msg-ratings", title: "Si no es así, quítalo en los botones rojos bajo la imagen" },
+    el("span", { class: "msg-ratings-text" }, withImageRefs(`Apuntado lo que falla, aunque te guste: ${said.join("; ")}.`))
   );
 }
 
@@ -1698,6 +1785,7 @@ function fillBotMessage(
     notes = [],
     note_changes: noteChanges = [],
     ratings = [],
+    flaws = [],
     notes_refused: notesRefused = [],
     cost = null,
     truncated = false,
@@ -1754,6 +1842,7 @@ function fillBotMessage(
     ...[
       ...body,
       !live && ratingsLine(ratings),
+      !live && flawsLine(flaws),
       (notes.length > 0 || noteChanges.length > 0 || notesRefused.length > 0) &&
         el("div", { class: "msg-notes" }, [
           ...noteChanges.map(noteChangeChip),

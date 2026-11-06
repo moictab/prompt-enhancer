@@ -93,6 +93,51 @@ def test_a_comment_left_without_a_rating_is_their_words_too(api_client, auth_hea
     assert conversations.unsent_reactions(conversations.get(conversation_id)) == []
 
 
+def test_a_like_says_what_they_liked_and_the_bot_notes_what_is_wrong_all_the_same(
+        api_client, auth_headers, tmp_path, fake_comfy):
+    workflows.ensure_seeded()
+    conversation_id = _conversation(api_client, auth_headers, _family(tmp_path), auto_comment=False)["id"]
+    script = Script(("Van tres:", [LAUNCH]),
+                    ('Apunto las manos. <flaws images="1,2,3">hands, vibes</flaws>Sigo.', []))
+    put = f"/api/conversations/{conversation_id}/images"
+    with patch("app.conversation_turn.stream_chat", script):
+        _send(api_client, auth_headers, conversation_id, "hazme una bruja")
+        _deliver(fake_comfy, "prompt-1", "prompt-2", "prompt-3")
+        images = next(m for m in conversations.get(conversation_id)["messages"] if m["role"] == "results")["images"]
+        liked = api_client.put(f"{put}/{images[0]['id']}/reaction", auth=auth_headers, json={
+            "rating": "up", "comment": "está bien, pero las manos han salido mal",
+            "reasons": ["face", "light", "hands"], "flaws": ["face"]}).json()["reaction"]
+        # A like's reasons are what they liked (a dislike's are dropped); flaws only the bot sets.
+        assert liked["reasons"] == ["face", "light"] and "flaws" not in liked
+        # A dislike needs a reason of its own: what they'd like isn't one.
+        assert api_client.put(f"{put}/{images[1]['id']}/reaction", auth=auth_headers,
+                              json={"rating": "down", "reasons": ["light"]}).status_code == 400
+        api_client.put(f"{put}/{images[1]['id']}/reaction", auth=auth_headers,
+                       json={"rating": "down", "reasons": ["hands"]})
+        _send(api_client, auth_headers, conversation_id, "")
+
+    assert 'image 1 liked (for: face, light): "está bien, pero las manos han salido mal"' in \
+        message_text(script.calls[1]["messages"][-1])
+    stored = conversations.get(conversation_id)
+    first, second, third = next(m for m in stored["messages"] if m["role"] == "results")["images"]
+    # Only on the image they liked: not the disliked one, not the unrated one; unknown words dropped.
+    assert first["reaction"]["flaws"] == ["hands"] and first["reaction"]["rating"] == "up"
+    assert first["reaction"]["sent"] and "flaws" not in second["reaction"] and "reaction" not in third
+    assert stored["messages"][-1]["flaws"] == [{"image_id": first["id"], "number": 1, "flaws": ["hands"]}]
+    assert "<flaws" not in stored["messages"][-1]["content"]
+    model = next(record for record in catalog.stats().values() if record.get("images"))
+    assert model["liked_for"] == {"face": 1, "light": 1} and model["liked_flaws"] == {"hands": 1}
+    assert "1 liked (for face 1, light 1; but hands 1)" in catalog._record_text(model)
+    assert "user liked (for face, light; but hands)" in balance.ledger(stored).text
+
+    # The user takes a flaw away: nothing new for the bot.
+    kept = api_client.put(f"{put}/{first['id']}/reaction", auth=auth_headers, json={
+        "rating": "up", "comment": "está bien, pero las manos han salido mal", "reasons": ["face", "light"],
+        "flaws": []}).json()["reaction"]
+    assert "flaws" not in kept and kept["sent"]
+    assert conversations.unsent_reactions(conversations.get(conversation_id)) == []
+
+
 def test_a_favorite_is_the_strongest_like_and_a_dislike_can_be_a_tap(api_client, auth_headers, tmp_path, fake_comfy):
     workflows.ensure_seeded()
     conversation_id = _conversation(api_client, auth_headers, _family(tmp_path), auto_comment=False)["id"]
