@@ -74,8 +74,13 @@ def _with_activity(item: dict) -> dict:
 
 
 @router.get("")
-def list_conversations():
-    return [_with_activity(s) for s in conversations.list_summaries()]
+def list_conversations(q: str = ""):
+    """The conversations, most recently updated first; with q, those where every word of it appears
+    (conversations.search), each with `match`: a snippet of where, "" when it's the title."""
+    if not q.strip():
+        return [_with_activity(s) for s in conversations.list_summaries()]
+    found = conversations.search(q)
+    return [{**_with_activity(s), "match": found[s["id"]]} for s in conversations.list_summaries() if s["id"] in found]
 
 
 def _require_engine(engine: str | None) -> None:

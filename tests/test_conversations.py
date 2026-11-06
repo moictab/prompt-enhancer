@@ -83,6 +83,28 @@ def test_list_summaries_is_most_recently_updated_first(tmp_path):
     assert "messages" not in summaries[0]
 
 
+def test_a_search_finds_every_word_in_the_title_or_any_message_accents_and_case_aside(api_client, auth_headers):
+    witch = _create(None)
+    conversations.update_settings(witch["id"], {"title": "Bruja en el bosque"})
+    conversations.append_message(witch["id"], {"role": "user", "content": "Quiero una bruja leyendo"})
+    conversations.append_message(witch["id"], {"role": "assistant", "content": "Va con luz de atardecer y un "
+                                                "caldero humeante junto al árbol, como pediste."})
+    beach = _create(None)
+    conversations.append_message(beach["id"], {"role": "user", "content": "Ramona en la playa, al ATARDECER"})
+
+    found = conversations.search("atardécer")
+    assert set(found) == {witch["id"], beach["id"]}
+    # Untitled, its first message is its title: no snippet needed.
+    assert "atardecer" in found[witch["id"]] and found[beach["id"]] == ""
+    assert conversations.search("bruja arbol") == {witch["id"]: ""}  # the title has the first word
+    assert conversations.search("bruja playa") == {} and conversations.search("  ") == {}
+
+    listed = api_client.get("/api/conversations", params={"q": "caldero"}, auth=auth_headers).json()
+    assert [s["id"] for s in listed] == [witch["id"]] and "caldero humeante" in listed[0]["match"]
+    assert listed[0]["last_role"] == "assistant"  # whose turn it is
+    assert len(api_client.get("/api/conversations", auth=auth_headers).json()) == 2
+
+
 def test_list_summaries_is_empty_without_a_folder(tmp_path):
     assert conversations.list_summaries(root=str(tmp_path / "missing")) == []
 

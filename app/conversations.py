@@ -146,6 +146,8 @@ def summary(conversation: dict) -> dict:
         "created_at": conversation["created_at"],
         "updated_at": conversation["updated_at"],
         "message_count": len(conversation["messages"]),
+        # Whose turn it is, when nothing is under way: the bot's last word ("assistant", "results") or the user's.
+        "last_role": conversation["messages"][-1]["role"] if conversation["messages"] else None,
         "cost": conversation["cost"],
         "family_id": conversation["family_id"],
         "llm_model": conversation["llm_model"],
@@ -176,6 +178,57 @@ def list_summaries(root: str | None = None) -> list[dict]:
     ]
     summaries = [summary(c) for c in conversations if c]
     return sorted(summaries, key=lambda s: s["updated_at"], reverse=True)
+
+
+def _fold(text: str) -> str:
+    """Lowercase without accents, one character for each (so a position in it is one in the text)."""
+    return "".join((unicodedata.normalize("NFKD", c)[:1] or c).lower()[:1] for c in text)
+
+
+SNIPPET_CHARS = 140
+
+
+def _searchable(conversation: dict) -> list[str]:
+    """What a search looks in, besides the title: its topics, and each message's text -- the user's
+    words and comments on images, the bot's replies with their prompts."""
+    texts = [", ".join(conversation.get("topics") or [])]
+    for message in conversation.get("messages") or []:
+        texts.append(message.get("content") or "")
+        texts += [(r.get("comment") or "") for r in message.get("reactions") or []]
+    return [t for t in texts if t]
+
+
+def search(query: str, root: str | None = None) -> dict[str, str]:
+    """The conversations where every word of the query appears (in the title or any message;
+    case and accents aside), each with a snippet of the first message that has its first word
+    ("" when the title has it)."""
+    words = _fold(query).split()
+    if not words:
+        return {}
+    found = {}
+    for path in Path(_root(root)).glob("*.json") if Path(_root(root)).is_dir() else []:
+        if not is_valid_id(path.stem):
+            continue
+        conversation = storage.read_json(str(path), default=None)
+        if not conversation:
+            continue
+        title = display_title(conversation)
+        texts = _searchable(conversation)
+        folded = [_fold(t) for t in texts]
+        everything = " ".join([_fold(title), *folded])
+        if not all(word in everything for word in words):
+            continue
+        snippet = ""
+        if words[0] not in _fold(title):
+            for text, low in zip(texts, folded):
+                at = low.find(words[0])
+                if at >= 0:
+                    start = max(0, at - SNIPPET_CHARS // 3)
+                    piece = " ".join(text[start:start + SNIPPET_CHARS].split())
+                    snippet = ("…" if start else "") + piece + ("…" if start + SNIPPET_CHARS < len(text) else "")
+                    break
+        found[conversation["id"]] = snippet
+    return found
 
 
 def update_settings(conversation_id: str, changes: dict, root: str | None = None) -> dict | None:

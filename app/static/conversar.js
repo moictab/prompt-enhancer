@@ -42,6 +42,7 @@ const ui = {
   layout: $("chat-layout"),
   newButton: $("new-conversation"),
   threadList: $("thread-list"),
+  threadSearch: $("thread-search"),
   threadsToggle: $("threads-toggle"),
   title: $("chat-title"),
   meta: $("chat-meta"),
@@ -117,6 +118,8 @@ const state = {
   openRuns: new Set(), // "<conversation id>:<n>": groups of runs, by their first, the user unfolded
   creating: false,
   renaming: null, // the id of the conversation whose title is being edited in the list
+  // The list's search: what was typed, and the server's answer (id -> snippet, "" when the title matched).
+  search: { query: "", matches: null },
   listTimer: 0,
   deleteButton: null,
 };
@@ -2365,21 +2368,26 @@ function setSettingsOpen(open) {
 }
 
 // What's going on in a conversation, for the list: the bot at work there, or news unseen.
+// Whose move it is. "busy": the bot is at it -- a reply, a comment, images being made, its work on
+// its own, a pause for Claude Code's limit --, nothing for the user to do yet. "yours": it's waiting
+// for the user -- something of its they haven't seen, or a message it couldn't answer ("failed").
 function threadStatus(summary) {
   const live = state.live.get(summary.id);
   if (live || summary.replying || summary.commenting) {
-    return { kind: "busy", text: live?.automatic || (!live && summary.commenting) ? "Comentando…" : "Respondiendo…" };
+    return { kind: "busy", text: live?.automatic || (!live && summary.commenting) ? "Comentando las imágenes…" : "Respondiendo…" };
   }
   if (summary.autonomy?.kind === "away") {
     return { kind: "busy", text: `Modo autónomo hasta las ${clock(summary.autonomy.until)}: ${imagesCount(summary.autonomy.images)}` };
   }
   if (summary.autonomy && !(summary.autonomy.kind === "initiative" && !summary.autonomy.images)) {
-    return { kind: "busy", text: `Por su cuenta: ${summary.autonomy.images} de ${summary.autonomy.max_images} imágenes` };
+    return { kind: "busy", text: `Trabajando por su cuenta: ${summary.autonomy.images} de ${summary.autonomy.max_images} imágenes` };
   }
   if (summary.running) return { kind: "busy", text: "Generando imágenes…" };
+  if (summary.retry_at) return { kind: "busy", text: `En pausa hasta las ${clock(summary.retry_at)}` };
+  if (summary.last_role === "user") return { kind: "yours", failed: true, text: "Sin respuesta", detail: "reinténtalo" };
   const unseen = unseenImages(summary);
-  if (unseen.length) return { kind: "fresh", text: unseenCount(summary, unseen) };
-  if (isUnread(summary)) return { kind: "fresh", text: "Respuesta nueva" };
+  if (unseen.length) return { kind: "yours", text: "Te toca", detail: unseenCount(summary, unseen) };
+  if (isUnread(summary)) return { kind: "yours", text: "Te toca", detail: "respuesta nueva" };
   if (summary.finished_at) return { kind: "done", text: "Terminada" };
   return null;
 }
@@ -2398,7 +2406,8 @@ function svgIcon(d) {
 const PENCIL = "M4 20h4L19 9l-4-4L4 16v4Zm11-15 4 4";
 const BIN = "M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10 11v6M14 11v6";
 
-function threadItem(summary) {
+// match, words: a search's -- the snippet of where it matched ("" for the title) and the words to mark.
+function threadItem(summary, { match = "", words = [] } = {}) {
   const title = summary.title || "Conversación sin título";
   const status = threadStatus(summary);
   const unseen = unseenImages(summary);
@@ -2417,12 +2426,14 @@ function threadItem(summary) {
         openConversation(summary.id, { push: true });
       },
     },
-    el("span", { class: "thread-title", text: title }),
+    el("span", { class: "thread-title" }, ...(words.length ? markWords(title, words) : [title])),
+    match && el("span", { class: "thread-match" }, ...markWords(match, words)),
     el(
       "span",
       { class: "thread-meta" },
-      status && el("span", { class: `thread-status is-${status.kind}`, text: status.text }),
-      unseenNote && el("span", { class: "thread-status is-fresh", text: unseenNote }),
+      status && el("span", { class: `thread-status is-${status.kind}${status.failed ? " is-failed" : ""}`, text: status.text }),
+      status?.detail && el("span", { class: "thread-detail", text: status.detail }),
+      unseenNote && el("span", { class: "thread-detail", text: unseenNote }),
       el("span", { text: when })
     ),
     unseen.length > 0 && unseenStrip(summary, unseen)
@@ -2446,7 +2457,7 @@ function threadItem(summary) {
   remove.setAttribute("aria-label", `Eliminar «${title}»`);
   const item = el(
     "li",
-    { class: status?.kind === "fresh" || unseen.length ? "thread-item is-fresh" : "thread-item" },
+    { class: status?.kind === "yours" ? "thread-item is-yours" : "thread-item" },
     link,
     el("div", { class: "thread-actions" }, rename, remove)
   );
@@ -2461,7 +2472,78 @@ function renderThreads() {
     ui.threadList.replaceChildren(el("li", { class: "thread-empty", text: "Aún no hay conversaciones." }));
     return;
   }
-  ui.threadList.replaceChildren(...state.summaries.map(threadItem));
+  const { query, matches } = state.search;
+  const words = fold(query).split(/\s+/).filter(Boolean);
+  if (!words.length) {
+    ui.threadList.replaceChildren(...state.summaries.map((s) => threadItem(s)));
+    return;
+  }
+  // While the server looks in the messages, the titles that have every word; then what it found.
+  const shown = matches
+    ? state.summaries.filter((s) => matches.has(s.id))
+    : state.summaries.filter((s) => words.every((word) => fold(s.title || "").includes(word)));
+  ui.threadList.replaceChildren(...(shown.length
+    ? shown.map((s) => threadItem(s, { match: matches?.get(s.id), words }))
+    : [el("li", { class: "thread-empty", text: matches ? `Nada contiene «${query.trim()}».` : "Buscando…" })]));
+}
+
+// Lowercase without accents, one character for each (conversations._fold).
+function fold(text) {
+  return [...(text || "")].map((c) => c.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase()[0] || c).join("");
+}
+
+// The text with the words searched for marked.
+function markWords(text, words) {
+  const chars = [...text];
+  const folded = fold(text);
+  const hit = chars.map(() => false);
+  for (const word of words) {
+    for (let at = folded.indexOf(word); at >= 0; at = folded.indexOf(word, at + word.length)) {
+      for (let i = at; i < at + word.length; i += 1) hit[i] = true;
+    }
+  }
+  const nodes = [];
+  let start = 0;
+  for (let i = 1; i <= chars.length; i += 1) {
+    if (i === chars.length || hit[i] !== hit[start]) {
+      const piece = chars.slice(start, i).join("");
+      nodes.push(hit[start] ? el("mark", { text: piece }) : piece);
+      start = i;
+    }
+  }
+  return nodes;
+}
+
+function setupSearch() {
+  let timer = 0;
+  let asked = 0;
+  const run = () => {
+    const query = ui.threadSearch.value;
+    state.search = { query, matches: null };
+    renderThreads();
+    clearTimeout(timer);
+    if (!query.trim()) return;
+    timer = setTimeout(async () => {
+      const mine = (asked += 1);
+      let found;
+      try {
+        found = await request(`/api/conversations?q=${encodeURIComponent(query)}`);
+      } catch (err) {
+        toast(err.message, { error: true });
+        return;
+      }
+      if (mine !== asked || ui.threadSearch.value !== query) return; // typed on meanwhile
+      state.search = { query, matches: new Map(found.map((s) => [s.id, s.match || ""])) };
+      renderThreads();
+    }, 250);
+  };
+  ui.threadSearch.addEventListener("input", run);
+  ui.threadSearch.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !ui.threadSearch.value) return;
+    event.preventDefault();
+    ui.threadSearch.value = "";
+    run();
+  });
 }
 
 // The title becomes a text field; Intro or leaving it saves, Escape drops the change.
@@ -3367,6 +3449,7 @@ function setupSettings() {
 }
 
 function setupThreads() {
+  setupSearch();
   ui.newButton.addEventListener("click", () => startNew({ push: true }));
   ui.threadsToggle.addEventListener("click", () => setThreadsOpen(!ui.layout.classList.contains("show-threads")));
   // On narrow screens the list is a drawer over the chat: a click outside closes it.

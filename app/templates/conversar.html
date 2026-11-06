@@ -9,6 +9,8 @@
     {% if comfy_configured and claude_code_available %}
     <button type="button" class="btn-quiet threads-away" id="away-open">Modo autónomo</button>
     {% endif %}
+    <label class="visually-hidden" for="thread-search">Buscar en las conversaciones</label>
+    <input type="search" class="thread-search" id="thread-search" placeholder="Buscar en las conversaciones" autocomplete="off" spellcheck="false">
     <ol class="thread-list" id="thread-list"></ol>
   </aside>
 

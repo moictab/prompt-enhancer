@@ -959,8 +959,23 @@ th[aria-sort="ascending"] .disk-sort, th[aria-sort="descending"] .disk-sort { co
 }
 .thread-new-more { padding-left: 0.2rem; color: var(--paper-dim); font-size: 0.75rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 
-/* The bot at work there (a reply, a comment, images being made), or a reply not seen yet. */
-.thread-status { color: var(--safelight); font-weight: 600; }
+/* Whose move it is. The bot at work there (a reply, a comment, images being made, on its own):
+   quiet grey text after a pulsing dot -- nothing to do. Waiting for the user: a filled amber tag. */
+.thread-status { font-weight: 600; }
+.thread-status.is-busy { color: var(--paper-dim); font-weight: 500; }
+.thread-status.is-yours {
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--safelight);
+  color: var(--ink);
+  font-weight: 700;
+}
+.thread-status.is-yours.is-failed { background: var(--stop); color: var(--paper); }
+.thread-detail { color: var(--paper-dim); }
+.thread-item.is-yours > .thread { color: var(--paper); }
+.thread-match { overflow: hidden; color: var(--paper-faint); font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
+.thread-title mark, .thread-match mark { padding: 0 1px; border-radius: 2px; background: var(--safelight-soft); color: var(--paper); }
+.thread-search { width: 100%; font-size: var(--step--1); }
 .thread-status.is-busy::before {
   content: "";
   display: inline-block;
@@ -972,18 +987,6 @@ th[aria-sort="ascending"] .disk-sort, th[aria-sort="descending"] .disk-sort { co
   background: var(--safelight);
   animation: pulse 1.6s ease-in-out infinite;
 }
-.thread-item.is-fresh > .thread { color: var(--paper); }
-.thread-item.is-fresh .thread-title::before {
-  content: "";
-  display: inline-block;
-  width: 0.45rem;
-  height: 0.45rem;
-  margin-right: 0.4rem;
-  vertical-align: 0.1em;
-  border-radius: 999px;
-  background: var(--safelight);
-}
-
 /* Rename and delete: over the end of the row, while it's pointed at, focused or open. */
 .thread-actions {
   position: absolute;
